@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from fdp.config import database_url_from_env, eodhd_api_key_from_env
 from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.ingestion import load_exchange_symbols
+from fdp.storage.schema import ensure_runtime_schemas
 
 app = typer.Typer(help="Financial data platform command line interface.")
 ingest_app = typer.Typer(help="Ingest source data into the database.")
@@ -28,6 +29,7 @@ def ingest_instruments(
     client = EodhdClient(api_key=api_key)
 
     with engine.begin() as connection:
+        ensure_runtime_schemas(connection)
         result = load_exchange_symbols(connection, client, market=market)
 
     typer.echo(

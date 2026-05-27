@@ -16,10 +16,12 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.sql import quoted_name
 
 US_SHARE_SCHEMA = "us_share"
+# Current A-share schema is "a_share"; the legacy local program/database name was "qtdb_pro".
 A_SHARE_SCHEMA = "a_share"
-SYSTEM_SCHEMA = "system"
+SYSTEM_SCHEMA = quoted_name("system", True)
 
 metadata = MetaData()
 

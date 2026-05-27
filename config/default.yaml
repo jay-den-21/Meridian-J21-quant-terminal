@@ -11,6 +11,7 @@ database:
 
 schemas:
   us_share: us_share
+  # A-share schema for this project. Legacy local program/database name: qtdb_pro.
   a_share: a_share
   system: system
   test_us_share: test_us_share
@@ -22,4 +23,3 @@ sources:
     api_key: ${EODHD_API_KEY}
     base_url: https://eodhd.com/api
     max_retries: 3
-

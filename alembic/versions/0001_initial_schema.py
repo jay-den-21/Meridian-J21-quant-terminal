@@ -19,7 +19,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.execute("CREATE SCHEMA IF NOT EXISTS us_share")
     op.execute("CREATE SCHEMA IF NOT EXISTS a_share")
-    op.execute("CREATE SCHEMA IF NOT EXISTS system")
+    op.execute("CREATE SCHEMA IF NOT EXISTS `system`")
 
     op.create_table(
         "instrument",
@@ -311,7 +311,6 @@ def downgrade() -> None:
     op.drop_index("ix_instrument_market_symbol", table_name="instrument", schema="us_share")
     op.drop_table("instrument", schema="us_share")
 
-    op.execute("DROP SCHEMA IF EXISTS system")
+    op.execute("DROP SCHEMA IF EXISTS `system`")
     op.execute("DROP SCHEMA IF EXISTS a_share")
     op.execute("DROP SCHEMA IF EXISTS us_share")
-
