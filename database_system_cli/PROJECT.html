@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>financial-data-platform 项目设计文档</title>
+  <title>database_system_cli 项目设计文档</title>
   <style>
     :root {
       --bg: #f7f8fa;
@@ -121,15 +121,15 @@
   <div class="layout">
     <nav>
       <h2>目录</h2>
-      <a class="toc-l1" href="#financial-data-platform-项目设计文档">financial-data-platform 项目设计文档</a><a class="toc-l2" href="#1-项目目标">1. 项目目标</a><a class="toc-l2" href="#2-第一阶段范围">2. 第一阶段范围</a><a class="toc-l2" href="#3-技术栈">3. 技术栈</a><a class="toc-l2" href="#4-目录建议">4. 目录建议</a><a class="toc-l2" href="#5-数据模型">5. 数据模型</a><a class="toc-l3" href="#5-1-schema">5.1 Schema</a><a class="toc-l3" href="#5-2-us-share-instrument">5.2 us_share.instrument</a><a class="toc-l3" href="#5-3-us-share-instrument-identifier-history">5.3 us_share.instrument_identifier_history</a><a class="toc-l3" href="#5-4-日频价格表和-instrument-views">5.4 日频价格表和 instrument views</a><a class="toc-l3" href="#5-5-us-share-market-calendar">5.5 us_share.market_calendar</a><a class="toc-l3" href="#5-6-system-ingestion-task-run">5.6 system.ingestion_task_run</a><a class="toc-l3" href="#5-7-system-api-call-log">5.7 system.api_call_log</a><a class="toc-l3" href="#5-8-system-data-quality-check-run">5.8 system.data_quality_check_run</a><a class="toc-l3" href="#5-9-system-data-quality-issue">5.9 system.data_quality_issue</a><a class="toc-l3" href="#5-10-system-repair-plan">5.10 system.repair_plan</a><a class="toc-l2" href="#6-数据流">6. 数据流</a><a class="toc-l3" href="#6-1-load-instrument-list">6.1 Load instrument list</a><a class="toc-l3" href="#6-2-historical-backfill">6.2 Historical backfill</a><a class="toc-l3" href="#6-3-daily-bulk-update">6.3 Daily bulk update</a><a class="toc-l3" href="#6-4-validate-quality">6.4 Validate quality</a><a class="toc-l3" href="#6-5-repair-plan">6.5 Repair plan</a><a class="toc-l3" href="#6-6-query-access">6.6 Query access</a><a class="toc-l2" href="#7-cli-语义">7. CLI 语义</a><a class="toc-l2" href="#8-错误处理原则">8. 错误处理原则</a><a class="toc-l2" href="#9-测试要求">9. 测试要求</a><a class="toc-l2" href="#10-美股市场结构说明">10. 美股市场结构说明</a><a class="toc-l2" href="#11-官方参考资料">11. 官方参考资料</a>
+      <a class="toc-l1" href="#database-system-cli-项目设计文档">database_system_cli 项目设计文档</a><a class="toc-l2" href="#1-项目目标">1. 项目目标</a><a class="toc-l2" href="#2-第一阶段范围">2. 第一阶段范围</a><a class="toc-l2" href="#3-技术栈">3. 技术栈</a><a class="toc-l2" href="#4-目录建议">4. 目录建议</a><a class="toc-l2" href="#5-数据模型">5. 数据模型</a><a class="toc-l3" href="#5-1-schema">5.1 Schema</a><a class="toc-l3" href="#5-2-us-share-instrument">5.2 us_share.instrument</a><a class="toc-l3" href="#5-3-us-share-instrument-identifier-history">5.3 us_share.instrument_identifier_history</a><a class="toc-l3" href="#5-4-日频价格表和-instrument-views">5.4 日频价格表和 instrument views</a><a class="toc-l3" href="#5-5-us-share-market-calendar">5.5 us_share.market_calendar</a><a class="toc-l3" href="#5-6-system-ingestion-task-run">5.6 system.ingestion_task_run</a><a class="toc-l3" href="#5-7-system-api-call-log">5.7 system.api_call_log</a><a class="toc-l3" href="#5-8-system-data-quality-check-run">5.8 system.data_quality_check_run</a><a class="toc-l3" href="#5-9-system-data-quality-issue">5.9 system.data_quality_issue</a><a class="toc-l3" href="#5-10-system-repair-plan">5.10 system.repair_plan</a><a class="toc-l2" href="#6-数据流">6. 数据流</a><a class="toc-l3" href="#6-1-load-instrument-list">6.1 Load instrument list</a><a class="toc-l3" href="#6-2-historical-backfill">6.2 Historical backfill</a><a class="toc-l3" href="#6-3-daily-bulk-update">6.3 Daily bulk update</a><a class="toc-l3" href="#6-4-validate-quality">6.4 Validate quality</a><a class="toc-l3" href="#6-5-repair-plan">6.5 Repair plan</a><a class="toc-l3" href="#6-6-query-access">6.6 Query access</a><a class="toc-l2" href="#7-cli-语义">7. CLI 语义</a><a class="toc-l2" href="#8-错误处理原则">8. 错误处理原则</a><a class="toc-l2" href="#9-测试要求">9. 测试要求</a><a class="toc-l2" href="#10-美股市场结构说明">10. 美股市场结构说明</a><a class="toc-l2" href="#11-官方参考资料">11. 官方参考资料</a>
     </nav>
     <main>
       <article>
-        <div class="meta">Generated from <code>PROJECT.md</code>. Source document remains the project specification.</div>
-        <h1 id="financial-data-platform-项目设计文档">financial-data-platform 项目设计文档</h1>
-<p>本文档主要给 Codex/AI 执行使用，其次给人阅读。说明文字使用中文；目录、命令、schema、表名、字段名、函数名使用英文并保持稳定。</p>
+        <div class="meta">Generated from <code>PROJECT.md</code>. Source document remains the Codex/AI-facing specification; this HTML is the shared readable board.</div>
+        <h1 id="database-system-cli-项目设计文档">database_system_cli 项目设计文档</h1>
+<p>本文档描述 <code>financial-data-platform/database_system_cli/</code> 子项目。<code>PROJECT.md</code> 主要给 Codex/AI 执行使用，是项目规格的文字源文件。<code>PROJECT.html</code> 是给人和 Codex/AI 同时阅读的看板版，适合浏览、检查和展示当前项目结构。说明文字使用中文；目录、命令、schema、表名、字段名、函数名使用英文并保持稳定。</p>
 <h2 id="1-项目目标">1. 项目目标</h2>
-<p><code>financial-data-platform</code> 不是一个单纯下载行情数据的脚本集合，而是一个可追踪、可验证、可扩展的金融数据库系统。</p>
+<p><code>database_system_cli</code> 不是一个单纯下载行情数据的脚本集合，而是 <code>financial-data-platform</code> 仓库里的可追踪、可验证、可扩展的金融数据库系统子项目。</p>
 <p>第一阶段先建立数据基础设施，并完整打通美股股票+ETF 日频量价数据：</p>
 <ul>
 <li>数据源：EODHD paid API</li>
@@ -179,27 +179,32 @@
 <p>依赖管理使用 Poetry。敏感配置只放 <code>.env</code>，仓库只提交 <code>.env.example</code>。</p>
 <p>数据库 schema 变更必须通过 Alembic migration 管理。可以把 Alembic 粗略理解为“数据库表结构的版本管理”，它记录建表、加字段、加索引等 schema 变化。</p>
 <h2 id="4-目录建议">4. 目录建议</h2>
-<p>第一阶段推荐目录：</p>
+<p>第一阶段目录位于仓库的 <code>database_system_cli/</code> 子目录下：</p>
 <pre><code class="language-text">financial-data-platform/
-  AGENTS.md
-  PROJECT.md
-  pyproject.toml
-  .env.example
-  config/
-    default.yaml
-  alembic/
-    versions/
-  src/
-    fdp/
-      cli.py
-      config.py
-      sources/
-        eodhd/
-      storage/
-      quality/
-      repair/
-      research/
-  tests/
+  database_system_cli/
+    AGENTS.md
+    PROJECT.md
+    PROJECT.html
+    PROGRESS.md
+    README.md
+    pyproject.toml
+    .env.example
+    config/
+      default.yaml
+    alembic/
+      versions/
+    docs/
+    src/
+      fdp/
+        cli.py
+        config.py
+        sources/
+          eodhd/
+        storage/
+        quality/
+        repair/
+        research/
+    tests/
 </code></pre>
 <p>说明：</p>
 <ul>

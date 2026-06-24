@@ -1,6 +1,7 @@
-# financial-data-platform
+# database_system_cli
 
-`financial-data-platform` is a traceable and verifiable financial data platform.
+`database_system_cli` is the database CLI subproject inside `financial-data-platform`.
+It is a traceable and verifiable financial data platform focused on US equity EOD data ingestion, validation, repair planning, and research reads.
 
 `PROJECT.md` is the project specification. `PROGRESS.md` tracks implementation status.
 This README is the quickstart for local development.
@@ -21,7 +22,7 @@ After installing Poetry, reopen the terminal or reload your shell, then verify:
 poetry --version
 ```
 
-Install project dependencies from this directory:
+Install project dependencies from the `database_system_cli/` directory:
 
 ```bash
 poetry install

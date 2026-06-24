@@ -1,6 +1,6 @@
 # Progress
 
-This file tracks implementation progress. `PROJECT.md` remains the project specification.
+This file tracks implementation progress for `database_system_cli`. `PROJECT.md` remains the project specification.
 
 ## Current Status
 
@@ -51,11 +51,13 @@ Completed:
 - EODHD Bulk EOD endpoint wrapped through `EodhdClient.get_bulk_eod(...)`
 - `fdp ingest daily` added as the bulk daily update path: one EODHD bulk request, active stock/ETF instrument matching, OHLCV validation, split-table upsert, and task/API audit logging
 - Documentation workflow rule added to `AGENTS.md`: when human-facing Markdown docs are updated, matching HTML docs and the `PROGRESS.md` board must be kept in sync when applicable
+- `PROJECT.md` / `PROJECT.html` audience rule documented: Markdown is the Codex/AI-facing specification source, while HTML is the shared readable board for user and Codex/AI
 - Real post-split 3-year ingest smoke test: `AAPL,MSFT,SPY` from `2023-01-01` to `2025-12-31` wrote 2256 rows into split stock/ETF tables with 0 rejected rows
 - Real post-split 3-year index ingest smoke test: `GSPC.INDX,DJI.INDX,IXIC.INDX,NDX.INDX` from `2023-01-01` to `2025-12-31` wrote 3009 rows into `index_daily_price` with 0 rejected rows
 - Post-split DB verification found 0 duplicate `instrument_id + trade_date` groups in stock, ETF, and index price tables
 - Resolved one vendor data-quality issue manually after EODHD fixed the source data: deleted stale `DJI.INDX` `2024-12-25` row from `index_daily_price`; all four benchmark indices now have 752 rows for `2023-01-01` to `2025-12-31`, and verified non-trading index price rows are 0
 - Real validate smoke test: `fdp validate daily-price --from 2023-01-01 --to 2025-12-31 --asset-types stock,etf,index` completed with 0 issues and wrote check runs for stock, ETF, and index price tables
+- Repository layout migrated so the database CLI system now lives under `financial-data-platform/database_system_cli/`; project docs, source, tests, Alembic migrations, and config moved together, while the repository root is reserved for the future app
 
 Not started:
 

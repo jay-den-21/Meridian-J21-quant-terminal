@@ -1,7 +1,10 @@
+.DS_Store
 .env
+**/.env
 .venv/
 __pycache__/
 *.py[cod]
+*.swp
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -10,6 +13,3 @@ htmlcov/
 dist/
 build/
 *.egg-info/
-AGENTS.md
-PROJECT.md
-主人的流程.md

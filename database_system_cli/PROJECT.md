@@ -1,10 +1,10 @@
-# financial-data-platform 项目设计文档
+# database_system_cli 项目设计文档
 
-本文档主要给 Codex/AI 执行使用，其次给人阅读。说明文字使用中文；目录、命令、schema、表名、字段名、函数名使用英文并保持稳定。
+本文档描述 `financial-data-platform/database_system_cli/` 子项目。`PROJECT.md` 主要给 Codex/AI 执行使用，是项目规格的文字源文件。`PROJECT.html` 是给人和 Codex/AI 同时阅读的看板版，适合浏览、检查和展示当前项目结构。说明文字使用中文；目录、命令、schema、表名、字段名、函数名使用英文并保持稳定。
 
 ## 1. 项目目标
 
-`financial-data-platform` 不是一个单纯下载行情数据的脚本集合，而是一个可追踪、可验证、可扩展的金融数据库系统。
+`database_system_cli` 不是一个单纯下载行情数据的脚本集合，而是 `financial-data-platform` 仓库里的可追踪、可验证、可扩展的金融数据库系统子项目。
 
 第一阶段先建立数据基础设施，并完整打通美股股票+ETF 日频量价数据：
 
@@ -61,29 +61,34 @@
 
 ## 4. 目录建议
 
-第一阶段推荐目录：
+第一阶段目录位于仓库的 `database_system_cli/` 子目录下：
 
 ```text
 financial-data-platform/
-  AGENTS.md
-  PROJECT.md
-  pyproject.toml
-  .env.example
-  config/
-    default.yaml
-  alembic/
-    versions/
-  src/
-    fdp/
-      cli.py
-      config.py
-      sources/
-        eodhd/
-      storage/
-      quality/
-      repair/
-      research/
-  tests/
+  database_system_cli/
+    AGENTS.md
+    PROJECT.md
+    PROJECT.html
+    PROGRESS.md
+    README.md
+    pyproject.toml
+    .env.example
+    config/
+      default.yaml
+    alembic/
+      versions/
+    docs/
+    src/
+      fdp/
+        cli.py
+        config.py
+        sources/
+          eodhd/
+        storage/
+        quality/
+        repair/
+        research/
+    tests/
 ```
 
 说明：
