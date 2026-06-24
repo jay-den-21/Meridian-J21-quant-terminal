@@ -4,7 +4,11 @@ from sqlalchemy.dialects import mysql
 
 from fdp.quality.checks.calendar_alignment import price_rows_on_non_trading_days
 from fdp.quality.checks.duplicate import duplicate_daily_price_groups
-from fdp.quality.checks.missing import missing_daily_price_dates
+from fdp.quality.checks.missing import (
+    loaded_daily_price_instruments,
+    missing_daily_price_dates,
+    missing_loaded_daily_price_dates,
+)
 from fdp.quality.checks.ohlcv import invalid_ohlcv_rows
 from fdp.storage.tables import etf_daily_price, index_daily_price
 
@@ -36,6 +40,34 @@ def test_missing_daily_price_dates_uses_market_calendar() -> None:
     assert "stock_daily_price" in sql
     assert "is_trading_day IS true" in sql
     assert "NOT (EXISTS" in sql
+
+
+def test_missing_loaded_daily_price_dates_uses_loaded_instrument_scope() -> None:
+    statement = missing_loaded_daily_price_dates(
+        date_from=date(2023, 1, 1),
+        date_to=date(2025, 12, 31),
+        price_table=index_daily_price,
+    )
+
+    sql = str(statement.compile(dialect=mysql.dialect()))
+
+    assert "loaded_instruments" in sql
+    assert "index_daily_price" in sql
+    assert "market_calendar" in sql
+    assert "NOT (EXISTS" in sql
+
+
+def test_loaded_daily_price_instruments_builds_loaded_scope_query() -> None:
+    statement = loaded_daily_price_instruments(
+        date_from=date(2023, 1, 1),
+        date_to=date(2025, 12, 31),
+        price_table=index_daily_price,
+    )
+
+    sql = str(statement.compile(dialect=mysql.dialect()))
+
+    assert "index_daily_price" in sql
+    assert "GROUP BY us_share.index_daily_price.instrument_id" in sql
 
 
 def test_invalid_ohlcv_rows_builds_basic_price_constraints() -> None:

@@ -44,23 +44,29 @@ Completed:
 - v0.1 storage now keeps `instrument` as the only writable identity master, adds read-only `stock_instrument`/`etf_instrument`/`index_instrument` views, and writes new price ingest into `stock_daily_price`/`etf_daily_price`/`index_daily_price`
 - `get_data/historical` wrappers now route stock, ETF, index, and market-calendar pulls through explicit reusable functions
 - Data quality query builders now cover duplicate groups, missing trading-day rows, OHLCV constraints, and price rows on non-trading calendar dates
+- EODHD API calls now use a centralized retry/progress policy: up to 3 retries, default 30-second waits, retryable transient status/network failures, and CLI-visible `request`/`retrying`/`success`/`failed` messages without printing API tokens
+- `fdp validate daily-price` command now executes duplicate, missing loaded trading-day row, OHLCV, and non-trading-day price checks, then writes `system.data_quality_check_run` and `system.data_quality_issue`
+- Database-backed research read layer added through `fdp.research.DailyPriceReader`, with method-level dates overriding reader defaults and strict `ValueError` behavior for missing or partial date ranges
+- `fdp research daily-prices` command added as a thin CLI wrapper around the Python research reader
+- EODHD Bulk EOD endpoint wrapped through `EodhdClient.get_bulk_eod(...)`
+- `fdp ingest daily` added as the bulk daily update path: one EODHD bulk request, active stock/ETF instrument matching, OHLCV validation, split-table upsert, and task/API audit logging
+- Documentation workflow rule added to `AGENTS.md`: when human-facing Markdown docs are updated, matching HTML docs and the `PROGRESS.md` board must be kept in sync when applicable
 - Real post-split 3-year ingest smoke test: `AAPL,MSFT,SPY` from `2023-01-01` to `2025-12-31` wrote 2256 rows into split stock/ETF tables with 0 rejected rows
 - Real post-split 3-year index ingest smoke test: `GSPC.INDX,DJI.INDX,IXIC.INDX,NDX.INDX` from `2023-01-01` to `2025-12-31` wrote 3009 rows into `index_daily_price` with 0 rejected rows
 - Post-split DB verification found 0 duplicate `instrument_id + trade_date` groups in stock, ETF, and index price tables
-- Known data-quality finding: `DJI.INDX` has one EODHD price row on `2024-12-25`, while `market_calendar` marks that date as non-trading; this should be recorded by the future validate workflow, not auto-corrected
+- Resolved one vendor data-quality issue manually after EODHD fixed the source data: deleted stale `DJI.INDX` `2024-12-25` row from `index_daily_price`; all four benchmark indices now have 752 rows for `2023-01-01` to `2025-12-31`, and verified non-trading index price rows are 0
+- Real validate smoke test: `fdp validate daily-price --from 2023-01-01 --to 2025-12-31 --asset-types stock,etf,index` completed with 0 issues and wrote check runs for stock, ETF, and index price tables
 
 Not started:
 
-- `fdp validate` command that executes quality checks and writes `system.data_quality_check_run` / `system.data_quality_issue`
 - ID mapping ingestion for CUSIP/ISIN/FIGI/LEI/CIK validation
 - Repair plan workflow
-- Database-backed access functions
-- Real `fdp ingest daily`, `fdp validate`, and `fdp repair` subcommands
+- Real `fdp repair` subcommand
 
 ## Next Step
 
-Start validate/access workflow:
+Start repair/access workflow:
 
-- add independent `fdp validate daily-price` execution that records issues, including price rows on non-trading days
+- add an operator-confirmed `fdp repair` path for deleting or quarantining stale vendor rows after source-side corrections
 - add an explicit operator-controlled skip/manual-review path for future rename-history API outages
-- add database-backed access functions for research reads
+- run an operator-approved real smoke check for `fdp ingest daily` because the EODHD bulk endpoint consumes at least 100 API calls per exchange request

@@ -58,6 +58,29 @@ class HistoricalDailyPriceLoadResult:
 
 
 @dataclass(frozen=True)
+class BulkDailyPriceLoadResult:
+    """Summary returned by the EODHD bulk daily price loader.
+
+    Input: one bulk EOD API call, active instrument matching, parser counts, and writes.
+    Output: compact result for CLI output and tests.
+    Flow: bulk EOD rows -> instrument match -> parse -> split daily price upsert.
+    """
+
+    run_id: int
+    status: str
+    exchange: str
+    trade_date: date | None
+    rows_fetched: int
+    rows_matched: int
+    rows_inserted: int
+    rows_rejected: int
+    api_calls: int
+    rejected_rows: list[RejectedDailyPriceRow]
+    unmatched_rows: int
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
 class MarketCalendarLoadResult:
     """Summary returned by `load_market_calendar`.
 

@@ -1,15 +1,15 @@
 import json
 from datetime import date
+from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
 
 from fdp.sources.eodhd.client import EodhdClient
 
 
 class FakeResponse:
-    status = 200
-
-    def __init__(self, payload: object) -> None:
+    def __init__(self, payload: object, *, status: int = 200) -> None:
         self.payload = payload
+        self.status = status
 
     def __enter__(self) -> "FakeResponse":
         return self
@@ -117,6 +117,46 @@ def test_eodhd_client_fetches_historical_eod_prices() -> None:
     assert response.rows_returned == 1
 
 
+def test_eodhd_client_fetches_bulk_eod_prices() -> None:
+    requested_urls: list[str] = []
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        requested_urls.append(request.full_url)
+        return FakeResponse(
+            [
+                {
+                    "code": "AAPL",
+                    "date": "2023-01-03",
+                    "open": 100,
+                    "high": 101,
+                    "low": 99,
+                    "close": 100.5,
+                    "adjusted_close": 100.5,
+                    "volume": 1000,
+                }
+            ]
+        )
+
+    client = EodhdClient(api_key="test-token", transport=fake_transport)
+    response = client.get_bulk_eod(
+        "US",
+        trade_date=date(2023, 1, 3),
+        symbols=["msft", "AAPL", "MSFT"],
+    )
+
+    parsed_url = urlparse(requested_urls[0])
+    query = parse_qs(parsed_url.query)
+
+    assert parsed_url.path == "/api/eod-bulk-last-day/US"
+    assert query["date"] == ["2023-01-03"]
+    assert query["symbols"] == ["MSFT,AAPL"]
+    assert query["api_token"] == ["test-token"]
+    assert query["fmt"] == ["json"]
+    assert response.success is True
+    assert response.endpoint == "/eod-bulk-last-day/US"
+    assert response.rows_returned == 1
+
+
 def test_eodhd_client_fetches_legacy_exchange_details() -> None:
     requested_urls: list[str] = []
 
@@ -149,3 +189,34 @@ def test_eodhd_client_fetches_legacy_exchange_details() -> None:
     assert response.endpoint == "/exchange-details/US"
     assert response.rows_returned == 1
     assert response.payload[0]["Code"] == "US"
+
+
+def test_eodhd_client_retries_transient_failures_with_progress() -> None:
+    events = []
+    sleeps = []
+    calls = 0
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise URLError("temporary disconnect")
+        return FakeResponse([{"Code": "AAPL", "Type": "Common Stock"}])
+
+    client = EodhdClient(
+        api_key="test-token",
+        max_retries=1,
+        retry_delay_seconds=0,
+        transport=fake_transport,
+        sleeper=sleeps.append,
+        progress_callback=events.append,
+    )
+    response = client.get_exchange_symbols("US")
+
+    assert response.success is True
+    assert response.retry_count == 1
+    assert calls == 2
+    assert sleeps == [0]
+    assert [event.kind for event in events] == ["request", "retry", "request", "success"]
+    assert events[1].endpoint == "/exchange-symbol-list/US"
+    assert "temporary disconnect" in events[1].error_message

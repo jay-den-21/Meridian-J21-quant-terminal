@@ -266,6 +266,33 @@ def load_active_instruments_by_provider_symbols(
     ]
 
 
+def load_active_instruments_for_market(
+    connection: Connection,
+    *,
+    market: str,
+    asset_types: list[str] | None = None,
+) -> list[dict[str, object]]:
+    """Fetch active EODHD instruments for one market and optional asset types."""
+    conditions = [
+        instrument.c.market == market,
+        instrument.c.provider == "EODHD",
+        instrument.c.is_active.is_(True),
+    ]
+    if asset_types:
+        conditions.append(instrument.c.asset_type.in_(asset_types))
+
+    result = connection.execute(
+        select(
+            instrument.c.instrument_id,
+            instrument.c.symbol,
+            instrument.c.provider_symbol,
+            instrument.c.asset_type,
+            instrument.c.currency,
+        ).where(*conditions)
+    )
+    return [dict(row) for row in result.mappings()]
+
+
 def split_provider_symbol(provider_symbol: str) -> tuple[str, str]:
     """Split a provider symbol into ticker and provider exchange suffix."""
     parts = provider_symbol.rsplit(".", 1)

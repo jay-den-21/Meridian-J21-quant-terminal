@@ -4,6 +4,7 @@ from typing import Any
 
 from fdp.sources.eodhd.client import EodhdApiResponse
 from fdp.sources.eodhd.ingestion import (
+    load_bulk_daily_prices,
     load_index_daily_prices,
     load_exchange_symbols,
     load_historical_daily_prices,
@@ -13,6 +14,7 @@ from fdp.sources.eodhd.ingestion import (
 from fdp.sources.eodhd.instruments import SymbolChange
 from fdp.storage.tables import (
     api_call_log,
+    etf_daily_price,
     index_daily_price,
     ingestion_task_run,
     instrument,
@@ -294,6 +296,118 @@ class FakeHistoryClient:
                 }
             ],
         )
+
+
+class FakeBulkConnection:
+    def __init__(self) -> None:
+        self.statements: list[Any] = []
+        self.instrument_rows = [
+            {
+                "instrument_id": 1,
+                "symbol": "AAPL",
+                "provider_symbol": "AAPL.US",
+                "asset_type": "stock",
+                "currency": "USD",
+            },
+            {
+                "instrument_id": 2,
+                "symbol": "SPY",
+                "provider_symbol": "SPY.US",
+                "asset_type": "etf",
+                "currency": "USD",
+            },
+        ]
+
+    def execute(self, statement):
+        self.statements.append(statement)
+        table = getattr(statement, "table", None)
+        if table is ingestion_task_run:
+            return FakeResult(inserted_primary_key=(555,))
+        if table is None:
+            return FakeHistorySelectResult(self.instrument_rows)
+        return FakeResult()
+
+
+class FakeBulkClient:
+    def get_bulk_eod(
+        self,
+        exchange: str,
+        *,
+        trade_date: date | None = None,
+        symbols: list[str] | None = None,
+    ) -> EodhdApiResponse:
+        assert exchange == "US"
+        assert trade_date == date(2023, 1, 3)
+        assert symbols == ["AAPL", "SPY"]
+        return EodhdApiResponse(
+            endpoint="/eod-bulk-last-day/US",
+            status_code=200,
+            success=True,
+            retry_count=0,
+            rows_returned=3,
+            duration_ms=10,
+            payload=[
+                {
+                    "code": "AAPL",
+                    "date": "2023-01-03",
+                    "open": "100",
+                    "high": "101",
+                    "low": "99",
+                    "close": "100.5",
+                    "adjusted_close": "100.5",
+                    "volume": "1000",
+                },
+                {
+                    "code": "SPY",
+                    "date": "2023-01-03",
+                    "open": "300",
+                    "high": "301",
+                    "low": "299",
+                    "close": "300.5",
+                    "adjusted_close": "300.5",
+                    "volume": "2000",
+                },
+                {
+                    "code": "UNKNOWN",
+                    "date": "2023-01-03",
+                    "open": "10",
+                    "high": "11",
+                    "low": "9",
+                    "close": "10.5",
+                    "adjusted_close": "10.5",
+                    "volume": "100",
+                },
+            ],
+        )
+
+
+def test_load_bulk_daily_prices_uses_one_api_call_and_split_table_upserts() -> None:
+    connection = FakeBulkConnection()
+
+    result = load_bulk_daily_prices(
+        connection,
+        FakeBulkClient(),
+        exchange="US",
+        trade_date=date(2023, 1, 3),
+        symbols=["AAPL", "SPY"],
+    )
+
+    assert result.status == "partial_failed"
+    assert result.run_id == 555
+    assert result.rows_fetched == 3
+    assert result.rows_matched == 2
+    assert result.rows_inserted == 2
+    assert result.rows_rejected == 1
+    assert result.unmatched_rows == 1
+    statement_tables = [getattr(statement, "table", None) for statement in connection.statements]
+    assert statement_tables == [
+        ingestion_task_run,
+        api_call_log,
+        None,
+        stock_daily_price,
+        etf_daily_price,
+        ingestion_task_run,
+    ]
 
 
 def test_load_historical_daily_prices_upserts_valid_rows() -> None:

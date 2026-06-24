@@ -37,3 +37,41 @@ def test_cli_registers_calendar_ingest_command() -> None:
     assert "--market" in result.output
     assert "--from" in result.output
     assert "--to" in result.output
+
+
+def test_cli_registers_daily_bulk_ingest_command() -> None:
+    result = CliRunner().invoke(app, ["ingest", "daily", "--help"])
+
+    assert result.exit_code == 0
+    assert "--exchange" in result.output
+    assert "--date" in result.output
+    assert "--symbols" in result.output
+    assert "--asset-types" in result.output
+
+
+def test_cli_registers_daily_price_validate_command() -> None:
+    result = CliRunner().invoke(app, ["validate", "daily-price", "--help"])
+
+    assert result.exit_code == 0
+    assert "--from" in result.output
+    assert "--to" in result.output
+    assert "--asset-types" in result.output
+
+
+def test_cli_registers_research_daily_prices_command() -> None:
+    result = CliRunner().invoke(app, ["research", "daily-prices", "--help"])
+
+    assert result.exit_code == 0
+    assert "--symbols" in result.output
+    assert "--from" in result.output
+    assert "--to" in result.output
+    assert "--asset-type" in result.output
+    assert "--adjusted" in result.output
+    assert "--raw" in result.output
+
+
+def test_cli_research_daily_prices_requires_dates_before_database_connection() -> None:
+    result = CliRunner().invoke(app, ["research", "daily-prices", "--symbols", "AAPL"])
+
+    assert result.exit_code != 0
+    assert "requires --from and --to" in result.output

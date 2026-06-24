@@ -121,12 +121,66 @@
   <div class="layout">
     <nav>
       <h2>目录</h2>
-      <a class="toc-l1" href="#financial-data-platform-项目设计文档">financial-data-platform 项目设计文档</a><a class="toc-l2" href="#1-项目目标">1. 项目目标</a><a class="toc-l2" href="#2-第一阶段范围">2. 第一阶段范围</a><a class="toc-l2" href="#3-技术栈">3. 技术栈</a><a class="toc-l2" href="#4-目录建议">4. 目录建议</a><a class="toc-l2" href="#5-数据模型">5. 数据模型</a><a class="toc-l3" href="#5-1-schema">5.1 Schema</a><a class="toc-l3" href="#5-2-usshare-instrument">5.2 <code>us_share.instrument</code></a><a class="toc-l3" href="#5-3-usshare-dailyprice">5.3 <code>us_share.daily_price</code></a><a class="toc-l3" href="#5-4-usshare-marketcalendar">5.4 <code>us_share.market_calendar</code></a><a class="toc-l3" href="#5-5-system-ingestiontaskrun">5.5 <code>system.ingestion_task_run</code></a><a class="toc-l3" href="#5-6-system-apicalllog">5.6 <code>system.api_call_log</code></a><a class="toc-l3" href="#5-7-system-dataqualitycheckrun">5.7 <code>system.data_quality_check_run</code></a><a class="toc-l3" href="#5-8-system-dataqualityissue">5.8 <code>system.data_quality_issue</code></a><a class="toc-l3" href="#5-9-system-repairplan">5.9 <code>system.repair_plan</code></a><a class="toc-l2" href="#6-数据流">6. 数据流</a><a class="toc-l3" href="#6-1-load-instrument-list">6.1 Load instrument list</a><a class="toc-l3" href="#6-2-historical-backfill">6.2 Historical backfill</a><a class="toc-l3" href="#6-3-daily-bulk-update">6.3 Daily bulk update</a><a class="toc-l3" href="#6-4-validate-quality">6.4 Validate quality</a><a class="toc-l3" href="#6-5-repair-plan">6.5 Repair plan</a><a class="toc-l3" href="#6-6-query-access">6.6 Query access</a><a class="toc-l2" href="#7-cli-语义">7. CLI 语义</a><a class="toc-l2" href="#8-错误处理原则">8. 错误处理原则</a><a class="toc-l2" href="#9-测试要求">9. 测试要求</a><a class="toc-l2" href="#10-美股市场结构说明">10. 美股市场结构说明</a><a class="toc-l2" href="#11-官方参考资料">11. 官方参考资料</a>
+      <a class="toc-l1" href="#financial-data-platform-项目设计文档">financial-data-platform 项目设计文档</a><a class="toc-l2" href="#1-项目目标">1. 项目目标</a><a class="toc-l2" href="#2-第一阶段范围">2. 第一阶段范围</a><a class="toc-l2" href="#3-技术栈">3. 技术栈</a><a class="toc-l2" href="#4-目录建议">4. 目录建议</a><a class="toc-l2" href="#5-数据模型">5. 数据模型</a><a class="toc-l3" href="#5-1-schema">5.1 Schema</a><a class="toc-l3" href="#5-2-us-share-instrument">5.2 us_share.instrument</a><a class="toc-l3" href="#5-3-us-share-instrument-identifier-history">5.3 us_share.instrument_identifier_history</a><a class="toc-l3" href="#5-4-日频价格表和-instrument-views">5.4 日频价格表和 instrument views</a><a class="toc-l3" href="#5-5-us-share-market-calendar">5.5 us_share.market_calendar</a><a class="toc-l3" href="#5-6-system-ingestion-task-run">5.6 system.ingestion_task_run</a><a class="toc-l3" href="#5-7-system-api-call-log">5.7 system.api_call_log</a><a class="toc-l3" href="#5-8-system-data-quality-check-run">5.8 system.data_quality_check_run</a><a class="toc-l3" href="#5-9-system-data-quality-issue">5.9 system.data_quality_issue</a><a class="toc-l3" href="#5-10-system-repair-plan">5.10 system.repair_plan</a><a class="toc-l2" href="#6-数据流">6. 数据流</a><a class="toc-l3" href="#6-1-load-instrument-list">6.1 Load instrument list</a><a class="toc-l3" href="#6-2-historical-backfill">6.2 Historical backfill</a><a class="toc-l3" href="#6-3-daily-bulk-update">6.3 Daily bulk update</a><a class="toc-l3" href="#6-4-validate-quality">6.4 Validate quality</a><a class="toc-l3" href="#6-5-repair-plan">6.5 Repair plan</a><a class="toc-l3" href="#6-6-query-access">6.6 Query access</a><a class="toc-l2" href="#7-cli-语义">7. CLI 语义</a><a class="toc-l2" href="#8-错误处理原则">8. 错误处理原则</a><a class="toc-l2" href="#9-测试要求">9. 测试要求</a><a class="toc-l2" href="#10-美股市场结构说明">10. 美股市场结构说明</a><a class="toc-l2" href="#11-官方参考资料">11. 官方参考资料</a>
     </nav>
     <main>
       <article>
-        <div class="meta">Generated from <code>PROJECT.md</code>. Source document remains unchanged.</div>
-        <h1 id="financial-data-platform-项目设计文档">financial-data-platform 项目设计文档</h1><p>本文档主要给 Codex/AI 执行使用，其次给人阅读。说明文字使用中文；目录、命令、schema、表名、字段名、函数名使用英文并保持稳定。</p><h2 id="1-项目目标">1. 项目目标</h2><p><code>financial-data-platform</code> 不是一个单纯下载行情数据的脚本集合，而是一个可追踪、可验证、可扩展的金融数据库系统。</p><p>第一阶段先建立数据基础设施，并完整打通美股股票+ETF 日频量价数据：</p><ul><li>数据源：EODHD paid API</li><li>市场：<code>US</code></li><li>数据范围：当前活跃股票+ETF，不包含退市标的</li><li>历史深度：近 20 年</li><li>数据粒度：一个标的一天一行</li><li>数据库：本机 MySQL</li><li>schema：<code>us_share</code>、<code>a_share</code>、<code>system</code></li></ul><p>长期方向是支持策略研究和策略交易平台，但第一阶段只建设可信数据内核，不实现实盘交易、复杂前端、多数据源兜底或自动猜测式修复。</p><h2 id="2-第一阶段范围">2. 第一阶段范围</h2><p>必须完成的能力：</p><ul><li>从 EODHD 获取 US 市场股票+ETF 的 <code>instrument</code> 清单。</li><li>按 ticker 回填近 20 年历史日频 OHLCV。</li><li>使用 EODHD Bulk EOD 做每日盘后增量更新。</li><li>将结构化数据写入 MySQL。</li><li>使用唯一键 upsert 防止重复写入。</li><li>将任务运行状态、API 调用摘要、质量检查结果写入 <code>system</code> schema。</li><li>提供 Python 查询函数，默认从数据库读取，不直接请求 EODHD。</li><li>提供 CLI 命令用于 <code>ingest</code>、<code>validate</code>、<code>repair</code>。</li></ul><p>明确不做的事情：</p><ul><li>不做实盘下单。</li><li>不做多数据源 fallback。</li><li>不做复杂 app 前端。</li><li>不保存全量 raw API response。</li><li>不自动修正价格。</li><li>不给缺失交易日插入空价格行。</li><li>不包含退市股票；后续单独设计 survivorship bias / delisted instrument 模块。</li></ul><h2 id="3-技术栈">3. 技术栈</h2><p>第一版使用：</p><ul><li>Python</li><li>Poetry</li><li>MySQL</li><li>SQLAlchemy Core</li><li>Alembic</li><li>Typer</li><li>pytest</li><li>YAML + <code>.env</code></li></ul><p>依赖管理使用 Poetry。敏感配置只放 <code>.env</code>，仓库只提交 <code>.env.example</code>。</p><p>数据库 schema 变更必须通过 Alembic migration 管理。可以把 Alembic 粗略理解为“数据库表结构的版本管理”，它记录建表、加字段、加索引等 schema 变化。</p><h2 id="4-目录建议">4. 目录建议</h2><p>第一阶段推荐目录：</p><pre><code>financial-data-platform/
+        <div class="meta">Generated from <code>PROJECT.md</code>. Source document remains the project specification.</div>
+        <h1 id="financial-data-platform-项目设计文档">financial-data-platform 项目设计文档</h1>
+<p>本文档主要给 Codex/AI 执行使用，其次给人阅读。说明文字使用中文；目录、命令、schema、表名、字段名、函数名使用英文并保持稳定。</p>
+<h2 id="1-项目目标">1. 项目目标</h2>
+<p><code>financial-data-platform</code> 不是一个单纯下载行情数据的脚本集合，而是一个可追踪、可验证、可扩展的金融数据库系统。</p>
+<p>第一阶段先建立数据基础设施，并完整打通美股股票+ETF 日频量价数据：</p>
+<ul>
+<li>数据源：EODHD paid API</li>
+<li>市场：<code>US</code></li>
+<li>数据范围：当前活跃股票+ETF；可额外保存常用市场指数作为 benchmark time series；不包含退市标的</li>
+<li>历史深度：近 20 年</li>
+<li>数据粒度：一个标的一天一行</li>
+<li>数据库：本机 MySQL</li>
+<li>schema：<code>us_share</code>、<code>a_share</code>、<code>system</code></li>
+</ul>
+<p>长期方向是支持策略研究和策略交易平台，但第一阶段只建设可信数据内核，不实现实盘交易、复杂前端、多数据源兜底或自动猜测式修复。</p>
+<h2 id="2-第一阶段范围">2. 第一阶段范围</h2>
+<p>必须完成的能力：</p>
+<ul>
+<li>从 EODHD 获取 US 市场股票+ETF 的 <code>instrument</code> 清单。</li>
+<li>按 ticker 回填近 20 年历史日频 OHLCV。</li>
+<li>按 provider symbol 拉取常用市场指数的历史日频 OHLCV，用于 benchmark/market regime 研究。</li>
+<li>使用 EODHD Bulk EOD 做每日盘后增量更新。</li>
+<li>将结构化数据写入 MySQL。</li>
+<li>使用唯一键 upsert 防止重复写入。</li>
+<li>将任务运行状态、API 调用摘要、质量检查结果写入 <code>system</code> schema。</li>
+<li>提供 Python 查询函数，默认从数据库读取，不直接请求 EODHD。</li>
+<li>提供 CLI 命令用于 <code>ingest</code>、<code>validate</code>、<code>repair</code>。</li>
+</ul>
+<p>明确不做的事情：</p>
+<ul>
+<li>不做实盘下单。</li>
+<li>不做多数据源 fallback。</li>
+<li>不做复杂 app 前端。</li>
+<li>不保存全量 raw API response。</li>
+<li>不自动修正价格。</li>
+<li>不给缺失交易日插入空价格行。</li>
+<li>不包含退市股票；后续单独设计 survivorship bias / delisted instrument 模块。</li>
+</ul>
+<h2 id="3-技术栈">3. 技术栈</h2>
+<p>第一版使用：</p>
+<ul>
+<li>Python</li>
+<li>Poetry</li>
+<li>MySQL</li>
+<li>SQLAlchemy Core</li>
+<li>Alembic</li>
+<li>Typer</li>
+<li>pytest</li>
+<li>YAML + <code>.env</code></li>
+</ul>
+<p>依赖管理使用 Poetry。敏感配置只放 <code>.env</code>，仓库只提交 <code>.env.example</code>。</p>
+<p>数据库 schema 变更必须通过 Alembic migration 管理。可以把 Alembic 粗略理解为“数据库表结构的版本管理”，它记录建表、加字段、加索引等 schema 变化。</p>
+<h2 id="4-目录建议">4. 目录建议</h2>
+<p>第一阶段推荐目录：</p>
+<pre><code class="language-text">financial-data-platform/
   AGENTS.md
   PROJECT.md
   pyproject.toml
@@ -144,8 +198,39 @@
       storage/
       quality/
       repair/
-      access/
-  tests/</code></pre><p>说明：</p><ul><li><code>sources/eodhd/</code> 只负责 EODHD API client、字段解析、数据源语义。</li><li><code>storage/</code> 负责 MySQL 连接、SQLAlchemy Core table definitions、upsert。</li><li><code>quality/</code> 负责重复、缺失、OHLCV 合法性、空值等检查。</li><li><code>repair/</code> 负责生成和执行人工确认后的 backfill plan。</li><li><code>access/</code> 负责研究/策略读取接口，例如 <code>get_daily_prices(...)</code>。</li><li><code>cli.py</code> 暴露 <code>fdp ingest</code>、<code>fdp validate</code>、<code>fdp repair</code>。</li></ul><h2 id="5-数据模型">5. 数据模型</h2><h3 id="5-1-schema">5.1 Schema</h3><p>第一版使用同一个 MySQL server 下的多个 schema：</p><ul><li><code>us_share</code>：美股业务数据</li><li><code>a_share</code>：A 股业务数据，第一阶段预留，后续使用 Tushare</li><li><code>system</code>：任务状态、质量报告、API 调用摘要、修复计划</li></ul><p>测试必须使用独立 schema，例如：</p><ul><li><code>test_us_share</code></li><li><code>test_a_share</code></li><li><code>test_system</code></li></ul><p>测试不得污染真实数据。</p><h3 id="5-2-usshare-instrument">5.2 <code>us_share.instrument</code></h3><p><code>instrument</code> 是标的主表，不是字段名称表。</p><p>一行代表一个金融标的，例如 Apple、Microsoft、SPY ETF。它回答“这个东西是谁”。</p><p>建议字段：</p><pre><code>instrument_id
+      research/
+  tests/
+</code></pre>
+<p>说明：</p>
+<ul>
+<li><code>sources/eodhd/</code> 只负责 EODHD API client、字段解析、数据源语义。</li>
+<li><code>storage/</code> 负责 MySQL 连接、SQLAlchemy Core table definitions、upsert。</li>
+<li><code>quality/</code> 负责重复、缺失、OHLCV 合法性、空值等检查。</li>
+<li><code>repair/</code> 负责生成和执行人工确认后的 backfill plan。</li>
+<li><code>research/</code> 负责 Python/notebook/backtest 读取接口，例如 <code>DailyPriceReader.get_daily_prices(...)</code>。</li>
+<li><code>cli.py</code> 暴露 <code>fdp ingest</code>、<code>fdp validate</code>、<code>fdp repair</code>、<code>fdp research</code>。</li>
+</ul>
+<h2 id="5-数据模型">5. 数据模型</h2>
+<h3 id="5-1-schema">5.1 Schema</h3>
+<p>第一版使用同一个 MySQL server 下的多个 schema：</p>
+<ul>
+<li><code>us_share</code>：美股业务数据</li>
+<li><code>a_share</code>：A 股业务数据，第一阶段预留，后续使用 Tushare</li>
+<li><code>system</code>：任务状态、质量报告、API 调用摘要、修复计划</li>
+</ul>
+<p>备注：旧的本地 A 股程序/数据库名叫 <code>qtdb_pro</code>。本项目的新 schema 名称仍统一使用 <code>a_share</code>，不要同时创建 <code>qtdb_pro</code> 和 <code>a_share</code> 两套 A 股 schema。</p>
+<p>测试必须使用独立 schema，例如：</p>
+<ul>
+<li><code>test_us_share</code></li>
+<li><code>test_a_share</code></li>
+<li><code>test_system</code></li>
+</ul>
+<p>测试不得污染真实数据。</p>
+<h3 id="5-2-us-share-instrument">5.2 <code>us_share.instrument</code></h3>
+<p><code>instrument</code> 是标的主表，不是字段名称表。</p>
+<p>一行代表一个金融标的，例如 Apple、Microsoft、SPY ETF。它回答“这个东西是谁”。</p>
+<p>建议字段：</p>
+<pre><code class="language-text">instrument_id
 market
 symbol
 provider
@@ -158,10 +243,66 @@ is_active
 listed_date
 delisted_date
 created_at
-updated_at</code></pre><p>示例：</p><pre><code>instrument_id | market | symbol | provider | provider_symbol | name       | exchange | asset_type | currency | is_active
+updated_at
+</code></pre>
+<p>示例：</p>
+<pre><code class="language-text">instrument_id | market | symbol | provider | provider_symbol | name       | exchange | asset_type | currency | is_active
 1             | US     | AAPL   | EODHD    | AAPL.US         | Apple Inc. | NASDAQ   | stock      | USD      | 1
-2             | US     | SPY    | EODHD    | SPY.US          | SPDR S&amp;P...| NYSEARCA | etf        | USD      | 1</code></pre><p>约束：</p><ul><li>必须保留 <code>provider_symbol</code>，例如 <code>AAPL.US</code>。</li><li>必须保留标准 <code>symbol</code>，例如 <code>AAPL</code>。</li><li>必须保留 <code>market</code>、<code>exchange</code>、<code>asset_type</code>、<code>currency</code>。</li><li>第一阶段只纳入 active stock/ETF。</li></ul><h3 id="5-3-usshare-dailyprice">5.3 <code>us_share.daily_price</code></h3><p><code>daily_price</code> 是日频量价表。它回答“这个标的这一天价格是多少”。</p><p>建议字段：</p><pre><code>daily_price_id
+2             | US     | SPY    | EODHD    | SPY.US          | SPDR S&amp;P...| NYSEARCA | etf        | USD      | 1
+</code></pre>
+<p>约束：</p>
+<ul>
+<li>必须保留 <code>provider_symbol</code>，例如 <code>AAPL.US</code>。</li>
+<li>必须保留标准 <code>symbol</code>，例如 <code>AAPL</code>。</li>
+<li>必须保留 <code>market</code>、<code>exchange</code>、<code>asset_type</code>、<code>currency</code>。</li>
+<li>第一阶段 instrument 清单只纳入 active stock/ETF；常用市场指数可作为 <code>asset_type = &quot;index&quot;</code> 的手动 provider-symbol 集合写入。</li>
+</ul>
+<h3 id="5-3-us-share-instrument-identifier-history">5.3 <code>us_share.instrument_identifier_history</code></h3>
+<p><code>instrument_identifier_history</code> 记录一个标的历史上使用过的标识符。它解决 <code>FB -&gt; META</code> 这类 ticker/provider symbol 变化导致同一家公司被写成多个 <code>instrument_id</code> 的问题。</p>
+<p>建议字段：</p>
+<pre><code class="language-text">identifier_history_id
 instrument_id
+id_type
+id_value
+valid_from
+valid_to
+source
+created_at
+updated_at
+</code></pre>
+<p>示例：</p>
+<pre><code class="language-text">instrument_id | id_type         | id_value | valid_from | valid_to   | source
+1             | ticker          | FB       | null       | 2022-06-08 | EODHD_SYMBOL_CHANGE_HISTORY
+1             | provider_symbol | FB.US    | null       | 2022-06-08 | EODHD_SYMBOL_CHANGE_HISTORY
+1             | ticker          | META     | 2022-06-09 | null       | EODHD_SYMBOL_CHANGE_HISTORY
+1             | provider_symbol | META.US  | 2022-06-09 | null       | EODHD_SYMBOL_CHANGE_HISTORY
+</code></pre>
+<p>规则：</p>
+<ul>
+<li><code>ticker</code> 和 <code>provider_symbol</code> 变化必须写入本表。</li>
+<li>后续可扩展保存 <code>cusip</code>、<code>isin</code>、<code>figi</code>、<code>lei</code>、<code>cik</code> 等 ID mapping 校验结果。</li>
+<li><code>instrument</code> ingestion 必须优先使用 EODHD <code>symbol-change-history</code> 做显式 rename reconcile，不能主要靠猜 candidate。</li>
+<li>如果 rename 后的新 <code>provider_symbol</code> 已经对应另一个 <code>instrument_id</code>，不得 silent merge；后续应作为质量问题处理。</li>
+</ul>
+<h3 id="5-4-日频价格表和-instrument-views">5.4 日频价格表和 instrument views</h3>
+<p>v0.1 使用“身份统一，价格拆表”的结构：</p>
+<ul>
+<li><code>us_share.instrument</code> 是唯一可写 identity master。</li>
+<li><code>us_share.stock_instrument</code>、<code>us_share.etf_instrument</code>、<code>us_share.index_instrument</code> 是只读 view，按 <code>asset_type</code> 从 <code>instrument</code> 过滤出来。</li>
+<li><code>us_share.stock_daily_price</code>、<code>us_share.etf_daily_price</code>、<code>us_share.index_daily_price</code> 是真实日频量价表。</li>
+<li>旧 <code>us_share.daily_price</code> 暂时保留为 legacy 过渡表，不作为 v0.1 新 ingest 的主要写入目标。</li>
+</ul>
+<p>这样做的原因：</p>
+<ul>
+<li>ticker rename、provider symbol 变化、identifier history 只维护一套 <code>instrument_id</code>。</li>
+<li>查询和质量检查时，股票、ETF、指数的价格表不再混在一个物理表里。</li>
+<li>后续做 point-in-time universe、delisted instrument、corporate action 时，身份链路仍然集中。</li>
+</ul>
+<p>建议字段：</p>
+<pre><code class="language-text">{asset}_daily_price_id
+instrument_id
+symbol
+provider_symbol
 trade_date
 open
 high
@@ -173,17 +314,52 @@ currency
 source
 source_updated_at
 created_at
-updated_at</code></pre><p>唯一键：</p><pre><code>unique(instrument_id, trade_date)</code></pre><p>写入规则：</p><ul><li>必须使用 MySQL upsert：<code>INSERT ... ON DUPLICATE KEY UPDATE</code>。</li><li>不允许同一个 <code>instrument_id + trade_date</code> 产生多行。</li><li>原始 OHLCV 和 <code>adjusted_close</code> 同时保留。</li><li>不在入库时只保留 adjusted price。</li></ul><p>读取层提供价格口径开关：</p><pre><code>get_daily_prices(symbols, start, end, adjusted=True)</code></pre><p>第一阶段 <code>adjusted=True</code> 至少使用 <code>adjusted_close</code> 作为复权收盘价。完整 adjusted OHLC 可在后续通过明确算法扩展。</p><h3 id="5-4-usshare-marketcalendar">5.4 <code>us_share.market_calendar</code></h3><p>市场交易日历表，用于判断缺失交易日。</p><p>建议字段：</p><pre><code>calendar_id
-market
-exchange
+updated_at
+</code></pre>
+<p>唯一键：</p>
+<pre><code class="language-text">unique(instrument_id, trade_date)
+</code></pre>
+<p>写入规则：</p>
+<ul>
+<li>必须使用 MySQL upsert：<code>INSERT ... ON DUPLICATE KEY UPDATE</code>。</li>
+<li>不允许同一个 <code>instrument_id + trade_date</code> 产生多行。</li>
+<li><code>symbol</code> 和 <code>provider_symbol</code> 保存当日有效标识符，用于直接查表、审计和排查；身份连续性仍以 <code>instrument_id</code> 为准。</li>
+<li>原始 OHLCV 和 <code>adjusted_close</code> 同时保留。</li>
+<li>不在入库时只保留 adjusted price。</li>
+<li>stock 数据写 <code>stock_daily_price</code>。</li>
+<li>ETF 数据写 <code>etf_daily_price</code>。</li>
+<li>benchmark index 数据写 <code>index_daily_price</code>。</li>
+<li><code>fdp ingest history</code> 用于历史回填，按 provider symbol 逐个调用历史 EOD API。</li>
+<li><code>fdp ingest daily</code> 用于每日增量，调用 EODHD Bulk EOD API 后写入 stock/ETF split tables。</li>
+</ul>
+<p>读取层提供价格口径开关：</p>
+<pre><code class="language-python">DailyPriceReader(connection, date_from=start, date_to=end).get_daily_prices(
+    symbols=symbols,
+    adjusted=True,
+)
+</code></pre>
+<p>第一阶段 <code>adjusted=True</code> 至少使用 <code>adjusted_close</code> 作为复权收盘价。完整 adjusted OHLC 可在后续通过明确算法扩展。</p>
+<h3 id="5-5-us-share-market-calendar">5.5 <code>us_share.market_calendar</code></h3>
+<p>市场交易日历表，用于判断缺失交易日。</p>
+<p>建议字段：</p>
+<pre><code class="language-text">calendar_id
 calendar_date
 is_trading_day
-is_early_close
-early_close_time
-timezone
 source
 created_at
-updated_at</code></pre><p>规则：</p><ul><li>日期按交易所本地日期保存。</li><li>美股使用 US 交易日日期。</li><li>优先从 EODHD exchange details / holidays 能力构建。</li><li>如果 EODHD 日历覆盖不足，必须定义明确的交易日历生成算法，不能靠猜测式补丁。</li></ul><h3 id="5-5-system-ingestiontaskrun">5.5 <code>system.ingestion_task_run</code></h3><p>记录每一次数据拉取/入库任务。</p><p>建议字段：</p><pre><code>run_id
+updated_at
+</code></pre>
+<p>规则：</p>
+<ul>
+<li>日期按交易所本地日期保存。</li>
+<li>第一阶段只做 US 日频 EOD，<code>calendar_date</code> 使用 US 交易日日期。</li>
+<li>优先从 EODHD exchange details / holidays 能力构建。</li>
+<li>如果 EODHD 日历覆盖不足，必须定义明确的交易日历生成算法，不能靠猜测式补丁。</li>
+</ul>
+<h3 id="5-6-system-ingestion-task-run">5.6 <code>system.ingestion_task_run</code></h3>
+<p>记录每一次数据拉取/入库任务。</p>
+<p>建议字段：</p>
+<pre><code class="language-text">run_id
 job_name
 market
 source
@@ -201,12 +377,20 @@ rows_rejected
 api_calls
 error_message
 config_hash
-code_version</code></pre><p><code>status</code> 建议值：</p><pre><code>pending
+code_version
+</code></pre>
+<p><code>status</code> 建议值：</p>
+<pre><code class="language-text">pending
 running
 success
 failed
 partial_failed
-cancelled</code></pre><h3 id="5-6-system-apicalllog">5.6 <code>system.api_call_log</code></h3><p>记录 API 调用摘要，不保存全量 raw response。</p><p>建议字段：</p><pre><code>api_call_id
+cancelled
+</code></pre>
+<h3 id="5-7-system-api-call-log">5.7 <code>system.api_call_log</code></h3>
+<p>记录 API 调用摘要，不保存全量 raw response。</p>
+<p>建议字段：</p>
+<pre><code class="language-text">api_call_id
 run_id
 source
 endpoint
@@ -219,7 +403,12 @@ retry_count
 rows_returned
 error_message
 called_at
-duration_ms</code></pre><h3 id="5-7-system-dataqualitycheckrun">5.7 <code>system.data_quality_check_run</code></h3><p>记录每一次质量检查。</p><p>建议字段：</p><pre><code>check_run_id
+duration_ms
+</code></pre>
+<h3 id="5-8-system-data-quality-check-run">5.8 <code>system.data_quality_check_run</code></h3>
+<p>记录每一次质量检查。</p>
+<p>建议字段：</p>
+<pre><code class="language-text">check_run_id
 market
 target_schema
 target_table
@@ -228,7 +417,12 @@ status
 started_at
 finished_at
 issues_found
-error_message</code></pre><h3 id="5-8-system-dataqualityissue">5.8 <code>system.data_quality_issue</code></h3><p>记录具体质量问题。</p><p>建议字段：</p><pre><code>issue_id
+error_message
+</code></pre>
+<h3 id="5-9-system-data-quality-issue">5.9 <code>system.data_quality_issue</code></h3>
+<p>记录具体质量问题。</p>
+<p>建议字段：</p>
+<pre><code class="language-text">issue_id
 check_run_id
 market
 target_schema
@@ -241,11 +435,21 @@ trade_date
 details
 status
 created_at
-resolved_at</code></pre><p><code>issue_type</code> 至少包括：</p><pre><code>duplicate_key
+resolved_at
+</code></pre>
+<p><code>issue_type</code> 至少包括：</p>
+<pre><code class="language-text">duplicate_key
 missing_trade_date
 invalid_ohlcv
 null_required_field
-api_rejected_row</code></pre><p>异常值不得自动修正。缺失交易日不得插空价格行。</p><h3 id="5-9-system-repairplan">5.9 <code>system.repair_plan</code></h3><p>记录可人工确认执行的修复计划。</p><p>建议字段：</p><pre><code>repair_plan_id
+api_rejected_row
+price_on_non_trading_day
+</code></pre>
+<p>异常值不得自动修正。缺失交易日不得插空价格行。</p>
+<h3 id="5-10-system-repair-plan">5.10 <code>system.repair_plan</code></h3>
+<p>记录可人工确认执行的修复计划。</p>
+<p>建议字段：</p>
+<pre><code class="language-text">repair_plan_id
 issue_id
 market
 repair_type
@@ -257,34 +461,161 @@ status
 created_at
 confirmed_at
 executed_at
-result_message</code></pre><p><code>repair_type</code> 第一阶段主要是：</p><pre><code>backfill_missing_daily_price</code></pre><h2 id="6-数据流">6. 数据流</h2><h3 id="6-1-load-instrument-list">6.1 Load instrument list</h3><p>从 EODHD Exchange Symbols 获取 US 市场 symbol 列表。</p><p>处理规则：</p><ul><li>过滤当前活跃 stock/ETF。</li><li>保留 EODHD <code>provider_symbol</code>。</li><li>拆出标准 <code>symbol</code>。</li><li>写入 <code>us_share.instrument</code>。</li><li>使用 upsert，重复执行不得产生重复标的。</li></ul><h3 id="6-2-historical-backfill">6.2 Historical backfill</h3><p>首次建库按 ticker 回填近 20 年历史。</p><p>流程：</p><pre><code>select active instruments
+result_message
+</code></pre>
+<p><code>repair_type</code> 第一阶段主要是：</p>
+<pre><code class="language-text">backfill_missing_daily_price
+</code></pre>
+<h2 id="6-数据流">6. 数据流</h2>
+<h3 id="6-1-load-instrument-list">6.1 Load instrument list</h3>
+<p>从 EODHD Exchange Symbols 获取 US 市场 symbol 列表。</p>
+<p>处理规则：</p>
+<ul>
+<li>先从 EODHD <code>symbol-change-history</code> 获取 US rename 历史。</li>
+<li>对已存在的旧 <code>provider_symbol</code> 做显式 rename reconcile，例如 <code>FB.US -&gt; META.US</code>。</li>
+<li>将旧 ticker/provider symbol 和新 ticker/provider symbol 写入 <code>us_share.instrument_identifier_history</code>。</li>
+<li>过滤当前活跃 stock/ETF。</li>
+<li>保留 EODHD <code>provider_symbol</code>。</li>
+<li>拆出标准 <code>symbol</code>。</li>
+<li>写入 <code>us_share.instrument</code>。</li>
+<li>使用 upsert，重复执行不得产生重复标的。</li>
+</ul>
+<h3 id="6-2-historical-backfill">6.2 Historical backfill</h3>
+<p>首次建库按 ticker 回填近 20 年历史。</p>
+<p>流程：</p>
+<pre><code class="language-text">select active instruments
 for each provider_symbol:
   call EODHD historical EOD endpoint
   parse date/open/high/low/close/adjusted_close/volume
   validate required fields and OHLCV basics
-  upsert into us_share.daily_price
+  upsert into stock_daily_price / etf_daily_price / index_daily_price by asset_type
   write api_call_log
-  update ingestion_task_run</code></pre><p>回填必须可分批执行。推荐先用 20-50 个 symbol 验证，再扩大到全量股票+ETF。</p><h3 id="6-3-daily-bulk-update">6.3 Daily bulk update</h3><p>历史建好后，每日盘后优先使用 EODHD Bulk EOD 更新 US 市场。</p><p>流程：</p><pre><code>call EODHD bulk endpoint for US/date
+  update ingestion_task_run
+</code></pre>
+<p>回填必须可分批执行。推荐先用 20-50 个 symbol 验证，再扩大到全量股票+ETF。</p>
+<h3 id="6-3-daily-bulk-update">6.3 Daily bulk update</h3>
+<p>历史建好后，每日盘后优先使用 EODHD Bulk EOD 更新 US 市场。</p>
+<p>流程：</p>
+<pre><code class="language-text">call EODHD bulk endpoint for US/date
 match rows to us_share.instrument
 validate OHLCV
-upsert into us_share.daily_price
-write task state and api call summary</code></pre><h3 id="6-4-validate-quality">6.4 Validate quality</h3><p>质量检查不应该隐藏在 ingest 内部。<code>validate</code> 必须可以独立运行。</p><p>第一阶段检查：</p><ul><li>重复键：理论上应被唯一约束防住，但仍需检查。</li><li>缺失交易日：active instrument 在 trading day 缺少 <code>daily_price</code>。</li><li>OHLCV 合法性：<code>high &gt;= low</code>、<code>high &gt;= open/close</code>、<code>low &lt;= open/close</code>。</li><li>负数检查：价格和 volume 不得为负。</li><li>空值检查：关键字段不得为空。</li><li>行数异常：某天全市场返回行数明显异常时记录 issue。</li></ul><p>检查结果必须写入 <code>system.data_quality_check_run</code> 和 <code>system.data_quality_issue</code>。</p><h3 id="6-5-repair-plan">6.5 Repair plan</h3><p>缺失数据不自动插入空行。正确流程是生成 repair plan。</p><pre><code>validate finds missing data
+upsert into stock_daily_price / etf_daily_price by asset_type
+write task state and api call summary
+</code></pre>
+<h3 id="6-4-validate-quality">6.4 Validate quality</h3>
+<p>质量检查不应该隐藏在 ingest 内部。<code>validate</code> 必须可以独立运行。</p>
+<p>第一阶段检查：</p>
+<ul>
+<li>重复键：理论上应被唯一约束防住，但仍需检查。</li>
+<li>缺失交易日：active instrument 在 trading day 缺少对应 asset daily price row。</li>
+<li>日历对齐：price row 不应落在 <code>market_calendar.is_trading_day = 0</code> 的日期。</li>
+<li>OHLCV 合法性：<code>high &gt;= low</code>、<code>high &gt;= open/close</code>、<code>low &lt;= open/close</code>。</li>
+<li>负数检查：价格和 volume 不得为负。</li>
+<li>空值检查：关键字段不得为空。</li>
+<li>行数异常：某天全市场返回行数明显异常时记录 issue。</li>
+</ul>
+<p>检查结果必须写入 <code>system.data_quality_check_run</code> 和 <code>system.data_quality_issue</code>。</p>
+<h3 id="6-5-repair-plan">6.5 Repair plan</h3>
+<p>缺失数据不自动插入空行。正确流程是生成 repair plan。</p>
+<pre><code class="language-text">validate finds missing data
 create system.repair_plan
 CLI lists plan impact
 user confirms
 repair task calls EODHD again
 valid rows are upserted
-issue status is updated</code></pre><p>CLI 必须先列出将补哪些 <code>symbol/date range</code>，再要求人工输入确认。</p><h3 id="6-6-query-access">6.6 Query access</h3><p>研究和未来 app 不直接读 EODHD，而是通过数据库读取。</p><p>第一阶段目标接口：</p><pre><code>get_daily_prices(symbols, start, end, adjusted=True)</code></pre><p>要求：</p><ul><li>支持一个或多个 symbol。</li><li>支持日期范围。</li><li>默认返回 adjusted 口径。</li><li><code>adjusted=False</code> 返回 raw OHLCV。</li><li>查询前可选检查目标范围是否存在 open quality issue。</li></ul><h2 id="7-cli-语义">7. CLI 语义</h2><p>命令入口建议为 <code>fdp</code>。</p><p>术语：</p><ul><li><code>ingest</code>：拉取并入库。</li><li><code>validate</code>：检查数据质量。</li><li><code>repair</code>：执行人工确认后的补数/修复。</li></ul><p>示例命令：</p><pre><code>poetry run fdp ingest instruments --market US --source eodhd
+issue status is updated
+</code></pre>
+<p>CLI 必须先列出将补哪些 <code>symbol/date range</code>，再要求人工输入确认。</p>
+<h3 id="6-6-query-access">6.6 Query access</h3>
+<p>研究和未来 app 不直接读 EODHD，而是通过数据库读取。</p>
+<p>第一阶段目标接口：</p>
+<pre><code class="language-python">get_daily_prices(symbols, start, end, adjusted=True)
+</code></pre>
+<p>要求：</p>
+<ul>
+<li>支持一个或多个 symbol。</li>
+<li>支持日期范围。</li>
+<li>默认返回 adjusted 口径。</li>
+<li><code>adjusted=False</code> 返回 raw OHLCV。</li>
+<li>查询前可选检查目标范围是否存在 open quality issue。</li>
+</ul>
+<h2 id="7-cli-语义">7. CLI 语义</h2>
+<p>命令入口建议为 <code>fdp</code>。</p>
+<p>术语：</p>
+<ul>
+<li><code>ingest</code>：拉取并入库。</li>
+<li><code>validate</code>：检查数据质量。</li>
+<li><code>repair</code>：执行人工确认后的补数/修复。</li>
+</ul>
+<p>示例命令：</p>
+<pre><code class="language-bash">poetry run fdp ingest instruments --market US --source eodhd
 poetry run fdp ingest history --market US --years 20 --symbols AAPL,MSFT,SPY
 poetry run fdp ingest daily --market US --date 2026-05-20
 poetry run fdp validate daily-price --market US --from 2024-01-01 --to 2024-12-31
 poetry run fdp repair list --market US
-poetry run fdp repair run --plan-id 123</code></pre><h2 id="8-错误处理原则">8. 错误处理原则</h2><p>允许有限重试，但禁止不忠实的兜底。</p><p>允许：</p><ul><li>网络/API/数据库临时失败最多重试 3 次。</li><li>重试间隔必须明确配置。</li><li>每次失败写入日志和任务状态。</li></ul><p>禁止：</p><ul><li>silent fallback。</li><li>degradation handling that hides wrong data。</li><li>hacks / heuristics / local stabilizations。</li><li>post-processing bandages that make bad data look successful。</li><li>自动猜测价格。</li><li>自动修正异常 OHLCV。</li><li>为缺失交易日插入空价格行。</li></ul><p>异常价格处理：</p><pre><code>detect invalid row
+poetry run fdp repair run --plan-id 123
+</code></pre>
+<h2 id="8-错误处理原则">8. 错误处理原则</h2>
+<p>允许有限重试，但禁止不忠实的兜底。</p>
+<p>允许：</p>
+<ul>
+<li>网络/API/数据库临时失败最多重试 3 次。</li>
+<li>重试间隔必须明确配置。</li>
+<li>每次失败写入日志和任务状态。</li>
+</ul>
+<p>禁止：</p>
+<ul>
+<li>silent fallback。</li>
+<li>degradation handling that hides wrong data。</li>
+<li>hacks / heuristics / local stabilizations。</li>
+<li>post-processing bandages that make bad data look successful。</li>
+<li>自动猜测价格。</li>
+<li>自动修正异常 OHLCV。</li>
+<li>为缺失交易日插入空价格行。</li>
+</ul>
+<p>异常价格处理：</p>
+<pre><code class="language-text">detect invalid row
 retry source call up to 3 times
 if still invalid:
   reject row
   write data_quality_issue
-  mark task as failed or partial_failed</code></pre><h2 id="9-测试要求">9. 测试要求</h2><p>第一阶段必须覆盖：</p><ul><li><code>instrument</code> 解析：<code>AAPL.US</code> 能拆成 <code>symbol=AAPL</code>、<code>market=US</code>、<code>provider_symbol=AAPL.US</code>。</li><li>EODHD 日线响应解析：识别 <code>date/open/high/low/close/adjusted_close/volume</code>。</li><li>MySQL upsert：同一 <code>instrument_id + trade_date</code> 重复写入不会产生重复行。</li><li>重复键检查。</li><li>缺失交易日检查。</li><li><code>high &lt; low</code> 检查。</li><li>负价格、负成交量检查。</li><li>关键字段空值检查。</li><li>异常行重拉 3 次仍失败后不得入库，并写入 <code>data_quality_issue</code>。</li><li>repair CLI 列出 plan 后要求人工确认。</li><li><code>get_daily_prices(..., adjusted=True/False)</code> 返回不同价格口径。</li></ul><p>测试数据库必须使用独立 schema，例如 <code>test_us_share</code>、<code>test_system</code>。</p><h2 id="10-美股市场结构说明">10. 美股市场结构说明</h2><p>美股和 A 股市场结构不同。</p><p>A 股通常按上交所、深交所、北交所，以及主板、科创板、创业板等板块理解。美股更常见的是按交易所/交易场所理解，例如：</p><ul><li>NYSE</li><li>NASDAQ</li><li>AMEX / NYSE American</li><li>Cboe / BATS</li><li>NYSE Arca</li></ul><p>ETF 与普通股票都可以在交易所上市。第一阶段覆盖当前活跃股票+ETF。</p><p>指数例如 S&amp;P 500、Nasdaq 100、Russell 2000 不是交易所。指数暂不作为第一阶段核心数据，但架构必须保留扩展空间。</p><h2 id="11-官方参考资料">11. 官方参考资料</h2><ul><li>EODHD Historical / Market Data: https://eodhd.com/</li><li>EODHD Trading Hours and Holidays: https://eodhd.com/financial-apis/exchanges-api-trading-hours-and-stock-market-holidays</li><li>EODHD OpenAPI: https://github.com/EodHistoricalData/eodhd-openapi</li></ul>
+  mark task as failed or partial_failed
+</code></pre>
+<h2 id="9-测试要求">9. 测试要求</h2>
+<p>第一阶段必须覆盖：</p>
+<ul>
+<li><code>instrument</code> 解析：<code>AAPL.US</code> 能拆成 <code>symbol=AAPL</code>、<code>market=US</code>、<code>provider_symbol=AAPL.US</code>。</li>
+<li>EODHD 日线响应解析：识别 <code>date/open/high/low/close/adjusted_close/volume</code>。</li>
+<li>MySQL upsert：同一 <code>instrument_id + trade_date</code> 重复写入不会产生重复行。</li>
+<li>重复键检查。</li>
+<li>缺失交易日检查。</li>
+<li><code>high &lt; low</code> 检查。</li>
+<li>负价格、负成交量检查。</li>
+<li>关键字段空值检查。</li>
+<li>异常行重拉 3 次仍失败后不得入库，并写入 <code>data_quality_issue</code>。</li>
+<li>repair CLI 列出 plan 后要求人工确认。</li>
+<li><code>get_daily_prices(..., adjusted=True/False)</code> 返回不同价格口径。</li>
+</ul>
+<p>测试数据库必须使用独立 schema，例如 <code>test_us_share</code>、<code>test_system</code>。</p>
+<h2 id="10-美股市场结构说明">10. 美股市场结构说明</h2>
+<p>美股和 A 股市场结构不同。</p>
+<p>A 股通常按上交所、深交所、北交所，以及主板、科创板、创业板等板块理解。美股更常见的是按交易所/交易场所理解，例如：</p>
+<ul>
+<li>NYSE</li>
+<li>NASDAQ</li>
+<li>AMEX / NYSE American</li>
+<li>Cboe / BATS</li>
+<li>NYSE Arca</li>
+</ul>
+<p>ETF 与普通股票都可以在交易所上市。第一阶段覆盖当前活跃股票+ETF。</p>
+<p>指数例如 S&amp;P 500、Nasdaq 100、Russell 2000 不是交易所。指数暂不作为第一阶段核心数据，但架构必须保留扩展空间。</p>
+<h2 id="11-官方参考资料">11. 官方参考资料</h2>
+<ul>
+<li>EODHD Historical / Market Data: https://eodhd.com/</li>
+<li>EODHD Trading Hours and Holidays: https://eodhd.com/financial-apis/exchanges-api-trading-hours-and-stock-market-holidays</li>
+<li>EODHD OpenAPI: https://github.com/EodHistoricalData/eodhd-openapi</li>
+</ul>
+
       </article>
     </main>
   </div>

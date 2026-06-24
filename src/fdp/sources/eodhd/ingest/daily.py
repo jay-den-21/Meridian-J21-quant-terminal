@@ -11,12 +11,13 @@ from fdp.sources.eodhd.ingest.common import (
     historical_price_status,
     index_instrument_rows,
     load_active_instruments,
+    load_active_instruments_for_market,
     load_active_instruments_by_provider_symbols,
     normalize_provider_symbols,
     normalize_symbols,
     record_api_call,
 )
-from fdp.sources.eodhd.ingest.models import HistoricalDailyPriceLoadResult
+from fdp.sources.eodhd.ingest.models import BulkDailyPriceLoadResult, HistoricalDailyPriceLoadResult
 from fdp.sources.eodhd.prices import RejectedDailyPriceRow, parse_daily_price_rows
 from fdp.storage.upsert import (
     build_etf_daily_price_upsert,
@@ -30,6 +31,7 @@ PRICE_UPSERT_BUILDERS = {
     "etf": build_etf_daily_price_upsert,
     "index": build_index_daily_price_upsert,
 }
+BULK_DAILY_UPSERT_CHUNK_SIZE = 1000
 
 
 def load_historical_daily_prices(
@@ -113,6 +115,157 @@ def load_etf_daily_prices(
         asset_types=["etf"],
         job_name="eodhd_etf_daily_price",
         target_table="etf_daily_price",
+    )
+
+
+def load_bulk_daily_prices(
+    connection: Connection,
+    client: EodhdClient,
+    *,
+    exchange: str = "US",
+    trade_date: date | None = None,
+    symbols: list[str] | None = None,
+    market: str = "US",
+    asset_types: list[str] | None = None,
+) -> BulkDailyPriceLoadResult:
+    """Load one-day bulk EOD prices for active instruments.
+
+    Input: EODHD exchange, optional trade date, optional symbols, and market scope.
+    Output: `BulkDailyPriceLoadResult` with API, match, parse, and write counts.
+    Flow: bulk API -> active instrument map -> parse EOD rows -> split-table upsert.
+    """
+    normalized_exchange = exchange.strip().upper()
+    normalized_asset_types = asset_types or ["stock", "etf"]
+    normalized_symbols = normalize_symbols(symbols or [])
+    run_id = create_task_run(
+        connection,
+        market=market,
+        job_name="eodhd_bulk_daily_price",
+        target_table="stock_daily_price,etf_daily_price",
+        date_from=trade_date,
+        date_to=trade_date,
+    )
+
+    response = client.get_bulk_eod(
+        normalized_exchange,
+        trade_date=trade_date,
+        symbols=normalized_symbols or None,
+    )
+    record_api_call(
+        connection,
+        run_id=run_id,
+        response=response,
+        date_from=trade_date,
+        date_to=trade_date,
+    )
+    if not response.success:
+        finish_task_run(
+            connection,
+            run_id=run_id,
+            status="failed",
+            rows_fetched=0,
+            rows_inserted=0,
+            rows_updated=0,
+            rows_rejected=0,
+            api_calls=1,
+            error_message=response.error_message,
+        )
+        return BulkDailyPriceLoadResult(
+            run_id=run_id,
+            status="failed",
+            exchange=normalized_exchange,
+            trade_date=trade_date,
+            rows_fetched=0,
+            rows_matched=0,
+            rows_inserted=0,
+            rows_rejected=0,
+            api_calls=1,
+            rejected_rows=[],
+            unmatched_rows=0,
+            error_message=response.error_message,
+        )
+
+    instruments = load_active_instruments_for_market(
+        connection,
+        market=market,
+        asset_types=normalized_asset_types,
+    )
+    rows_by_provider_symbol = {
+        str(row["provider_symbol"]).upper(): row
+        for row in instruments
+    }
+    rows_by_symbol = {str(row["symbol"]).upper(): row for row in instruments}
+
+    accepted_by_asset_type: dict[str, list[dict[str, object]]] = {}
+    rejected_rows: list[RejectedDailyPriceRow] = []
+    unmatched_rows = 0
+    rows_matched = 0
+
+    for index, row in enumerate(response.payload):
+        try:
+            symbol = _bulk_row_symbol(row)
+        except ValueError as exc:
+            rejected_rows.append(
+                RejectedDailyPriceRow(
+                    index=index,
+                    provider_symbol="",
+                    reason=str(exc),
+                    row=row,
+                )
+            )
+            continue
+
+        provider_symbol = _bulk_row_provider_symbol(symbol, exchange=normalized_exchange)
+        instrument_row = rows_by_provider_symbol.get(provider_symbol) or rows_by_symbol.get(symbol)
+        if instrument_row is None:
+            unmatched_rows += 1
+            continue
+
+        rows_matched += 1
+        parsed_rows = parse_daily_price_rows(
+            [row],
+            instrument_id=instrument_row["instrument_id"],
+            symbol=instrument_row["symbol"],
+            provider_symbol=instrument_row["provider_symbol"],
+            currency=instrument_row["currency"],
+        )
+        rejected_rows.extend(parsed_rows.rejected)
+        if parsed_rows.accepted:
+            asset_type = str(instrument_row["asset_type"])
+            accepted_by_asset_type.setdefault(asset_type, []).extend(parsed_rows.accepted)
+
+    rows_inserted = _upsert_daily_price_chunks(connection, accepted_by_asset_type)
+    rows_rejected = len(rejected_rows) + unmatched_rows
+    status, error_message = _bulk_daily_price_status(
+        rows_inserted=rows_inserted,
+        rejected_rows=len(rejected_rows),
+        unmatched_rows=unmatched_rows,
+    )
+    finish_task_run(
+        connection,
+        run_id=run_id,
+        status=status,
+        rows_fetched=response.rows_returned,
+        rows_inserted=rows_inserted,
+        rows_updated=0,
+        rows_rejected=rows_rejected,
+        api_calls=1,
+        error_message=error_message,
+    )
+
+    return BulkDailyPriceLoadResult(
+        run_id=run_id,
+        status=status,
+        exchange=normalized_exchange,
+        trade_date=trade_date,
+        rows_fetched=response.rows_returned,
+        rows_matched=rows_matched,
+        rows_inserted=rows_inserted,
+        rows_rejected=rows_rejected,
+        api_calls=1,
+        rejected_rows=rejected_rows,
+        unmatched_rows=unmatched_rows,
+        error_message=error_message,
     )
 
 
@@ -305,3 +458,53 @@ def _load_daily_prices_for_instruments(
         rejected_rows=rejected_rows,
         error_message=error_message,
     )
+
+
+def _bulk_row_symbol(row: dict[str, object]) -> str:
+    """Return the ticker-like symbol from one EODHD bulk row."""
+    value = row.get("code") or row.get("Code") or row.get("symbol") or row.get("Symbol")
+    if value in (None, ""):
+        raise ValueError("missing required EODHD bulk field: code")
+    return str(value).strip().upper()
+
+
+def _bulk_row_provider_symbol(symbol: str, *, exchange: str) -> str:
+    """Build a provider symbol candidate from a bulk row symbol."""
+    if "." in symbol:
+        return symbol
+    return f"{symbol}.{exchange.strip().upper()}"
+
+
+def _upsert_daily_price_chunks(
+    connection: Connection,
+    accepted_by_asset_type: dict[str, list[dict[str, object]]],
+) -> int:
+    """Write accepted rows to split daily price tables in bounded chunks."""
+    rows_inserted = 0
+    for asset_type, rows in accepted_by_asset_type.items():
+        upsert_builder = PRICE_UPSERT_BUILDERS[asset_type]
+        for start in range(0, len(rows), BULK_DAILY_UPSERT_CHUNK_SIZE):
+            chunk = rows[start:start + BULK_DAILY_UPSERT_CHUNK_SIZE]
+            connection.execute(upsert_builder(chunk))
+            rows_inserted += len(chunk)
+    return rows_inserted
+
+
+def _bulk_daily_price_status(
+    *,
+    rows_inserted: int,
+    rejected_rows: int,
+    unmatched_rows: int,
+) -> tuple[str, str | None]:
+    """Derive bulk daily task status and compact error message."""
+    problems: list[str] = []
+    if unmatched_rows:
+        problems.append(f"{unmatched_rows} EODHD bulk row(s) did not match active instruments")
+    if rejected_rows:
+        problems.append(f"{rejected_rows} invalid EODHD bulk price row(s) rejected")
+
+    if not problems:
+        return "success", None
+    if rows_inserted == 0:
+        return "failed", "; ".join(problems)
+    return "partial_failed", "; ".join(problems)
