@@ -12,7 +12,6 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    Time,
     UniqueConstraint,
     func,
 )
@@ -68,9 +67,85 @@ instrument = Table(
     schema=US_SHARE_SCHEMA,
 )
 
+
+def _instrument_view(name: str) -> Table:
+    """Define a read-only SQLAlchemy handle for an `instrument` asset-type view."""
+    return Table(
+        name,
+        metadata,
+        Column("instrument_id", BigInteger, primary_key=True),
+        Column("market", String(16), nullable=False),
+        Column("symbol", String(64), nullable=False),
+        Column("provider", String(32), nullable=False),
+        Column("provider_symbol", String(128), nullable=False),
+        Column("name", String(255), nullable=False),
+        Column("exchange", String(64), nullable=False),
+        Column("asset_type", String(32), nullable=False),
+        Column("currency", String(16), nullable=False),
+        Column("is_active", Boolean, nullable=False),
+        Column("listed_date", Date),
+        Column("delisted_date", Date),
+        Column("created_at", DateTime, nullable=False),
+        Column("updated_at", DateTime, nullable=False),
+        schema=US_SHARE_SCHEMA,
+        info={"is_view": True},
+    )
+
+
+stock_instrument = _instrument_view("stock_instrument")
+etf_instrument = _instrument_view("etf_instrument")
+index_instrument = _instrument_view("index_instrument")
+
+# us_share.instrument_identifier_history example row:
+# - identifier_history_id: 1
+# - instrument_id: 1
+# - id_type: "provider_symbol"
+# - id_value: "FB.US"
+# - valid_from: None
+# - valid_to: date(2022, 6, 8)
+# - source: "EODHD_SYMBOL_CHANGE_HISTORY"
+# - created_at: datetime(2026, 5, 28, 10, 0, 0)
+# - updated_at: datetime(2026, 5, 28, 10, 0, 0)
+instrument_identifier_history = Table(
+    "instrument_identifier_history",
+    metadata,
+    Column("identifier_history_id", BigInteger, primary_key=True, autoincrement=True),
+    Column(
+        "instrument_id",
+        BigInteger,
+        ForeignKey(f"{US_SHARE_SCHEMA}.instrument.instrument_id"),
+        nullable=False,
+    ),
+    Column("id_type", String(64), nullable=False),
+    Column("id_value", String(128), nullable=False),
+    Column("valid_from", Date),
+    Column("valid_to", Date),
+    Column("source", String(64), nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        server_onupdate=func.current_timestamp(),
+    ),
+    UniqueConstraint(
+        "instrument_id",
+        "id_type",
+        "id_value",
+        "valid_from",
+        "source",
+        name="uq_identifier_history_identity",
+    ),
+    Index("ix_identifier_history_value", "id_type", "id_value"),
+    schema=US_SHARE_SCHEMA,
+)
+
 # us_share.daily_price example row:
 # - daily_price_id: 1
 # - instrument_id: 1
+# - symbol: "META"
+# - provider_symbol: "META.US"
 # - trade_date: date(2026, 5, 22)
 # - open: Decimal("200.150000")
 # - high: Decimal("202.740000")
@@ -93,6 +168,8 @@ daily_price = Table(
         ForeignKey(f"{US_SHARE_SCHEMA}.instrument.instrument_id"),
         nullable=False,
     ),
+    Column("symbol", String(64), nullable=False),
+    Column("provider_symbol", String(128), nullable=False),
     Column("trade_date", Date, nullable=False),
     Column("open", Numeric(20, 6), nullable=False),
     Column("high", Numeric(20, 6), nullable=False),
@@ -112,19 +189,83 @@ daily_price = Table(
         server_onupdate=func.current_timestamp(),
     ),
     UniqueConstraint("instrument_id", "trade_date", name="uq_daily_price_instrument_date"),
+    Index("ix_daily_price_symbol_date", "symbol", "trade_date"),
     Index("ix_daily_price_trade_date", "trade_date"),
     schema=US_SHARE_SCHEMA,
 )
 
+
+def _asset_daily_price_table(
+    table_name: str,
+    id_column: str,
+    unique_name: str,
+    symbol_index_name: str,
+    trade_date_index_name: str,
+) -> Table:
+    """Define one asset-specific daily OHLCV table with the common price shape."""
+    return Table(
+        table_name,
+        metadata,
+        Column(id_column, BigInteger, primary_key=True, autoincrement=True),
+        Column(
+            "instrument_id",
+            BigInteger,
+            ForeignKey(f"{US_SHARE_SCHEMA}.instrument.instrument_id"),
+            nullable=False,
+        ),
+        Column("symbol", String(64), nullable=False),
+        Column("provider_symbol", String(128), nullable=False),
+        Column("trade_date", Date, nullable=False),
+        Column("open", Numeric(20, 6), nullable=False),
+        Column("high", Numeric(20, 6), nullable=False),
+        Column("low", Numeric(20, 6), nullable=False),
+        Column("close", Numeric(20, 6), nullable=False),
+        Column("adjusted_close", Numeric(20, 6), nullable=False),
+        Column("volume", BigInteger, nullable=False),
+        Column("currency", String(16), nullable=False),
+        Column("source", String(32), nullable=False),
+        Column("source_updated_at", DateTime),
+        Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+        Column(
+            "updated_at",
+            DateTime,
+            nullable=False,
+            server_default=func.current_timestamp(),
+            server_onupdate=func.current_timestamp(),
+        ),
+        UniqueConstraint("instrument_id", "trade_date", name=unique_name),
+        Index(symbol_index_name, "symbol", "trade_date"),
+        Index(trade_date_index_name, "trade_date"),
+        schema=US_SHARE_SCHEMA,
+    )
+
+
+stock_daily_price = _asset_daily_price_table(
+    "stock_daily_price",
+    "stock_daily_price_id",
+    "uq_stock_daily_price_instrument_date",
+    "ix_stock_daily_price_symbol_date",
+    "ix_stock_daily_price_trade_date",
+)
+etf_daily_price = _asset_daily_price_table(
+    "etf_daily_price",
+    "etf_daily_price_id",
+    "uq_etf_daily_price_instrument_date",
+    "ix_etf_daily_price_symbol_date",
+    "ix_etf_daily_price_trade_date",
+)
+index_daily_price = _asset_daily_price_table(
+    "index_daily_price",
+    "index_daily_price_id",
+    "uq_index_daily_price_instrument_date",
+    "ix_index_daily_price_symbol_date",
+    "ix_index_daily_price_trade_date",
+)
+
 # us_share.market_calendar example row:
 # - calendar_id: 1
-# - market: "US"
-# - exchange: "NASDAQ"
 # - calendar_date: date(2026, 5, 22)
 # - is_trading_day: True
-# - is_early_close: False
-# - early_close_time: None
-# - timezone: "America/New_York"
 # - source: "EODHD"
 # - created_at: datetime(2026, 5, 20, 12, 0, 0)
 # - updated_at: datetime(2026, 5, 20, 12, 0, 0)
@@ -132,13 +273,8 @@ market_calendar = Table(
     "market_calendar",
     metadata,
     Column("calendar_id", BigInteger, primary_key=True, autoincrement=True),
-    Column("market", String(16), nullable=False),
-    Column("exchange", String(64), nullable=False),
     Column("calendar_date", Date, nullable=False),
     Column("is_trading_day", Boolean, nullable=False),
-    Column("is_early_close", Boolean, nullable=False),
-    Column("early_close_time", Time),
-    Column("timezone", String(64), nullable=False),
     Column("source", String(32), nullable=False),
     Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
     Column(
@@ -148,7 +284,7 @@ market_calendar = Table(
         server_default=func.current_timestamp(),
         server_onupdate=func.current_timestamp(),
     ),
-    UniqueConstraint("market", "exchange", "calendar_date", name="uq_market_calendar_date"),
+    UniqueConstraint("calendar_date", name="uq_market_calendar_date"),
     schema=US_SHARE_SCHEMA,
 )
 

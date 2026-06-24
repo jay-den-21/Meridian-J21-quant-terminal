@@ -1,3 +1,5 @@
+"""MySQL upsert statement builders for storage-layer writes."""
+
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -6,27 +8,33 @@ from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.sql import func
 from sqlalchemy.sql.dml import Insert
 
-from fdp.storage.tables import daily_price, instrument
+from fdp.storage.tables import (
+    daily_price,
+    etf_daily_price,
+    index_daily_price,
+    instrument,
+    instrument_identifier_history,
+    market_calendar,
+    stock_daily_price,
+)
 
 Row = Mapping[str, Any]
 
-'''
-实现逻辑eg
-INSERT INTO us_share.instrument (
-  symbol,
-  provider_symbol,
-  name
-)
-VALUES (
-  'AAPL',
-  'AAPL.US',
-  'Apple Inc.'
-)
-ON DUPLICATE KEY UPDATE
-  symbol = VALUES(symbol),
-  name = VALUES(name),
-  updated_at = CURRENT_TIMESTAMP
-    '''
+DAILY_PRICE_UPDATE_COLUMNS = [
+    "symbol",
+    "provider_symbol",
+    "open",
+    "high",
+    "low",
+    "close",
+    "adjusted_close",
+    "volume",
+    "currency",
+    "source",
+    "source_updated_at",
+    "updated_at",
+]
+
 
 def build_mysql_upsert(
     table: Table,
@@ -34,7 +42,12 @@ def build_mysql_upsert(
     *,
     update_columns: Sequence[str] | None = None,
 ) -> Insert:
-    """Build a MySQL INSERT ... ON DUPLICATE KEY UPDATE statement."""
+    """Build a MySQL `INSERT ... ON DUPLICATE KEY UPDATE` statement.
+
+    Input: SQLAlchemy table, one row or many rows, and optional columns to update.
+    Output: MySQL insert statement that upserts on table primary/unique keys.
+    Flow: rows -> INSERT values -> update column map -> ON DUPLICATE KEY UPDATE.
+    """
     if not rows:
         raise ValueError("rows must not be empty")
 
@@ -57,6 +70,12 @@ def build_mysql_upsert(
 
 
 def build_instrument_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.instrument`.
+
+    Input: parsed active instrument rows from EODHD exchange-symbol-list.
+    Output: MySQL upsert that refreshes current metadata but not provider_symbol.
+    Flow: instrument rows -> provider/provider_symbol unique key -> metadata update.
+    """
     return build_mysql_upsert(
         instrument,
         rows,
@@ -75,20 +94,92 @@ def build_instrument_upsert(rows: Row | Sequence[Row]) -> Insert:
     )
 
 
+def build_identifier_history_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.instrument_identifier_history`.
+
+    Input: ticker/provider-symbol history rows for one or more instruments.
+    Output: MySQL upsert that only refreshes `valid_to` and `updated_at`.
+    Flow: history rows -> identity unique key -> close/update validity interval.
+    """
+    return build_mysql_upsert(
+        instrument_identifier_history,
+        rows,
+        update_columns=[
+            "valid_to",
+            "updated_at",
+        ],
+    )
+
+
 def build_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.daily_price`.
+
+    Input: daily OHLCV rows keyed by `instrument_id` and `trade_date`.
+    Output: MySQL upsert that refreshes prices and display symbols.
+    Flow: daily rows -> unique(instrument_id, trade_date) -> OHLCV update.
+    """
     return build_mysql_upsert(
         daily_price,
         rows,
+        update_columns=DAILY_PRICE_UPDATE_COLUMNS,
+    )
+
+
+def build_stock_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.stock_daily_price`.
+
+    Input: stock daily OHLCV rows keyed by `instrument_id` and `trade_date`.
+    Output: MySQL upsert that refreshes prices and display symbols.
+    Flow: stock rows -> unique(instrument_id, trade_date) -> OHLCV update.
+    """
+    return build_mysql_upsert(
+        stock_daily_price,
+        rows,
+        update_columns=DAILY_PRICE_UPDATE_COLUMNS,
+    )
+
+
+def build_etf_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.etf_daily_price`.
+
+    Input: ETF daily OHLCV rows keyed by `instrument_id` and `trade_date`.
+    Output: MySQL upsert that refreshes prices and display symbols.
+    Flow: ETF rows -> unique(instrument_id, trade_date) -> OHLCV update.
+    """
+    return build_mysql_upsert(
+        etf_daily_price,
+        rows,
+        update_columns=DAILY_PRICE_UPDATE_COLUMNS,
+    )
+
+
+def build_index_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.index_daily_price`.
+
+    Input: index daily OHLCV rows keyed by `instrument_id` and `trade_date`.
+    Output: MySQL upsert that refreshes prices and display symbols.
+    Flow: index rows -> unique(instrument_id, trade_date) -> OHLCV update.
+    """
+    return build_mysql_upsert(
+        index_daily_price,
+        rows,
+        update_columns=DAILY_PRICE_UPDATE_COLUMNS,
+    )
+
+
+def build_market_calendar_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.market_calendar`.
+
+    Input: generated daily calendar rows keyed by `calendar_date`.
+    Output: MySQL upsert that refreshes trading-day flags and source metadata.
+    Flow: calendar rows -> unique(calendar_date) -> flag/source update.
+    """
+    return build_mysql_upsert(
+        market_calendar,
+        rows,
         update_columns=[
-            "open",
-            "high",
-            "low",
-            "close",
-            "adjusted_close",
-            "volume",
-            "currency",
+            "is_trading_day",
             "source",
-            "source_updated_at",
             "updated_at",
         ],
     )

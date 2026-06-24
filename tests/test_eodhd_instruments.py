@@ -2,7 +2,13 @@ from datetime import date
 
 import pytest
 
-from fdp.sources.eodhd import parse_exchange_symbol, parse_exchange_symbol_rows, split_provider_symbol
+from fdp.sources.eodhd import (
+    parse_exchange_symbol,
+    parse_exchange_symbol_rows,
+    parse_symbol_change_history,
+    parse_symbol_change_history_rows,
+    split_provider_symbol,
+)
 
 
 def test_split_provider_symbol_keeps_eodhd_symbol_and_market() -> None:
@@ -82,4 +88,37 @@ def test_parse_exchange_symbol_rows_rejects_unsupported_malformed_and_inactive_r
         "unsupported_asset_type",
         "missing required EODHD field: Name, name",
         "inactive_instrument",
+    ]
+
+
+def test_parse_symbol_change_history_maps_old_and_new_provider_symbols() -> None:
+    symbol_change = parse_symbol_change_history(
+        {
+            "exchange": "US",
+            "old_symbol": "FB",
+            "new_symbol": "META",
+            "company_name": "Meta Platforms Inc.",
+            "effective": "2022-06-09",
+        }
+    )
+
+    assert symbol_change.old_symbol == "FB"
+    assert symbol_change.new_symbol == "META"
+    assert symbol_change.old_provider_symbol == "FB.US"
+    assert symbol_change.new_provider_symbol == "META.US"
+    assert symbol_change.company_name == "Meta Platforms Inc."
+    assert symbol_change.effective == date(2022, 6, 9)
+
+
+def test_parse_symbol_change_history_rows_rejects_missing_required_fields() -> None:
+    parsed = parse_symbol_change_history_rows(
+        [
+            {"old_symbol": "FB", "new_symbol": "META", "effective": "2022-06-09"},
+            {"old_symbol": "TWTR", "new_symbol": "X"},
+        ]
+    )
+
+    assert [row.new_symbol for row in parsed.accepted] == ["META"]
+    assert [row.reason for row in parsed.rejected] == [
+        "missing required EODHD date field: effective"
     ]

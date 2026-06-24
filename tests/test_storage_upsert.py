@@ -3,7 +3,15 @@ from decimal import Decimal
 
 from sqlalchemy.dialects import mysql
 
-from fdp.storage.upsert import build_daily_price_upsert, build_instrument_upsert
+from fdp.storage.upsert import (
+    build_daily_price_upsert,
+    build_etf_daily_price_upsert,
+    build_identifier_history_upsert,
+    build_index_daily_price_upsert,
+    build_instrument_upsert,
+    build_market_calendar_upsert,
+    build_stock_daily_price_upsert,
+)
 
 
 def test_instrument_upsert_uses_mysql_duplicate_key_update() -> None:
@@ -35,6 +43,8 @@ def test_daily_price_upsert_targets_unique_price_identity() -> None:
     statement = build_daily_price_upsert(
         {
             "instrument_id": 1,
+            "symbol": "AAPL",
+            "provider_symbol": "AAPL.US",
             "trade_date": date(2024, 1, 2),
             "open": Decimal("100.00"),
             "high": Decimal("101.00"),
@@ -50,6 +60,72 @@ def test_daily_price_upsert_targets_unique_price_identity() -> None:
     sql = str(statement.compile(dialect=mysql.dialect()))
 
     assert "ON DUPLICATE KEY UPDATE" in sql
+    assert "symbol = VALUES(symbol)" in sql
+    assert "provider_symbol = VALUES(provider_symbol)" in sql
     assert "adjusted_close = VALUES(adjusted_close)" in sql
     assert "volume = VALUES(volume)" in sql
 
+
+def test_asset_daily_price_upserts_target_split_tables() -> None:
+    row = {
+        "instrument_id": 1,
+        "symbol": "AAPL",
+        "provider_symbol": "AAPL.US",
+        "trade_date": date(2024, 1, 2),
+        "open": Decimal("100.00"),
+        "high": Decimal("101.00"),
+        "low": Decimal("99.00"),
+        "close": Decimal("100.50"),
+        "adjusted_close": Decimal("100.45"),
+        "volume": 1_000_000,
+        "currency": "USD",
+        "source": "EODHD",
+    }
+
+    builders_and_tables = [
+        (build_stock_daily_price_upsert, "stock_daily_price"),
+        (build_etf_daily_price_upsert, "etf_daily_price"),
+        (build_index_daily_price_upsert, "index_daily_price"),
+    ]
+
+    for builder, table_name in builders_and_tables:
+        sql = str(builder(row).compile(dialect=mysql.dialect()))
+
+        assert f"INSERT INTO us_share.{table_name}" in sql
+        assert "ON DUPLICATE KEY UPDATE" in sql
+        assert "adjusted_close = VALUES(adjusted_close)" in sql
+
+
+def test_identifier_history_upsert_updates_valid_to() -> None:
+    statement = build_identifier_history_upsert(
+        {
+            "instrument_id": 1,
+            "id_type": "provider_symbol",
+            "id_value": "FB.US",
+            "valid_from": None,
+            "valid_to": date(2022, 6, 8),
+            "source": "EODHD_SYMBOL_CHANGE_HISTORY",
+        }
+    )
+
+    sql = str(statement.compile(dialect=mysql.dialect()))
+
+    assert "ON DUPLICATE KEY UPDATE" in sql
+    assert "valid_to = VALUES(valid_to)" in sql
+    assert "updated_at = CURRENT_TIMESTAMP" in sql
+
+
+def test_market_calendar_upsert_updates_calendar_flags() -> None:
+    statement = build_market_calendar_upsert(
+        {
+            "calendar_date": date(2026, 11, 27),
+            "is_trading_day": True,
+            "source": "EODHD_EXCHANGE_DETAILS",
+        }
+    )
+
+    sql = str(statement.compile(dialect=mysql.dialect()))
+
+    assert "ON DUPLICATE KEY UPDATE" in sql
+    assert "is_trading_day = VALUES(is_trading_day)" in sql
+    assert "source = VALUES(source)" in sql

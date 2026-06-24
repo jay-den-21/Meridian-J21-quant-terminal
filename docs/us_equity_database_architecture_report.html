@@ -1,0 +1,1241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>美股市场规则与数据库架构研究报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --paper: #ffffff;
+      --ink: #1f2933;
+      --muted: #607080;
+      --line: #d7dee7;
+      --accent: #0f766e;
+      --accent-soft: #e6f4f1;
+      --code-bg: #111827;
+      --code-ink: #e5e7eb;
+      --shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.72;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 292px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 22px;
+      overflow-y: auto;
+      background: #0f172a;
+      color: #dbeafe;
+      border-right: 1px solid rgba(255,255,255,0.08);
+    }
+    aside h2 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      line-height: 1.3;
+      letter-spacing: 0;
+      color: #ffffff;
+    }
+    aside .meta {
+      margin: 0 0 22px;
+      font-size: 13px;
+      color: #a9b7cb;
+    }
+    nav a {
+      display: block;
+      padding: 5px 0;
+      color: #d7e2f1;
+      text-decoration: none;
+      font-size: 13px;
+      line-height: 1.4;
+      border-radius: 4px;
+    }
+    nav a:hover { color: #5eead4; }
+    .toc-h1 { font-weight: 700; margin-top: 8px; }
+    .toc-h2 { padding-left: 10px; }
+    .toc-h3 { padding-left: 22px; color: #b7c3d4; }
+    main {
+      width: min(1120px, 100%);
+      margin: 0 auto;
+      padding: 42px 34px 72px;
+    }
+    article {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 46px 52px;
+      box-shadow: var(--shadow);
+    }
+    h1, h2, h3, h4, h5, h6 {
+      line-height: 1.28;
+      letter-spacing: 0;
+      color: #122033;
+    }
+    h1 {
+      margin: 0 0 18px;
+      font-size: 34px;
+      border-bottom: 2px solid var(--line);
+      padding-bottom: 18px;
+    }
+    h2 {
+      margin: 46px 0 16px;
+      font-size: 25px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    h3 { margin: 32px 0 12px; font-size: 20px; }
+    p { margin: 12px 0; }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    .anchor {
+      margin-right: 8px;
+      color: #9aa8b6;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eef2f6;
+      color: #1f2937;
+      font-size: 0.92em;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    pre.code-block {
+      margin: 18px 0;
+      padding: 18px 20px;
+      overflow-x: auto;
+      border-radius: 10px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+    }
+    pre.code-block code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font-size: 13px;
+    }
+    ul, ol { padding-left: 24px; margin: 12px 0; }
+    li { margin: 5px 0; }
+    .table-wrap {
+      margin: 18px 0 24px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: var(--accent-soft);
+      color: #123c37;
+      font-weight: 700;
+    }
+    tr:nth-child(even) td { background: #fafbfc; }
+    tr:last-child td { border-bottom: 0; }
+    .diagram {
+      margin: 20px 0 26px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfdff;
+      overflow-x: auto;
+    }
+    .mermaid { min-width: 760px; text-align: center; }
+    .source-note {
+      margin-top: 28px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    @media (max-width: 980px) {
+      .layout { display: block; }
+      aside { position: static; height: auto; }
+      main { padding: 18px; }
+      article { padding: 28px 22px; }
+      h1 { font-size: 28px; }
+      h2 { font-size: 22px; }
+      .mermaid { min-width: 640px; }
+    }
+    @media print {
+      body { background: #fff; }
+      .layout { display: block; }
+      aside { display: none; }
+      main { width: 100%; padding: 0; }
+      article { border: 0; box-shadow: none; padding: 0; }
+      a { color: inherit; }
+      .table-wrap, pre.code-block, .diagram { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h2>报告目录</h2>
+      <p class="meta">Generated from <code>docs/us_equity_database_architecture_report.md</code></p>
+      <nav>
+        <a class="toc-h1" href="#section-1">美股市场规则与数据库架构研究报告</a>
+<a class="toc-h2" href="#section-2">摘要</a>
+<a class="toc-h2" href="#section-3">1. 项目现状</a>
+<a class="toc-h2" href="#section-4">2. 相关工作</a>
+<a class="toc-h2" href="#section-5">3. 美股与 A 股的关键差异</a>
+<a class="toc-h2" href="#section-6">4. 美股规则事实与数据库含义</a>
+<a class="toc-h3" href="#section-7">4.1 Security、issuer、listing、quote symbol 是四层东西</a>
+<a class="toc-h3" href="#section-8">4.2 公司从一个“板”转到另一个“板”，代码怎么处理</a>
+<a class="toc-h3" href="#section-9">4.3 Symbol 与 identifier 规则</a>
+<a class="toc-h3" href="#section-10">4.4 Listing、exchange、market tier、tape 规则</a>
+<a class="toc-h3" href="#section-11">4.5 Instrument 类型规则</a>
+<a class="toc-h3" href="#section-12">4.6 Corporate action 与 adjusted price</a>
+<a class="toc-h3" href="#section-13">4.7 Delisting 与 survivorship bias</a>
+<a class="toc-h3" href="#section-14">4.8 Market calendar、session、timezone</a>
+<a class="toc-h3" href="#section-15">4.9 Market data: NMS、SIP、TAQ、Tape A/B/C</a>
+<a class="toc-h3" href="#section-16">4.10 Price increments、round lots、odd lots</a>
+<a class="toc-h3" href="#section-17">4.11 Halts、LULD、short-sale restriction</a>
+<a class="toc-h3" href="#section-18">4.12 Settlement 与 trade date</a>
+<a class="toc-h2" href="#section-19">5. 推荐概念架构</a>
+<a class="toc-h2" href="#section-20">6. 推荐 ERD</a>
+<a class="toc-h2" href="#section-21">7. 对当前 schema 的优先级建议</a>
+<a class="toc-h2" href="#section-22">8. 数据质量规则扩展</a>
+<a class="toc-h2" href="#section-23">9. 实施路线</a>
+<a class="toc-h2" href="#section-24">10. 结论</a>
+<a class="toc-h2" href="#section-25">参考资料</a>
+      </nav>
+    </aside>
+    <main>
+      <article>
+        <h1 id="section-1">美股市场规则与数据库架构研究报告</h1>
+<p>日期：2026-05-28 范围：本报告面向 <code>financial-data-platform</code> 第一阶段及后续美股 schema 设计。当前阶段仍以 EODHD、US active stock/ETF、MySQL、<code>us_share</code> 和 <code>system</code> schema 为边界；本报告不修改现有代码和 migration。</p>
+<h2 id="section-2"><a class="anchor" href="#section-2">#</a>摘要</h2>
+<p>美股数据库的核心设计结论是：不能把 ticker 当成永久主键。美股的 ticker 会变，会随交易所迁移保留，也可能在释放后被重新使用；同一家公司可以有多个证券，例如 A/B 类股、优先股、ADR、ETF、SPAC unit/warrant；一次 merger、spin-off、reverse split、delisting 或 relisting 可能改变 CUSIP、symbol、listing exchange、market tier，但不一定改变研究意义上的 security lineage。</p>
+<p>CRSP 的公开说明给出最重要的架构启发：用永久 security id 和 company id 穿透 corporate actions。CRSP 的 <code>PERMNO</code> 是 security 层级的永久编号，<code>PERMCO</code> 是 company 层级的永久编号；CRSP 覆盖 active 和 inactive securities，并把 corporate actions、delisting information、identifiers、returns、volume 等作为长期研究数据的一部分。这个思路比“用当前 symbol 查价格”更适合量化回测。</p>
+<p>对本项目而言，当前 <code>us_share.instrument.instrument_id</code> 可以继续作为内部 security id 的雏形，但后续应明确补充：</p>
+<ul>
+<li><code>issuer</code>：公司/发行人层级，近似 CRSP <code>PERMCO</code> 或 SEC CIK 层。</li>
+<li><code>instrument_identifier_history</code>：ticker、provider_symbol、CUSIP、ISIN、FIGI、CIK 等随时间变化的历史。</li>
+<li><code>listing_history</code>：primary listing exchange、Nasdaq market tier、tape/network、active/delisted 状态历史。</li>
+<li><code>corporate_action</code> 与 <code>adjustment_factor</code>：拆股、分红、换名、换码、合并、分拆、退市、重上市等事件。</li>
+<li><code>delisting_event</code> 或统一的 <code>security_lifecycle_event</code>：解决 survivorship bias，避免只保存当前 active symbol。</li>
+<li><code>market_session</code>：在现有 <code>market_calendar</code> 之外保存 pre-market、core、late/after-hours、early close 等 session 语义。</li>
+</ul>
+<h2 id="section-3"><a class="anchor" href="#section-3">#</a>1. 项目现状</h2>
+<p>从 <code>PROJECT.md</code>、<code>PROGRESS.md</code>、<code>README.md</code> 和 <code>主人的流程.md</code> 可以归纳当前架构：</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>层</th>
+<th>当前设计</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>数据源</td>
+<td>EODHD paid API；第一阶段只做 US active stock/ETF</td>
+</tr>
+<tr>
+<td>数据范围</td>
+<td>近 20 年日频 OHLCV；当前不含退市标的</td>
+</tr>
+<tr>
+<td>数据库</td>
+<td>本机 MySQL；schema 为 <code>us_share</code>、<code>a_share</code>、<code>system</code></td>
+</tr>
+<tr>
+<td>工程栈</td>
+<td>Python、Poetry、SQLAlchemy Core、Alembic、Typer、pytest、YAML、<code>.env</code></td>
+</tr>
+<tr>
+<td>主表</td>
+<td><code>us_share.instrument</code>、<code>us_share.daily_price</code>、<code>us_share.market_calendar</code></td>
+</tr>
+<tr>
+<td>系统表</td>
+<td><code>system.ingestion_task_run</code>、<code>system.api_call_log</code>、<code>system.data_quality_check_run</code>、<code>system.data_quality_issue</code>、<code>system.repair_plan</code></td>
+</tr>
+<tr>
+<td>写入原则</td>
+<td>大批量写入必须唯一键 upsert；异常 OHLCV 不入库；缺失交易日不插空行</td>
+</tr>
+<tr>
+<td>已完成</td>
+<td>scaffold、初始 schema/migration、EODHD instrument parser、instrument ingestion、upsert builder、单元测试</td>
+</tr>
+<tr>
+<td>未开始</td>
+<td>historical daily price ingestion、quality checks、repair workflow、database-backed access functions</td>
+</tr>
+</tbody></table></div>
+<p>本报告的假设：</p>
+<ol>
+<li>第一阶段不扩 schema，只为后续美股专用 schema 设计做研究准备。</li>
+<li>后续需要同时支持 active 和 delisted securities，否则回测会有 survivorship bias。</li>
+<li>EODHD 的 <code>provider_symbol</code> 必须保留，例如 <code>AAPL.US</code>；标准 <code>symbol</code> 也必须保留，例如 <code>AAPL</code>。</li>
+<li>报告中的“规则”只覆盖数据库设计需要的美股股票/ETF/ETP 规则，不覆盖期权、期货、债券、税务会计和交易执行算法细节。</li>
+</ol>
+<h2 id="section-4"><a class="anchor" href="#section-4">#</a>2. 相关工作</h2>
+<p>公开论文很少直接给出“买方美股数据库 ERD”。更可靠的公开结构来自 CRSP、TAQ、WRDS、SIP 和交易所数据规范。论文更多用于证明为什么要防 survivorship bias、identifier bias 和 vendor data cleaning 问题。</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>来源</th>
+<th>可借鉴点</th>
+<th>对本项目的启发</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>CRSP US Stock Databases</td>
+<td>覆盖 active/inactive U.S. securities、daily/monthly market data、corporate actions、delisting information、permanent identifiers <code>PERMNO</code>/<code>PERMCO</code></td>
+<td>内部 <code>instrument_id</code> 应被视为 security 层永久 id；后续增加 issuer/company 层 id</td>
+</tr>
+<tr>
+<td>CRSP PERMNO/PERMCO 说明</td>
+<td><code>PERMNO</code> 不随 name change、ticker change、delisting、relisting、reverse split 而变化；<code>PERMCO</code> 聚合同一公司的不同 securities</td>
+<td>ticker/CUSIP 不适合做主键；需要 identifier history</td>
+</tr>
+<tr>
+<td>NYSE TAQ / SIP 数据体系</td>
+<td>trade、quote、sale condition、quote condition、correction/cancel、venue、tape 分层</td>
+<td>若未来做 intraday，不能只保存 OHLCV，需要 event-level trade/quote 表</td>
+</tr>
+<tr>
+<td>Nasdaq Symbol Directory</td>
+<td><code>nasdaqlisted.txt</code> 和 <code>otherlisted.txt</code> 提供 market category、financial status、ETF flag、round lot、test issue、CQS/Nasdaq symbol 等字段</td>
+<td>instrument master 要保存 exchange/tier/status/round_lot/test_issue，且要有历史</td>
+</tr>
+<tr>
+<td>Nasdaq Daily List</td>
+<td>包含新上市、退市、symbol/name changes、market tier changes、FSI changes、dividend/split 信息</td>
+<td>后续 corporate action ingestion 应从 Daily List/供应商 corporate action API 建立事件表</td>
+</tr>
+<tr>
+<td>FINRA OTC Daily List</td>
+<td>OTC additions、deletions、symbol changes、name changes、security attribute updates</td>
+<td>退市后转 OTC、OTC 再上市必须建 lifecycle event，不应简单删除 instrument</td>
+</tr>
+<tr>
+<td>SEC Regulation NMS、CTA、UTP</td>
+<td>美股是多交易中心、集中 SIP 合并 quote/trade、Tape A/B/C 分流</td>
+<td>listing exchange、trading venue、tape/network 是不同概念</td>
+</tr>
+<tr>
+<td>LULD Plan</td>
+<td>NMS stocks 有 price bands、limit state、trading pause</td>
+<td>daily 数据缺失可能来自 trading pause/halt，不一定是 API 失败</td>
+</tr>
+<tr>
+<td>Shumway 1997, The Delisting Bias in CRSP Data</td>
+<td>退市收益会影响回测结论</td>
+<td>后续必须纳入 delisting returns/退市事件</td>
+</tr>
+<tr>
+<td>Ince and Porter 2006, Individual Equity Return Data from Thomson Datastream: Handle with Care!</td>
+<td>商业数据源存在异常值和清洗风险</td>
+<td>本项目的“异常行不自动修正”原则是正确的</td>
+</tr>
+</tbody></table></div>
+<p>结论：公开资料中，CRSP 的 security/company 永久 id + identifier history + corporate action history 是最适合本项目长期方向的美股架构范式。</p>
+<h2 id="section-5"><a class="anchor" href="#section-5">#</a>3. 美股与 A 股的关键差异</h2>
+<p>这里的 A 股只做横向定位。A 股具体 schema 后续仍应按 <code>a_share</code> 和 Tushare/交易所规则单独研究。</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>维度</th>
+<th>美股</th>
+<th>A 股</th>
+<th>数据库影响</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>代码形态</td>
+<td>字母 root + suffix，长度和格式随交易所/系统不同；如 <code>BRK.A</code>、<code>BRK/A</code>、<code>BRK-A</code> 可能是不同 vendor 表达</td>
+<td>主要是 6 位数字，板块信息常嵌在代码段中</td>
+<td>美股必须区分 raw symbol、normalized symbol、provider_symbol、SIP/CQS/Nasdaq symbol</td>
+</tr>
+<tr>
+<td>“板”概念</td>
+<td>更多是 listing exchange、Nasdaq tier、NYSE/NYSE American/NYSE Arca、Tape A/B/C；不是固定由代码前缀决定</td>
+<td>主板、创业板、科创板、北交所等常由代码段和交易所强绑定</td>
+<td>美股应建 <code>listing_history</code>，不要把 <code>exchange</code> 写死在 instrument 当前行</td>
+</tr>
+<tr>
+<td>交易场所</td>
+<td>同一 NMS stock 可在多个 venue 交易；primary listing exchange 和 execution venue 不同</td>
+<td>主要在所属交易所集中交易</td>
+<td>美股 daily bar 要明确 source 是 composite、primary exchange、还是 vendor aggregate</td>
+</tr>
+<tr>
+<td>ticker 稳定性</td>
+<td>ticker 可改、可随 exchange transfer 保留、释放后可重新分配</td>
+<td>证券代码通常更稳定，但板块/简称/状态也会变</td>
+<td>美股主键必须是内部 permanent id，不是 ticker</td>
+</tr>
+<tr>
+<td>退市处理</td>
+<td>delisting、OTC transition、relisting、merger、bankruptcy 常见；survivorship bias 是研究大问题</td>
+<td>也有退市和转板，但流程和数据源不同</td>
+<td>美股必须优先设计 inactive/delisted securities 模块</td>
+</tr>
+<tr>
+<td>corporate actions</td>
+<td>splits、reverse splits、special dividends、spin-offs、mergers、CUSIP changes、symbol changes 非常关键</td>
+<td>同样存在分红送转，但规则和日历不同</td>
+<td>raw prices、adjusted close、adjustment factors、event table 必须分开</td>
+</tr>
+<tr>
+<td>做空和监管状态</td>
+<td>Reg SHO、short sale restriction、threshold securities、locate/close-out</td>
+<td>融券规则和可卖空标的范围不同</td>
+<td>美股可扩展 <code>short_sale_status</code>、SSR、threshold list</td>
+</tr>
+<tr>
+<td>交易时间</td>
+<td>pre-market、core、after-hours/late session、early close；所有时间要用 Eastern Time</td>
+<td>连续竞价和午休结构不同</td>
+<td><code>market_calendar</code> 应扩展为 <code>market_session</code></td>
+</tr>
+<tr>
+<td>最小报价单位</td>
+<td>Reg NMS Rule 612 及 2024 amendments；2025/2026 起 tick/odd-lot 信息规则有变化</td>
+<td>A 股 tick size 和涨跌停规则不同</td>
+<td>美股 price validation 不能直接套 A 股涨跌停逻辑</td>
+</tr>
+</tbody></table></div>
+<h2 id="section-6"><a class="anchor" href="#section-6">#</a>4. 美股规则事实与数据库含义</h2>
+<h3 id="section-7"><a class="anchor" href="#section-7">#</a>4.1 Security、issuer、listing、quote symbol 是四层东西</h3>
+<p>美股数据库至少要区分四层：</p>
+<ol>
+<li>Issuer/company：发行人或公司层。例如 SEC CIK、LEI、Compustat GVKEY、CRSP <code>PERMCO</code>。</li>
+<li>Security/instrument：具体证券层。例如普通股 A 类、普通股 B 类、preferred、ADR、ETF、unit、warrant。CRSP <code>PERMNO</code> 属于这一层。</li>
+<li>Listing：某个 security 在某个 primary exchange/tier 的上市历史。例如 Nasdaq Global Select、Nasdaq Global、Nasdaq Capital、NYSE、NYSE American、NYSE Arca。</li>
+<li>Market-data symbol：交易和行情系统使用的 symbol。它有 provider-specific 表达，例如 EODHD <code>AAPL.US</code>，也有 SIP/CQS/Nasdaq symbol 表达。</li>
+</ol>
+<p>数据库结论：<code>instrument</code> 主表只能回答“这个 security 是谁”。它不应该承担所有名称、代码、上市地、状态的历史。历史字段应移动或复制到 history/event 表。</p>
+<h3 id="section-8"><a class="anchor" href="#section-8">#</a>4.2 公司从一个“板”转到另一个“板”，代码怎么处理</h3>
+<p>美股没有一个完全等同 A 股“创业板转主板”的统一机制。更接近的问题有三类：</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>事件</th>
+<th>ticker 是否变化</th>
+<th>security id 是否变化</th>
+<th>应建模为</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>Nasdaq tier 变化，例如 Global Market 与 Capital Market 之间变化</td>
+<td>通常可不变，但应以官方 Daily List/Listing Center 事件为准</td>
+<td>一般不变</td>
+<td><code>listing_history</code> 新 interval</td>
+</tr>
+<tr>
+<td>Primary listing exchange transfer，例如 Nasdaq 转 NYSE 或反向</td>
+<td>根据 ISRA/NMS symbol reservation 机制，转入 exchange 可以取得使用原 symbol 的权利；实际公司也常希望保留 ticker，避免投资者混淆</td>
+<td>通常不变</td>
+<td><code>listing_history</code> 新 interval；<code>symbol_history</code> 可能延续</td>
+</tr>
+<tr>
+<td>公司主动改名、换 ticker、并购、分拆、重组</td>
+<td>可能变化</td>
+<td>可能不变，也可能新 security lineage</td>
+<td><code>symbol_history</code> + <code>corporate_action</code>；必要时新 instrument</td>
+</tr>
+</tbody></table></div>
+<p>因此，对用户问题的直接回答是：</p>
+<ul>
+<li>美股换 primary exchange 或 Nasdaq market tier 时，股票代码不一定换；很多场景可以保留原 ticker。</li>
+<li>如果 ticker 换了，旧 ticker 不应覆盖掉历史记录，而应作为该 instrument 的历史 symbol。</li>
+<li>被释放的 ticker 不是永久死亡；NMS/ISRA symbol reservation system 管理 one-to-five-character root symbols，symbol 可被释放、保留和重新分配。因此数据库绝对不能用 ticker 当永久主键。</li>
+<li>代码是否“继承”取决于 corporate action 的法律和经济实质。普通 exchange transfer 通常是同一 security 的 listing 变化；merger、spin-off、reorganization 可能产生新 security 或 lineage decision。</li>
+</ul>
+<h3 id="section-9"><a class="anchor" href="#section-9">#</a>4.3 Symbol 与 identifier 规则</h3>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>Identifier</th>
+<th>层级</th>
+<th>稳定性</th>
+<th>注意点</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>Internal <code>instrument_id</code></td>
+<td>security</td>
+<td>应永久</td>
+<td>本项目自己控制，应类似 <code>PERMNO</code></td>
+</tr>
+<tr>
+<td>Internal <code>issuer_id</code></td>
+<td>issuer/company</td>
+<td>应永久</td>
+<td>后续新增，类似 <code>PERMCO</code></td>
+</tr>
+<tr>
+<td>ticker/root symbol</td>
+<td>market symbol</td>
+<td>不永久</td>
+<td>可改、可复用、vendor 格式不同</td>
+</tr>
+<tr>
+<td><code>provider_symbol</code></td>
+<td>vendor symbol</td>
+<td>不永久</td>
+<td>EODHD 需要保留，如 <code>AAPL.US</code></td>
+</tr>
+<tr>
+<td>CUSIP</td>
+<td>security/issue</td>
+<td>不永久</td>
+<td>reverse split、merger、reorganization 可能变；还有授权限制</td>
+</tr>
+<tr>
+<td>ISIN</td>
+<td>security/issue</td>
+<td>不永久</td>
+<td>通常由 country code + NSIN + check digit 构成；可能随 issue 变</td>
+</tr>
+<tr>
+<td>FIGI</td>
+<td>security/listing/composite</td>
+<td>相对稳定但需理解层级</td>
+<td>可作为 crosswalk，不应替代内部 id</td>
+</tr>
+<tr>
+<td>SEC CIK</td>
+<td>issuer/filer</td>
+<td>company/filer</td>
+<td>一个 CIK 可对应多个 traded securities</td>
+</tr>
+</tbody></table></div>
+<p>推荐表：<code>instrument_identifier_history</code></p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>字段</th>
+<th>含义</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>identifier_history_id</code></td>
+<td>surrogate key</td>
+</tr>
+<tr>
+<td><code>instrument_id</code></td>
+<td>内部 security id</td>
+</tr>
+<tr>
+<td><code>identifier_type</code></td>
+<td><code>ticker</code>, <code>provider_symbol</code>, <code>cusip</code>, <code>isin</code>, <code>figi</code>, <code>cik</code>, <code>sedol</code>, <code>exchange_symbol</code></td>
+</tr>
+<tr>
+<td><code>identifier_value</code></td>
+<td>原始值</td>
+</tr>
+<tr>
+<td><code>normalized_value</code></td>
+<td>标准化值</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>EODHD, Nasdaq, FINRA, SEC, OpenFIGI, manual_review</td>
+</tr>
+<tr>
+<td><code>valid_from</code> / <code>valid_to</code></td>
+<td>有效区间</td>
+</tr>
+<tr>
+<td><code>observed_at</code></td>
+<td>本系统观察到的时间</td>
+</tr>
+<tr>
+<td><code>is_primary</code></td>
+<td>同一类型同一天是否主 identifier</td>
+</tr>
+<tr>
+<td><code>notes</code></td>
+<td>解释换码原因</td>
+</tr>
+</tbody></table></div>
+<p>唯一性建议：同一 <code>identifier_type + identifier_value</code> 可以在不同时间指向不同 instrument，因此唯一键不能只放 identifier value。应使用排他有效期检查或在查询层保证某一天只能解析到一个 active mapping。</p>
+<h3 id="section-10"><a class="anchor" href="#section-10">#</a>4.4 Listing、exchange、market tier、tape 规则</h3>
+<p>Nasdaq Symbol Directory 明确区分：</p>
+<ul>
+<li>Nasdaq-listed securities 的 <code>Market Category</code>：<code>Q = Nasdaq Global Select Market</code>、<code>G = Nasdaq Global Market</code>、<code>S = Nasdaq Capital Market</code>。</li>
+<li><code>Financial Status</code>：deficient、delinquent、bankrupt、normal 等。</li>
+<li><code>Test Issue</code>、<code>Round Lot</code> 等字段。</li>
+<li>Other-exchange-listed securities 的 exchange code：NYSE、NYSE Arca、BATS/Cboe、IEX 等。</li>
+<li>CQS symbol 与 Nasdaq symbol 可能是不同字段。</li>
+</ul>
+<p>CTA/UTP 则说明 Tape/Network 与 primary listing 有关：</p>
+<ul>
+<li>CTA Network A/B 覆盖 NYSE、NYSE American、NYSE Arca、Cboe 等非 Nasdaq-listed securities 的 consolidated tape/quote。</li>
+<li>UTP Tape C 是 Nasdaq-listed securities 的 consolidated market data 网络。</li>
+</ul>
+<p>推荐表：<code>listing_history</code></p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>字段</th>
+<th>含义</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>listing_history_id</code></td>
+<td>surrogate key</td>
+</tr>
+<tr>
+<td><code>instrument_id</code></td>
+<td>security</td>
+</tr>
+<tr>
+<td><code>primary_exchange</code></td>
+<td><code>NASDAQ</code>, <code>NYSE</code>, <code>NYSE_AMERICAN</code>, <code>NYSE_ARCA</code>, <code>CBOE_BZX</code>, <code>OTC</code> 等</td>
+</tr>
+<tr>
+<td><code>exchange_mic</code></td>
+<td>XNAS, XNYS 等</td>
+</tr>
+<tr>
+<td><code>market_tier</code></td>
+<td>Nasdaq Global Select/Global/Capital 等</td>
+</tr>
+<tr>
+<td><code>tape</code></td>
+<td>A, B, C</td>
+</tr>
+<tr>
+<td><code>listing_status</code></td>
+<td>listed, suspended, halted, delisted, otc, unknown</td>
+</tr>
+<tr>
+<td><code>financial_status</code></td>
+<td>Nasdaq FSI 等</td>
+</tr>
+<tr>
+<td><code>round_lot_size</code></td>
+<td>Nasdaq directory 字段</td>
+</tr>
+<tr>
+<td><code>is_test_issue</code></td>
+<td>是否测试证券</td>
+</tr>
+<tr>
+<td><code>valid_from</code> / <code>valid_to</code></td>
+<td>有效区间</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>Nasdaq Symbol Directory, Daily List, EODHD, FINRA</td>
+</tr>
+</tbody></table></div>
+<h3 id="section-11"><a class="anchor" href="#section-11">#</a>4.5 Instrument 类型规则</h3>
+<p>美股 universe 不只 common stock 和 ETF。即使第一阶段只取 active stock/ETF，也应避免把未来 schema 封死。</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>类型</th>
+<th>例子</th>
+<th>数据库注意点</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>Common stock</td>
+<td>AAPL, MSFT</td>
+<td>最基本 security</td>
+</tr>
+<tr>
+<td>Share classes</td>
+<td>GOOG/GOOGL, BRK.A/BRK.B</td>
+<td>同 issuer 多 instrument，不能用 issuer 代替 instrument</td>
+</tr>
+<tr>
+<td>Preferred stock</td>
+<td>preferred series</td>
+<td>symbol suffix/vendor 格式差异很大</td>
+</tr>
+<tr>
+<td>ADR/ADS</td>
+<td>foreign issuer U.S. listed receipt</td>
+<td>issuer、depositary、underlying foreign line 可能不同</td>
+</tr>
+<tr>
+<td>ETF/ETP/ETN</td>
+<td>SPY, QQQ, leveraged ETFs</td>
+<td>issuer/fund/trust/series 结构不同于 operating company</td>
+</tr>
+<tr>
+<td>Closed-end fund/REIT</td>
+<td>CEF, REIT</td>
+<td>asset_type 需细分</td>
+</tr>
+<tr>
+<td>SPAC unit/warrant/right</td>
+<td>units, warrants, rights</td>
+<td>unit split 后会产生 new tradable lines</td>
+</tr>
+<tr>
+<td>When-issued/when-distributed</td>
+<td>WI/WD states</td>
+<td>临时交易状态需要 event/history，而不是改主表</td>
+</tr>
+<tr>
+<td>Test issue</td>
+<td>exchange test symbol</td>
+<td>必须过滤出研究 universe</td>
+</tr>
+</tbody></table></div>
+<p>对当前 <code>asset_type</code> 的建议：保留 <code>stock</code>、<code>etf</code>，但后续扩展到 <code>common_stock</code>、<code>adr</code>、<code>preferred_stock</code>、<code>etf</code>、<code>etn</code>、<code>cef</code>、<code>reit</code>、<code>unit</code>、<code>warrant</code>、<code>right</code>、<code>fund</code>。第一阶段 parser 可以继续过滤 active stock/ETF，但 rejected rows 应保留可审计的类型原因。</p>
+<h3 id="section-12"><a class="anchor" href="#section-12">#</a>4.6 Corporate action 与 adjusted price</h3>
+<p>Corporate actions 是美股历史连续性最大风险之一。</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>事件</th>
+<th>对价格/identifier 的影响</th>
+<th>数据库处理</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>Cash dividend</td>
+<td>total return 需要分红；raw OHLC 不变</td>
+<td><code>corporate_action</code> 存 dividend；<code>adjustment_factor</code> 生成 total-return adjusted close</td>
+</tr>
+<tr>
+<td>Special dividend</td>
+<td>adjusted return 影响大</td>
+<td>必须显式事件，不应只信 adjusted close</td>
+</tr>
+<tr>
+<td>Split/reverse split</td>
+<td>OHLC 和 volume 需要 split adjustment；CUSIP 常可能变</td>
+<td>raw price 不改；存 split ratio 和 factor</td>
+</tr>
+<tr>
+<td>Stock dividend</td>
+<td>类似 split/分红混合</td>
+<td>存事件类型和 ratio</td>
+</tr>
+<tr>
+<td>Symbol/name change</td>
+<td>identifier 变化</td>
+<td><code>instrument_identifier_history</code> 新 interval</td>
+</tr>
+<tr>
+<td>CUSIP change</td>
+<td>issue identifier 变化</td>
+<td>identifier history 新 interval</td>
+</tr>
+<tr>
+<td>Merger/acquisition</td>
+<td>old security 退市，可能 cash/stock consideration</td>
+<td>lifecycle event；必要时 delisting return</td>
+</tr>
+<tr>
+<td>Spin-off</td>
+<td>parent 与 child security lineage</td>
+<td>parent action + child instrument 创建</td>
+</tr>
+<tr>
+<td>Bankruptcy</td>
+<td>listing/financial status 变化，可能退市转 OTC</td>
+<td>status history + delisting event</td>
+</tr>
+<tr>
+<td>Relisting</td>
+<td>可能同公司新 security，也可能原 security lineage 继续</td>
+<td>需要人工/规则化 lineage decision</td>
+</tr>
+</tbody></table></div>
+<p>EODHD 的历史 EOD 文档说明，其 OHLC 是 raw，不按 split/dividend 调整；adjusted close 按 split 和 dividend 调整，volume 按 split 调整。这个正好符合本项目 <code>daily_price</code> 同时保存 raw OHLCV 和 <code>adjusted_close</code> 的设计。后续如果要完整 adjusted OHLC，不应直接覆盖 raw OHLC，而应通过 factor table 或明确算法生成 view。</p>
+<h3 id="section-13"><a class="anchor" href="#section-13">#</a>4.7 Delisting 与 survivorship bias</h3>
+<p>当前 <code>PROJECT.md</code> 明确第一阶段不包含 delisted instrument，后续单独设计 survivorship bias / delisted instrument 模块。这是合理的阶段切分，但长期必须补。</p>
+<p>最小设计：</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>表</th>
+<th>用途</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>delisting_event</code></td>
+<td>记录 delist date、reason、last_trade_date、delisting_exchange、delisting_code/source</td>
+</tr>
+<tr>
+<td><code>delisting_return</code></td>
+<td>如果数据源提供，保存 delisting return 或 cash/stock consideration</td>
+</tr>
+<tr>
+<td><code>instrument.is_active</code></td>
+<td>只表示当前是否 active，不表示历史</td>
+</tr>
+<tr>
+<td><code>listing_history.listing_status</code></td>
+<td>表示某区间 listed/delisted/otc/halted/suspended</td>
+</tr>
+</tbody></table></div>
+<p>质量规则：</p>
+<ul>
+<li>active instrument 在 trading day 缺价格才算 <code>missing_trade_date</code>。</li>
+<li>instrument 在 delisted date 之后不应被 calendar validator 继续要求 daily price。</li>
+<li>如果退市当天没有 regular OHLC，但有 delisting return，不应伪造 OHLC。</li>
+<li>如果数据源不提供退市收益，必须把研究 universe 标注为 active-only，并在回测层显式提示 survivorship bias。</li>
+</ul>
+<h3 id="section-14"><a class="anchor" href="#section-14">#</a>4.8 Market calendar、session、timezone</h3>
+<p>NYSE 官方交易时间给出核心交易时段 9:30 a.m. 到 4:00 p.m. ET，并列出 pre-opening、early trading、late trading、early close 等差异。不同 NYSE market 的 pre/late session 不完全相同，例如 NYSE Arca 可从 4:00 a.m. ET 进入 early trading，NYSE American/Arca/National 等有 late trading 到 8:00 p.m. ET。Nasdaq 系统小时和数据产品口径应以 Nasdaq Trader 当期文档为准。</p>
+<p>当前 <code>market_calendar</code> 字段已经有 <code>is_trading_day</code>、<code>is_early_close</code>、<code>early_close_time</code>、<code>timezone</code>。后续建议增加 <code>market_session</code>：</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>字段</th>
+<th>含义</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>session_id</code></td>
+<td>surrogate key</td>
+</tr>
+<tr>
+<td><code>market</code> / <code>exchange</code></td>
+<td>US, NASDAQ, NYSE, NYSE_ARCA</td>
+</tr>
+<tr>
+<td><code>calendar_date</code></td>
+<td>exchange local date</td>
+</tr>
+<tr>
+<td><code>session_type</code></td>
+<td>pre_market, core, closing_auction, after_hours, late, closed</td>
+</tr>
+<tr>
+<td><code>open_time</code> / <code>close_time</code></td>
+<td>local time</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td>America/New_York</td>
+</tr>
+<tr>
+<td><code>is_early_close</code></td>
+<td>是否提前收盘</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>NYSE/Nasdaq/EODHD calendar</td>
+</tr>
+</tbody></table></div>
+<p>注意：日频 OHLCV 通常应明确是 core session 还是 vendor composite session。EODHD 日频一般应按其文档和供应商定义记录 <code>source</code>，不要默认为所有 extended-hours trade 都包含。</p>
+<h3 id="section-15"><a class="anchor" href="#section-15">#</a>4.9 Market data: NMS、SIP、TAQ、Tape A/B/C</h3>
+<p>SEC Regulation NMS 建立了 order protection、access、sub-penny、market-data rules 等核心框架。CTA 和 UTP 是美股 consolidated trade/quote 数据的重要基础设施：</p>
+<ul>
+<li>CTA 负责 Network A/B securities 的 consolidated trade/quote data。</li>
+<li>UTP Plan 负责 Nasdaq-listed Tape C securities 的 quotation and transaction information。</li>
+<li>SIP 计算并传播 NBBO、LULD price bands、short sale restriction、regulatory halt 等信息。</li>
+</ul>
+<p>如果未来从日频升级到 intraday/TAQ，建议不要从 <code>daily_price</code> 硬扩，而是新增：</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>表</th>
+<th>粒度</th>
+<th>主键建议</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>trade_print</code></td>
+<td>每笔成交/修正/取消</td>
+<td>source + instrument_id + trade_ts + sequence_number</td>
+</tr>
+<tr>
+<td><code>quote_update</code></td>
+<td>bid/ask quote update</td>
+<td>source + instrument_id + quote_ts + participant + sequence_number</td>
+</tr>
+<tr>
+<td><code>nbbo_quote</code></td>
+<td>consolidated NBBO</td>
+<td>source + instrument_id + quote_ts + sequence_number</td>
+</tr>
+<tr>
+<td><code>market_data_condition_code</code></td>
+<td>sale/quote condition 维表</td>
+<td>code + source</td>
+</tr>
+<tr>
+<td><code>daily_bar_source_audit</code></td>
+<td>daily bar 从哪些规则聚合</td>
+<td>instrument_id + trade_date + source</td>
+</tr>
+</tbody></table></div>
+<p>日频阶段也应在 <code>daily_price.source</code> 或后续 audit 表中说明：EODHD bars 是 vendor EOD，不是本系统从 TAQ 重算的 official consolidated bars。</p>
+<h3 id="section-16"><a class="anchor" href="#section-16">#</a>4.10 Price increments、round lots、odd lots</h3>
+<p>Regulation NMS 2005 版本包含 sub-penny rule。SEC 2024 amendments 对 minimum pricing increments、access fee caps、round lot 和 odd-lot information 做了更新：Rule 612 新增 $0.005 minimum pricing increment 机制，tick size 按 quoted spread 评估期分配；Rule 612/610 和 round lot definition 的 compliance date 是 2025 年 11 月第一个 business day，odd-lot information compliance date 是 2026 年 5 月第一个 business day。</p>
+<p>数据库影响：</p>
+<ul>
+<li><code>round_lot_size</code> 不应默认永远 100，应从 Nasdaq Symbol Directory 或交易所源保存。</li>
+<li>如果未来保存 order book/quote，必须有 <code>quote_size</code>、<code>lot_type</code>、<code>is_odd_lot</code>、<code>is_round_lot</code> 或等价字段。</li>
+<li>日频价格质量检查不应使用 A 股涨跌停逻辑；美股没有统一 10%/20% limit-up/down 涨跌停，LULD 是动态 price bands 和 trading pause 机制。</li>
+</ul>
+<h3 id="section-17"><a class="anchor" href="#section-17">#</a>4.11 Halts、LULD、short-sale restriction</h3>
+<p>LULD Plan 对 NMS stocks 设定动态价格带，交易可能进入 limit state 或 trading pause。SEC Regulation SHO Rule 201 在股票一日内跌幅至少 10% 时触发 short sale price test circuit breaker，限制适用到当天剩余时间及下一交易日。</p>
+<p>推荐后续表：</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>表</th>
+<th>用途</th>
+</tr></thead>
+<tbody>
+<tr>
+<td><code>trading_halt_event</code></td>
+<td>halt/resume、reason code、source、start/end timestamp</td>
+</tr>
+<tr>
+<td><code>luld_state_event</code></td>
+<td>limit state、straddle state、trading pause</td>
+</tr>
+<tr>
+<td><code>short_sale_restriction</code></td>
+<td>SSR trigger date、effective from/to、source</td>
+</tr>
+<tr>
+<td><code>threshold_security_status</code></td>
+<td>Reg SHO threshold securities list history</td>
+</tr>
+</tbody></table></div>
+<p>日频质量影响：</p>
+<ul>
+<li>某标的某天 volume = 0 或缺 bar，可能是 halt、suspension、delisting、IPO before first trade、API miss。validator 需要结合 listing/halt/calendar 状态判断，不应直接判定为价格缺失。</li>
+</ul>
+<h3 id="section-18"><a class="anchor" href="#section-18">#</a>4.12 Settlement 与 trade date</h3>
+<p>SEC 在 2023 年通过规则，将大多数 broker-dealer securities transactions 的标准结算周期从 T+2 缩短为 T+1，compliance date 为 2024-05-28。数据库日频行情主键仍应使用 <code>trade_date</code>，但如果未来接入交易、position、corporate action entitlement，需要同时保存：</p>
+<ul>
+<li><code>trade_date</code></li>
+<li><code>settlement_date</code></li>
+<li><code>record_date</code></li>
+<li><code>ex_date</code></li>
+<li><code>pay_date</code></li>
+</ul>
+<p>不要把这些日期混成一个字段。对 dividends/splits 来说，ex-date 与 record/pay date 含义不同。</p>
+<h2 id="section-19"><a class="anchor" href="#section-19">#</a>5. 推荐概念架构</h2>
+<div class="diagram"><div class="mermaid">flowchart LR
+    subgraph Sources[External Sources]
+        EODHD[&quot;EODHD EOD/Bulk/Symbols&quot;]
+        EXCH[&quot;Nasdaq/NYSE Directories and Daily Lists&quot;]
+        FINRA[&quot;FINRA OTC Daily List and Reg SHO&quot;]
+        SEC[&quot;SEC EDGAR/Regulatory Data&quot;]
+        SIP[&quot;CTA/UTP/SIP if intraday&quot;]
+    end
+
+    subgraph Parse[Source Parsers]
+        Parser[&quot;Field mapping and validation&quot;]
+        Reject[&quot;Rejected rows -&gt; data_quality_issue&quot;]
+    end
+
+    subgraph Core[us_share Core]
+        Issuer[&quot;issuer&quot;]
+        Instrument[&quot;instrument&quot;]
+        IdHist[&quot;instrument_identifier_history&quot;]
+        Listing[&quot;listing_history&quot;]
+        Corp[&quot;corporate_action&quot;]
+        Factor[&quot;adjustment_factor&quot;]
+        Daily[&quot;daily_price&quot;]
+        Calendar[&quot;market_calendar&quot;]
+        Session[&quot;market_session&quot;]
+    end
+
+    subgraph System[system]
+        Task[&quot;ingestion_task_run&quot;]
+        Api[&quot;api_call_log&quot;]
+        DqRun[&quot;data_quality_check_run&quot;]
+        DqIssue[&quot;data_quality_issue&quot;]
+        Repair[&quot;repair_plan&quot;]
+    end
+
+    EODHD --&gt; Parser
+    EXCH --&gt; Parser
+    FINRA --&gt; Parser
+    SEC --&gt; Parser
+    SIP --&gt; Parser
+    Parser --&gt; Issuer
+    Parser --&gt; Instrument
+    Parser --&gt; IdHist
+    Parser --&gt; Listing
+    Parser --&gt; Corp
+    Parser --&gt; Factor
+    Parser --&gt; Daily
+    Parser --&gt; Calendar
+    Parser --&gt; Session
+    Parser --&gt; Task
+    Parser --&gt; Api
+    Reject --&gt; DqIssue
+    DqIssue --&gt; Repair
+    DqRun --&gt; DqIssue</div></div>
+<h2 id="section-20"><a class="anchor" href="#section-20">#</a>6. 推荐 ERD</h2>
+<div class="diagram"><div class="mermaid">erDiagram
+    issuer ||--o{ instrument : issues
+    instrument ||--o{ instrument_identifier_history : has
+    instrument ||--o{ listing_history : listed_as
+    instrument ||--o{ daily_price : priced_by_day
+    instrument ||--o{ corporate_action : affected_by
+    corporate_action ||--o{ adjustment_factor : produces
+    instrument ||--o{ trading_halt_event : may_have
+    market_calendar ||--o{ market_session : contains
+    instrument ||--o{ delisting_event : may_end_with
+    system_ingestion_task_run ||--o{ system_api_call_log : records
+    system_data_quality_check_run ||--o{ system_data_quality_issue : finds
+    system_data_quality_issue ||--o{ system_repair_plan : creates
+
+    issuer {
+        bigint issuer_id PK
+        string issuer_name
+        string cik
+        string lei
+        datetime created_at
+        datetime updated_at
+    }
+
+    instrument {
+        bigint instrument_id PK
+        bigint issuer_id FK
+        string market
+        string symbol
+        string provider
+        string provider_symbol
+        string asset_type
+        string currency
+        bool is_active
+        date listed_date
+        date delisted_date
+    }
+
+    instrument_identifier_history {
+        bigint identifier_history_id PK
+        bigint instrument_id FK
+        string identifier_type
+        string identifier_value
+        string normalized_value
+        date valid_from
+        date valid_to
+        string source
+    }
+
+    listing_history {
+        bigint listing_history_id PK
+        bigint instrument_id FK
+        string primary_exchange
+        string exchange_mic
+        string market_tier
+        string tape
+        string listing_status
+        date valid_from
+        date valid_to
+    }
+
+    corporate_action {
+        bigint corporate_action_id PK
+        bigint instrument_id FK
+        string action_type
+        date ex_date
+        date record_date
+        date pay_date
+        decimal ratio
+        decimal cash_amount
+        string source
+    }
+
+    daily_price {
+        bigint daily_price_id PK
+        bigint instrument_id FK
+        date trade_date
+        decimal open
+        decimal high
+        decimal low
+        decimal close
+        decimal adjusted_close
+        bigint volume
+        string source
+    }</div></div>
+<p>说明：上图是后续目标模型，不是当前 migration 要立刻执行的 schema。</p>
+<h2 id="section-21"><a class="anchor" href="#section-21">#</a>7. 对当前 schema 的优先级建议</h2>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>优先级</th>
+<th>变更</th>
+<th>原因</th>
+<th>是否现在做</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>P0</td>
+<td>保持 <code>instrument_id</code> + <code>daily_price(instrument_id, trade_date)</code></td>
+<td>第一阶段 EODHD active universe 足够</td>
+<td>是，当前已符合</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>保留 <code>provider_symbol</code> 和 <code>symbol</code></td>
+<td>EODHD 与标准 symbol 都需要</td>
+<td>是，当前已符合</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>增加 <code>instrument_identifier_history</code></td>
+<td>ticker/provider_symbol/CUSIP/ISIN 历史不可丢</td>
+<td>historical ingestion 稳定后做</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>增加 <code>listing_history</code></td>
+<td>exchange/tier/tape/status 是时间变化属性</td>
+<td>delisted 模块前做</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>增加 <code>corporate_action</code></td>
+<td>adjusted price 需要可解释来源</td>
+<td>split/dividend ingestion 时做</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>增加 <code>adjustment_factor</code></td>
+<td>生成 adjusted OHLC/returns，不覆盖 raw</td>
+<td>corporate action 后做</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>增加 <code>issuer</code></td>
+<td>多 share class、CIK、fund issuer 需要</td>
+<td>delisted/issuer mapping 时做</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>增加 <code>delisting_event</code></td>
+<td>防 survivorship bias</td>
+<td>扩 active-only 范围时做</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>增加 <code>market_session</code></td>
+<td>pre/core/after-hours/early close</td>
+<td>calendar 质量检查增强时做</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Intraday trade/quote schema</td>
+<td>只有做 TAQ/微观结构研究才需要</td>
+<td>暂不做</td>
+</tr>
+</tbody></table></div>
+<h2 id="section-22"><a class="anchor" href="#section-22">#</a>8. 数据质量规则扩展</h2>
+<p>当前 <code>PROJECT.md</code> 已有重复键、缺失交易日、OHLCV 合法性、负数、空值、全市场行数异常等检查。基于美股规则，建议后续增加：</p>
+<div class="table-wrap"><table>
+<thead><tr>
+<th>检查</th>
+<th>规则</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>symbol uniqueness by date</td>
+<td>同一天同一 symbol 只能解析到一个 active instrument；跨时间可以复用</td>
+</tr>
+<tr>
+<td>provider symbol drift</td>
+<td>EODHD 当前 <code>provider_symbol</code> 与历史 mapping 不一致时记录 issue，不自动合并</td>
+</tr>
+<tr>
+<td>listing status aware missing check</td>
+<td>delisted/suspended/halted 后不按 active calendar 要求价格</td>
+</tr>
+<tr>
+<td>corporate action price jump</td>
+<td>大幅价格跳变时先查 split/dividend/reverse split 事件；无事件则写 issue</td>
+</tr>
+<tr>
+<td>adjusted/raw consistency</td>
+<td>adjusted_close 与 raw close 的比例变化应能被 factor/corporate action 解释</td>
+</tr>
+<tr>
+<td>exchange/tape drift</td>
+<td>primary exchange/tape 改变应写 <code>listing_history</code>，不是覆盖主表</td>
+</tr>
+<tr>
+<td>test issue filter</td>
+<td><code>Test Issue = Y</code> 不进入研究 universe</td>
+</tr>
+<tr>
+<td>FSI warning</td>
+<td>deficient/delinquent/bankrupt 状态进入风险字段或 issue，不直接删除</td>
+</tr>
+<tr>
+<td>no synthetic rows</td>
+<td>仍然禁止为缺失交易日插空价格行</td>
+</tr>
+</tbody></table></div>
+<h2 id="section-23"><a class="anchor" href="#section-23">#</a>9. 实施路线</h2>
+<ol>
+<li>完成当前 <code>fdp ingest history</code> 小范围路径：AAPL/MSFT/SPY 等，确保 raw OHLCV、adjusted_close、upsert、task/API log、invalid row rejection 都稳定。</li>
+<li>建立 <code>market_calendar</code> 数据源和 validator：先覆盖 core trading day、holiday、early close。</li>
+<li>在不扩大 universe 的前提下新增 <code>instrument_identifier_history</code> 和 <code>listing_history</code> migration：把当前 <code>instrument</code> 的 symbol/provider/exchange 复制成第一段 history。</li>
+<li>接 EODHD split/dividend 或 bulk split/dividend：新增 <code>corporate_action</code>，但不要重算覆盖现有 raw price。</li>
+<li>再做 delisted/inactive universe：先设计 event 和 identifier lineage，再扩大 ingestion，否则会污染 active-only 假设。</li>
+<li>最后才考虑 intraday/TAQ：按 trade/quote/condition/venue/tape 分层，不挤进 <code>daily_price</code>。</li>
+</ol>
+<h2 id="section-24"><a class="anchor" href="#section-24">#</a>10. 结论</h2>
+<p>本项目当前第一阶段 schema 是合理的最小起点：<code>instrument</code> + <code>daily_price</code> + <code>market_calendar</code> + <code>system</code> audit/quality/repair。美股特殊性要求后续不要沿用 A 股“代码近似永久身份”的思维，而要采用 CRSP 风格的永久 security id、company id、identifier history、listing history 和 corporate action event 模型。</p>
+<p>最重要的工程原则：</p>
+<ul>
+<li>ticker 是查询入口，不是主键。</li>
+<li>exchange/tier/tape 是历史属性，不是 instrument 永久属性。</li>
+<li>raw OHLCV 永远保留；adjusted data 用事件和 factor 解释。</li>
+<li>delisted securities 是研究数据库的必要部分，不是可选美化项。</li>
+<li>缺失、异常、换码、退市都必须可审计，不能 silent fallback 或自动猜测。</li>
+</ul>
+<h2 id="section-25"><a class="anchor" href="#section-25">#</a>参考资料</h2>
+<p>本报告使用了以下公开资料和项目内文档。交易所与监管规则会变化，后续做 migration 前应再次核验。</p>
+<ol>
+<li><code>PROJECT.md</code>, <code>PROGRESS.md</code>, <code>README.md</code>, <code>主人的流程.md</code></li>
+<li>CRSP, &quot;CRSP US Stock Databases&quot;, <a href="https://www.crsp.org/research/crsp-us-stock-databases/" target="_blank" rel="noopener noreferrer">https://www.crsp.org/research/crsp-us-stock-databases/</a></li>
+<li>CRSP, &quot;Seeing Through the Fog of Market History&quot;, <a href="https://www.crsp.org/seeing-through-the-fog-of-market-history/" target="_blank" rel="noopener noreferrer">https://www.crsp.org/seeing-through-the-fog-of-market-history/</a></li>
+<li>SEC, &quot;Regulation NMS&quot;, <a href="https://www.sec.gov/rules-regulations/2005/06/regulation-nms" target="_blank" rel="noopener noreferrer">https://www.sec.gov/rules-regulations/2005/06/regulation-nms</a></li>
+<li>SEC, &quot;SEC Adopts Rules to Amend Minimum Pricing Increments and Access Fee Caps...&quot;, 2024-09-18, <a href="https://www.sec.gov/newsroom/press-releases/2024-137" target="_blank" rel="noopener noreferrer">https://www.sec.gov/newsroom/press-releases/2024-137</a></li>
+<li>SEC, &quot;SEC Finalizes Rules to Reduce Risks in Clearance and Settlement&quot;, 2023-02-15, <a href="https://www.sec.gov/newsroom/press-releases/2023-29" target="_blank" rel="noopener noreferrer">https://www.sec.gov/newsroom/press-releases/2023-29</a></li>
+<li>FINRA, &quot;National Market System Plans&quot;, <a href="https://www.finra.org/rules-guidance/guidance/national-market-system-plans" target="_blank" rel="noopener noreferrer">https://www.finra.org/rules-guidance/guidance/national-market-system-plans</a></li>
+<li>SEC, &quot;Order Approving the National Market System Plan for the Selection and Reservation of Securities Symbols&quot;, <a href="https://www.sec.gov/rules-regulations/self-regulatory-organization-rulemaking/4-533" target="_blank" rel="noopener noreferrer">https://www.sec.gov/rules-regulations/self-regulatory-organization-rulemaking/4-533</a></li>
+<li>CTA Plan, &quot;Overview&quot;, <a href="https://www.ctaplan.com/" target="_blank" rel="noopener noreferrer">https://www.ctaplan.com/</a></li>
+<li>UTP Plan, &quot;Overview&quot;, <a href="https://utpplan.com/PageParts/Overview.html" target="_blank" rel="noopener noreferrer">https://utpplan.com/PageParts/Overview.html</a></li>
+<li>LULD Plan, &quot;Limit Up Limit Down&quot;, <a href="https://www.luldplan.com/" target="_blank" rel="noopener noreferrer">https://www.luldplan.com/</a></li>
+<li>SEC, &quot;Key Points About Regulation SHO&quot;, <a href="https://www.sec.gov/investor/pubs/regsho.htm" target="_blank" rel="noopener noreferrer">https://www.sec.gov/investor/pubs/regsho.htm</a></li>
+<li>NYSE, &quot;Holidays &amp; Trading Hours&quot;, <a href="https://www.nyse.com/trade/hours-calendars" target="_blank" rel="noopener noreferrer">https://www.nyse.com/trade/hours-calendars</a></li>
+<li>Nasdaq Trader, &quot;Symbol Directory Definitions&quot;, <a href="https://www.nasdaqtrader.com/trader.aspx?id=symboldirdefs" target="_blank" rel="noopener noreferrer">https://www.nasdaqtrader.com/trader.aspx?id=symboldirdefs</a></li>
+<li>Nasdaq Trader, &quot;Daily List Product Description&quot;, <a href="https://www.nasdaqtrader.com/trader.aspx/Trader.aspx?id=DailyListPD" target="_blank" rel="noopener noreferrer">https://www.nasdaqtrader.com/trader.aspx/Trader.aspx?id=DailyListPD</a></li>
+<li>WRDS, &quot;WRDS Database Linking Tool&quot;, <a href="https://wrds-www.wharton.upenn.edu/pages/wrds-research/database-linking-matrix/database-linking-tool/" target="_blank" rel="noopener noreferrer">https://wrds-www.wharton.upenn.edu/pages/wrds-research/database-linking-matrix/database-linking-tool/</a></li>
+<li>FINRA, &quot;Over-the-Counter Equities Daily List User Guide&quot;, <a href="https://www.finra.org/sites/default/files/OTCE_Daily_List_User_Guide.pdf" target="_blank" rel="noopener noreferrer">https://www.finra.org/sites/default/files/OTCE_Daily_List_User_Guide.pdf</a></li>
+<li>EODHD, &quot;Exchanges API: Get List of Supported Exchanges and Tickers&quot;, <a href="https://eodhd.com/financial-apis/exchanges-api-list-of-tickers-and-trading-hours/" target="_blank" rel="noopener noreferrer">https://eodhd.com/financial-apis/exchanges-api-list-of-tickers-and-trading-hours/</a></li>
+<li>EODHD, &quot;End-Of-Day Historical Stock Market Data API&quot;, <a href="https://eodhd.com/financial-apis/api-for-historical-data-and-volumes/" target="_blank" rel="noopener noreferrer">https://eodhd.com/financial-apis/api-for-historical-data-and-volumes/</a></li>
+<li>EODHD, &quot;Bulk API for EOD, Splits and Dividends&quot;, <a href="https://eodhd.com/financial-apis/bulk-api-eod-splits-dividends/" target="_blank" rel="noopener noreferrer">https://eodhd.com/financial-apis/bulk-api-eod-splits-dividends/</a></li>
+<li>Nasdaq Trader, <code>nasdaqlisted.txt</code>, <a href="https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt" target="_blank" rel="noopener noreferrer">https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt</a></li>
+<li>Nasdaq Trader, <code>otherlisted.txt</code>, <a href="https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt" target="_blank" rel="noopener noreferrer">https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt</a></li>
+<li>Shenzhen Stock Exchange, &quot;证券代码区间表&quot;, <a href="https://www.szse.cn/marketServices/technicalservice/doc/P020240510623040090566.pdf" target="_blank" rel="noopener noreferrer">https://www.szse.cn/marketServices/technicalservice/doc/P020240510623040090566.pdf</a></li>
+<li>Shumway, Tyler. 1997. &quot;The Delisting Bias in CRSP Data.&quot; Journal of Finance.</li>
+<li>Ince, Ozgur S., and R. Burt Porter. 2006. &quot;Individual Equity Return Data from Thomson Datastream: Handle with Care!&quot; Journal of Financial Research.</li>
+</ol>
+        <div class="source-note">Source Markdown: <code>docs/us_equity_database_architecture_report.md</code>. Mermaid 图表需要浏览器允许加载 Mermaid 脚本才会渲染。</div>
+      </article>
+    </main>
+  </div>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+  </script>
+</body>
+</html>

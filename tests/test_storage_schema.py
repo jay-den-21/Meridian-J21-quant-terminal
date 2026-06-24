@@ -3,15 +3,29 @@ from fdp.storage import (
     US_SHARE_SCHEMA,
     daily_price,
     data_quality_issue,
+    etf_daily_price,
+    etf_instrument,
+    index_daily_price,
+    index_instrument,
     instrument,
+    instrument_identifier_history,
     market_calendar,
     metadata,
+    stock_daily_price,
+    stock_instrument,
 )
 
 
 def test_initial_metadata_contains_project_tables() -> None:
     assert f"{US_SHARE_SCHEMA}.instrument" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.stock_instrument" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.etf_instrument" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.index_instrument" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.instrument_identifier_history" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.daily_price" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.stock_daily_price" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.etf_daily_price" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.index_daily_price" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.market_calendar" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.data_quality_issue" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.repair_plan" in metadata.tables
@@ -27,13 +41,58 @@ def test_instrument_keeps_standard_and_provider_symbols() -> None:
 
 
 def test_daily_price_has_instrument_date_uniqueness() -> None:
+    assert "symbol" in daily_price.c
+    assert "provider_symbol" in daily_price.c
     assert {"instrument_id", "trade_date"} in [
         set(constraint.columns.keys()) for constraint in daily_price.constraints
     ]
 
 
-def test_market_calendar_has_market_exchange_date_uniqueness() -> None:
-    assert {"market", "exchange", "calendar_date"} in [
+def test_asset_daily_price_tables_have_instrument_date_uniqueness() -> None:
+    for price_table in (stock_daily_price, etf_daily_price, index_daily_price):
+        assert "symbol" in price_table.c
+        assert "provider_symbol" in price_table.c
+        assert {"instrument_id", "trade_date"} in [
+            set(constraint.columns.keys()) for constraint in price_table.constraints
+        ]
+
+
+def test_asset_instrument_views_are_read_handles() -> None:
+    for view in (stock_instrument, etf_instrument, index_instrument):
+        assert view.schema == US_SHARE_SCHEMA
+        assert view.info["is_view"] is True
+        assert "instrument_id" in view.c
+        assert "provider_symbol" in view.c
+
+
+def test_identifier_history_supports_symbol_and_provider_symbol_history() -> None:
+    expected_columns = {
+        "identifier_history_id",
+        "instrument_id",
+        "id_type",
+        "id_value",
+        "valid_from",
+        "valid_to",
+        "source",
+        "created_at",
+        "updated_at",
+    }
+    assert expected_columns.issubset(instrument_identifier_history.c.keys())
+    assert {"instrument_id", "id_type", "id_value", "valid_from", "source"} in [
+        set(constraint.columns.keys()) for constraint in instrument_identifier_history.constraints
+    ]
+
+
+def test_market_calendar_has_daily_us_calendar_columns() -> None:
+    assert {
+        "calendar_id",
+        "calendar_date",
+        "is_trading_day",
+        "source",
+        "created_at",
+        "updated_at",
+    } == set(market_calendar.c.keys())
+    assert {"calendar_date"} in [
         set(constraint.columns.keys()) for constraint in market_calendar.constraints
     ]
 
@@ -50,4 +109,3 @@ def test_quality_issue_records_issue_identity_and_resolution_state() -> None:
         "resolved_at",
     }
     assert expected_columns.issubset(data_quality_issue.c.keys())
-
