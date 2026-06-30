@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>database_app 项目设计文档</title><style>
+      :root { --bg: #f5f7fa; --panel: #ffffff; --text: #1f2933; --muted: #5f6c7b; --line: #d8e0ea; --accent: #176b87; --code: #101820; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; line-height: 1.6; }
+      header { border-bottom: 1px solid var(--line); background: var(--panel); padding: 28px 32px; }
+      header h1 { margin: 0 0 8px; font-size: 28px; }
+      header p { margin: 0; color: var(--muted); }
+      main { max-width: 1120px; margin: 0 auto; padding: 24px; }
+      section { margin-bottom: 18px; border: 1px solid var(--line); background: var(--panel); padding: 20px; }
+      h2 { margin: 0 0 12px; color: var(--accent); font-size: 20px; }
+      h3 { margin: 18px 0 8px; font-size: 16px; }
+      p { margin: 8px 0; }
+      ul { margin: 8px 0 8px 20px; padding: 0; }
+      table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+      th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+      th { background: #edf4f7; }
+      code { border: 1px solid #d6dee8; background: #f1f5f9; padding: 1px 4px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.92em; }
+      pre { overflow: auto; border: 1px solid #2a3744; background: var(--code); color: #eef6fb; padding: 12px; white-space: pre-wrap; }
+      pre code { border: 0; background: transparent; color: inherit; padding: 0; }
+      a { color: var(--accent); }
+</style></head><body><header><h1>database_app 项目设计文档</h1><p>EODHD API Code Generator App。本文档从 <code>PROJECT.md</code> 机械生成。</p></header><main>
+      <section>
+        <p>本文档描述 <code>financial-data-platform/database_app/</code> 子项目。<code>PROJECT.md</code> 是项目规格文字源文件；<code>PROJECT.html</code> 是同步生成的浏览器友好版，用于快速检查项目范围、架构和运行方式。</p>
+        <p><code>database_app</code> 与 <code>database_system_cli</code> 平级。它是一个轻量 EODHD API Code Generator App 和 API playground，不是数据库 ingestion 主线的一部分。</p>
+      </section>
+      <section>
+        <h2>1. 项目目标</h2>
+        <p><code>database_app</code> 面向小规模 equity research / sell-side research 查询。用户在页面中选择 asset、endpoint、symbol / provider symbol、日期范围、period、format 和 endpoint-specific 参数后，App 自动生成：</p>
+        <ul>
+          <li>direct URL</li>
+          <li>Python <code>requests</code> 代码</li>
+          <li>curl 命令</li>
+          <li>JavaScript <code>fetch</code> 示例</li>
+        </ul>
+        <p>App 也可以用 Login / Config 中保存的本地 token 实际调用 EODHD API，在页面下方展示 preview table，并支持 CSV 导出。<code>EODHD_API_KEY</code> 只作为 scripted run fallback。</p>
+        <p>设计灵感来自 Wind API 工具形态：先选择数据域和函数/endpoint，再填参数，最后生成可复制代码并展示结果预览。Wind 只作为工作流参考；endpoint 行为、套餐权限和参数依据以 EODHD 官方文档为准。</p>
+        <p>v0.2 增加股票选择工作流：用户可以先从交易所 symbol list 或 EODHD Filtered Pools 加载股票池，勾选股票，或粘贴逗号/换行分隔的 symbol 自动匹配。选中股票后再进入正常 endpoint 参数筛选，例如日期、period、format 和 endpoint-specific options。</p>
+        <p>v0.4 把产品形态从普通 web form 推向本地桌面工具：主窗口使用 Wind 风格 ribbon，WSD/WSS/WST/WSET/TDays 作为快捷入口；页面内部用 task tab 和 MDI-like child window 承载不同工作区；代码区和输出结果保持像 Wind 代码生成器一样的上下文并列关系。当前仍由本地 HTTP server 驱动，但用户入口以 <code>.app</code> wrapper / 本地桌面 review 为主。</p>
+        <p>v0.5 把前端交互从“大块 endpoint 工作区”收敛为 single workspace：主屏只保留中英双语 function toolbar、已确认请求摘要、code generation 区域和 Execute API result 区域。所有 endpoint-specific 配置、股票池、ticker import、日期和输出格式都进入 3-step floating wizard。Wizard 内的 draft request 不会影响主屏；只有 Confirm 后才更新 codegen 和 Execute 使用的 confirmed request。</p>
+        <p>v0.6 把 Stocks wizard 的候选加载从 EODHD API 改成 read-only MySQL pool browser。Pool browser 只读 <code>database_system_cli/.env</code> 中的 <code>FDP_DATABASE_URL</code> 或 <code>FDP_DB_*</code> 配置，并查询现有 <code>us_share.instrument</code>，不写数据库、不新增 schema、不消耗 EODHD API call。EODHD token 只用于 Execute API 和 Instrument Lookup。</p>
+        <p>Wind 学习依据：</p>
+        <ul>
+          <li>用户提供的 <code>Wind_API接口说明_2025_.pdf</code>，文档日期 2025-04-10。</li>
+          <li>用户提供的 Wind client 文档链接：<code>https://www.kancloud.cn/stratorway/wind-client/1457552</code>。</li>
+          <li>PDF 中 Wind API 数据函数包括 WSD、WSS、WST、WSI、WSQ、WSET、EDB；代码生成器定位是通过导航逐步选择参数、生成取数代码，并同步展示取数结果。</li>
+          <li>PDF 中日期函数包括 <code>tdays</code>、<code>tdaysOffset</code>、<code>tdayscount</code>，日期宏支持 <code>-5D</code>、<code>-10TD</code> 这类相对日期/交易日表达。因此本 App 的 v0.4 加入了 <code>Date helper: T+n</code>，把 anchor date 和 offset 转换为实际 <code>from</code> / <code>to</code> / <code>trade_date</code> 字段。</li>
+        </ul>
+      </section>
+      <section>
+        <h2>2. 与 database_system_cli 的边界</h2>
+        <p>硬边界：</p>
+        <ul>
+          <li>不修改 <code>database_system_cli</code> 源码。</li>
+          <li>不修改 <code>database_system_cli</code> Poetry 环境。</li>
+          <li>不修改 MySQL schema。</li>
+          <li>不新增 Alembic migration。</li>
+          <li>不写入数据库。</li>
+          <li>不 import <code>database_system_cli</code> 内部模块。</li>
+          <li>不提交真实 <code>.env</code>、API key、token。</li>
+        </ul>
+        <p>允许的只读边界：</p>
+        <ul>
+          <li><code>database_app</code> 可以读取 <code>database_system_cli/.env</code> 中的 DB 连接配置，作为本地 pool browser 的 fallback。</li>
+          <li><code>database_app</code> 可以只读查询现有 <code>us_share.instrument</code> 字段：<code>provider_symbol</code>、<code>symbol</code>、<code>name</code>、<code>exchange</code>、<code>asset_type</code>、<code>is_active</code>、<code>market</code>、<code>provider</code>。</li>
+          <li>如果 DB 配置缺失、连接失败或 schema 不可用，App 必须显示 explicit unavailable，不得 silent fallback 到 EODHD API。</li>
+        </ul>
+        <p>设计原因：</p>
+        <ul>
+          <li><code>database_system_cli</code> 是可追踪、可验证的数据库 ingestion / validation / research read layer。</li>
+          <li><code>database_app</code> 是 API playground / code generator，生命周期和风险边界不同。</li>
+          <li>当前实现避免复杂 import path 和跨项目隐式耦合。</li>
+        </ul>
+        <p>未来如果两边都稳定复用 EODHD endpoint/url/validation 逻辑，应抽成独立 shared package，而不是让 <code>database_app</code> 直接依赖 <code>database_system_cli</code>。</p>
+      </section>
+      <section>
+        <h2>3. 功能范围</h2>
+        <p>当前实现股票 / equity 查询工作流。前端预留 Bonds、Funds、Indices 按钮，但这些资产仍是 roadmap。</p>
+        <p>已实现：</p>
+        <ul>
+          <li>Endpoint registry / endpoint specs。</li>
+          <li>Dynamic UI form renderer。</li>
+          <li>Single-workspace frontend with a compact function toolbar。</li>
+          <li>P0 function cards: Historical Price / 历史行情、Bulk Last-Day EOD / 批量日终行情、Latest Snapshot / 最新快照、Intraday Bars / 分钟线、Instrument Lookup / 证券搜索。</li>
+          <li>3-step floating wizard: Stocks / 选股、Parameters / 参数、Review / 确认。</li>
+          <li>Read-only MySQL pool browser for stock candidates, backed by existing <code>us_share.instrument</code>。</li>
+          <li>Pool Resources categories: Preset Pools、Exchange、Asset Type、Index Assets、Sectors disabled。</li>
+          <li>Default pool: active US common stocks on NYSE/NASDAQ/AMEX/ARCA/NYSE ARCA/BATS。</li>
+          <li>Index Assets shows index instruments only, not index constituents。</li>
+          <li>Sectors is disabled until a sector/industry taxonomy or membership source exists。</li>
+          <li>Advanced Filter modal for DB-supported filters: active-only、exclude OTC/PINK、preset pool、asset type、exchange、text search。</li>
+          <li>Left candidate list and right selected list with checkbox, double-click, and Command/Ctrl-click selection semantics。</li>
+          <li>CSV/TXT and pasted-text ticker import, parsed locally in the browser without uploading files。</li>
+          <li>Draft request vs confirmed request state separation; Execute API only uses the confirmed request。</li>
+          <li>Previous Execute result is retained and marked as previous/stale after a new Confirm。</li>
+          <li>Frontend and backend US ticker normalization for <code>AA.NYSE</code> -&gt; <code>AA.US</code>, <code>AABB.PINK</code> -&gt; <code>AABB.US</code>, and <code>BRK.B</code> -&gt; <code>BRK-B.US</code>。</li>
+          <li><code>Date helper: T+n</code> for business-day or calendar-day offsets into date fields。</li>
+          <li>Program language selector that switches generated code tabs。</li>
+          <li>Login / Config token dialog backed by server-side token store。</li>
+          <li>Request validation and normalization。</li>
+          <li>Direct URL generation。</li>
+          <li>Python <code>requests</code> generation。</li>
+          <li>curl generation。</li>
+          <li>JavaScript <code>fetch</code> generation。</li>
+          <li>Real EODHD API execution through stored local token, with <code>EODHD_API_KEY</code> as fallback。</li>
+          <li>JSON / CSV response parsing。</li>
+          <li>Data preview table。</li>
+          <li>Browser CSV export。</li>
+          <li>API key redaction。</li>
+        </ul>
+        <p>不做：</p>
+        <ul>
+          <li>大规模批量下载器。</li>
+          <li>数据库写入。</li>
+          <li>用户登录和权限系统。</li>
+          <li>请求模板持久化。</li>
+          <li>Excel <code>.xlsx</code> 导出。</li>
+          <li>C++ 代码生成。</li>
+          <li>多资产完整支持。</li>
+          <li>官方指数成分股 universe，除非订阅/官方证据明确支持并有 membership source。</li>
+          <li>sector/industry member pools，除非新增官方/授权 taxonomy source。</li>
+          <li>在 P0 中不展示申万、S&amp;P/MSCI、券商行业指数等“知名行业指数池”；除非有官方/授权成分股来源。Sector/industry pools 当前禁用，不得冒充指数成分股或官方行业成员池。</li>
+        </ul>
+      </section>
+      <section>
+        <h2>4. 技术栈</h2>
+        <p>当前实现使用 Python 标准库和原生前端：</p>
+        <ul>
+          <li>Python <code>http.server.ThreadingHTTPServer</code></li>
+          <li>Python <code>urllib.request</code></li>
+          <li>Python <code>csv</code></li>
+          <li>SQLAlchemy Core read-only queries for pool browser</li>
+          <li>PyMySQL for MySQL connectivity</li>
+          <li>原生 HTML / CSS / JavaScript</li>
+          <li>pytest 测试</li>
+          <li>ruff 静态检查</li>
+        </ul>
+        <p>仍然不引入 FastAPI/Jinja2/Uvicorn/React。新增 <code>sqlalchemy&gt;=2.0</code> 和 <code>pymysql&gt;=1.1</code> 的原因是 pool browser 需要快速、只读、安全地查询现有 MySQL <code>instrument</code> 表，避免每次打开股票池都调用 EODHD API。FastAPI + Jinja2 迁移可以作为 P1/P2，在依赖边界稳定后执行。</p>
+      </section>
+      <section>
+        <h2>5. 目录结构</h2>
+        <pre><code>
+financial-data-platform/
+  database_system_cli/
+  database_app/
+    .gitignore
+    pyproject.toml
+    README.md
+    PROJECT.md
+    PROJECT.html
+    PROGRESS.md
+    docs/
+      OFFICIAL_ENDPOINTS.md
+      TECHNICAL_DESIGN.md
+    src/
+      eodhd_codegen_app/
+        __init__.py
+        __main__.py
+        client.py
+        codegen.py
+        cost.py
+        endpoints.py
+        request_model.py
+        server.py
+        token_store.py
+        universe.py
+        universe_db.py
+        static/
+          index.html
+          styles.css
+          app.js
+    tests/
+      test_client.py
+      test_codegen.py
+      test_cost.py
+      test_endpoint_registry.py
+      test_request_model.py
+      test_server_security.py
+      test_token_store.py
+      test_universe.py
+      test_universe_db.py
+      test_static_app.py
+    scripts/
+      run_local.command
+      package_macos_app.sh
+          </code></pre>
+        <p>模块职责：</p>
+        <ul>
+          <li><code>endpoints.py</code>：endpoint registry、参数 spec、官方文档链接、套餐依据说明、inventory-only 状态。</li>
+          <li><code>request_model.py</code>：请求参数校验和 normalization。</li>
+          <li><code>codegen.py</code>：生成 direct URL、Python、curl、JavaScript。</li>
+          <li><code>cost.py</code>：估算 endpoint API call cost，Bulk 请求需要后端确认。</li>
+          <li><code>client.py</code>：服务器端真实 EODHD HTTP 调用、JSON/CSV 解析、token redaction、preview rows。</li>
+          <li><code>token_store.py</code>：环境变量 / 本地 app config token 状态、保存、删除；Keychain 是可选路径，不作为默认阻塞保存路径。</li>
+          <li><code>universe.py</code>：DB-backed pool menu/load contract、preset pool 和 disabled taxonomy/index-constituent 边界。</li>
+          <li><code>universe_db.py</code>：读取 DB env、建立 SQLAlchemy engine、只读查询 <code>us_share.instrument</code>。</li>
+          <li><code>server.py</code>：HTTP route、静态文件、API response、本机请求 guard。</li>
+          <li><code>static/</code>：single workspace、function toolbar、3-step request wizard、T+n date helper、代码区、结果区、样式和浏览器端交互。</li>
+          <li><code>tests/</code>：验证参数边界、代码生成、执行解析、token redaction、registry 完整性、DB pool 查询边界和前端 pool state 回归点。</li>
+        </ul>
+      </section>
+      <section>
+        <h2>6. 运行方式</h2>
+        <p>从仓库根目录进入 <code>database_app</code>：</p>
+        <pre><code>
+cd &quot;/Users/boqingxin/tandon MSCS/My_Own/financial-data-platform/database_app&quot;
+          </code></pre>
+        <p>仅生成代码不需要 API key；真实执行 API 建议在页面右上角 <code>Login / Config</code> 保存 EODHD API token。保存后的 token 优先于 shell 里的 <code>EODHD_API_KEY</code>。</p>
+        <p>Stocks wizard 的候选池不需要 EODHD token，但需要可读的数据库连接配置。App 会先读当前进程环境变量，再只读 fallback 到 sibling <code>database_system_cli/.env</code>：</p>
+        <pre><code>
+FDP_DATABASE_URL
+或 FDP_DB_HOST / FDP_DB_PORT / FDP_DB_USER / FDP_DB_PASSWORD / FDP_DB_NAME
+          </code></pre>
+        <p>缺少 DB 或连接失败时，App 仍可启动、生成代码和 Execute API；只是 Pool Resources 面板会显示 database pool source unavailable，不会自动改打 EODHD API。</p>
+        <p>启动本地 server：</p>
+        <pre><code>
+PYTHONPATH=src ../database_system_cli/.venv/bin/python -m eodhd_codegen_app --host 127.0.0.1 --port 8000
+          </code></pre>
+        <p>浏览器打开：</p>
+        <pre><code>
+http://127.0.0.1:8000
+          </code></pre>
+        <p>停止 server：</p>
+        <pre><code>
+在运行 server 的 Terminal 中按 Ctrl+C
+          </code></pre>
+        <p>桌面 review wrapper：</p>
+        <pre><code>
+./scripts/run_local.command
+          </code></pre>
+        <p>生成轻量 macOS <code>.app</code>：</p>
+        <pre><code>
+./scripts/package_macos_app.sh
+open &quot;dist/EODHD Code Generator.app&quot;
+          </code></pre>
+        <p>该 wrapper 会用随机本地端口绑定 <code>127.0.0.1</code> 并打开系统浏览器。生成的 <code>.app</code> 会复制 <code>database_app</code> 源码和文档到 bundle resources，移动 <code>.app</code> 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目的是给本机 review 一个实体入口。</p>
+        <p>直接启动脚本会在启动 server 前 <code>unset EODHD_API_KEY</code>，因此桌面式启动路径只使用 <code>Login / Config</code> 中保存的 token。</p>
+      </section>
+      <section>
+        <h2>7. Endpoint 白名单</h2>
+        <p>所有可执行 endpoint 必须有官方文档依据。完整依据记录在 <code>docs/OFFICIAL_ENDPOINTS.md</code>。</p>
+        <table>
+          <tbody>
+            <tr><th>Endpoint id</th><th>EODHD path</th><th>用途</th><th>格式</th><th>状态</th></tr>
+            <tr><td><code>historical_eod</code></td><td><code>/api/eod/{provider_symbol}</code></td><td>一个或少量 symbol 的历史 EOD OHLCV</td><td>JSON / CSV</td><td>implemented</td></tr>
+            <tr><td><code>intraday</code></td><td><code>/api/intraday/{provider_symbol}</code></td><td>1m/5m/1h intraday bars</td><td>JSON / CSV</td><td>implemented</td></tr>
+            <tr><td><code>live_ohlcv</code></td><td><code>/api/real-time/{provider_symbol}</code></td><td>最新 delayed OHLCV snapshot</td><td>JSON / CSV</td><td>implemented</td></tr>
+            <tr><td><code>bulk_last_day_eod</code></td><td><code>/api/eod-bulk-last-day/{exchange}</code></td><td>小规模手动 bulk last-day 查询</td><td>JSON / CSV</td><td>implemented</td></tr>
+            <tr><td><code>dividends</code></td><td><code>/api/div/{provider_symbol}</code></td><td>历史分红</td><td>JSON / CSV</td><td>implemented</td></tr>
+            <tr><td><code>splits</code></td><td><code>/api/splits/{provider_symbol}</code></td><td>历史拆股</td><td>JSON / CSV</td><td>implemented</td></tr>
+            <tr><td><code>technical</code></td><td><code>/api/technical/{provider_symbol}</code></td><td>技术指标序列</td><td>JSON / CSV</td><td>implemented</td></tr>
+            <tr><td><code>screener</code></td><td><code>/api/screener</code></td><td>股票筛选器</td><td>JSON</td><td>implemented</td></tr>
+            <tr><td><code>exchange_symbol_list</code></td><td><code>/api/exchange-symbol-list/{exchange}</code></td><td>交易所 symbol list</td><td>JSON</td><td>implemented</td></tr>
+            <tr><td><code>instrument_search</code></td><td><code>/api/search/{query_string}</code></td><td>instrument lookup</td><td>JSON</td><td>implemented</td></tr>
+            <tr><td><code>exchanges_list</code></td><td><code>/api/exchanges-list/</code></td><td>EODHD 支持交易所列表</td><td>JSON</td><td>implemented</td></tr>
+            <tr><td><code>exchange_details</code></td><td><code>/api/v2/exchange-details/{exchange}</code></td><td>交易时间和休市日</td><td>JSON</td><td>implemented</td></tr>
+            <tr><td><code>symbol_change_history</code></td><td><code>/api/symbol-change-history</code></td><td>US ticker rename history</td><td>JSON / CSV</td><td>implemented</td></tr>
+            <tr><td><code>id_mapping</code></td><td><code>/api/id-mapping</code></td><td>CUSIP/ISIN/FIGI/LEI/CIK/EODHD symbol mapping</td><td>JSON</td><td>implemented</td></tr>
+          </tbody>
+        </table>
+        <p>Inventory-only，不在当前 29.99 Extended 白名单中执行：</p>
+        <table>
+          <tbody>
+            <tr><th>Endpoint group</th><th>原因</th></tr>
+            <tr><td>Fundamentals</td><td>Pricing 显示 Fundamentals Data Feed 是独立 59.99 plan。</td></tr>
+            <tr><td>Calendar and news</td><td>Pricing 显示 Corporate Events Calendar &amp; News API 是独立 marketplace 产品。</td></tr>
+            <tr><td>Historical market cap</td><td>官方页面归在 Fundamental &amp; Economic Data；当前没有足够明确的 29.99 Extended 权限依据。</td></tr>
+            <tr><td>Official index constituents</td><td>EODHD 官方指数成分股页面归 marketplace/Fundamental &amp; Economic Data；当前不作为 29.99 Extended 白名单执行。</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>8. 请求校验规则</h2>
+        <p>App 在生成 URL 或执行 API 前做参数校验：</p>
+        <ul>
+          <li>只接受 registry 中 <code>implemented=True</code> 的 endpoint。</li>
+          <li>asset 当前只接受 <code>equity</code>。</li>
+          <li>symbol 和 exchange 只允许有限安全字符。</li>
+          <li>必填参数不能被 server 静默填入 UI default；API payload 必须显式带值。</li>
+          <li>Historical EOD 必须提供 symbols、<code>date_from</code>、<code>date_to</code>。</li>
+          <li>Historical EOD 最多 2000 个 symbols。</li>
+          <li>US class-share paste 会把 <code>BRK.B</code> 这类输入规范为 <code>BRK-B.US</code>。</li>
+          <li>US exchange list 中的 listing venue suffix 会规范为 EODHD historical provider suffix：例如 <code>AA.NYSE</code> -&gt; <code>AA.US</code>，<code>AABB.PINK</code> -&gt; <code>AABB.US</code>。</li>
+          <li>前端手动粘贴和后端 request validation 使用同一类 US ticker 规范化语义，避免 UI 显示 <code>AA.NYSE</code> 但生成 URL 使用另一个 symbol。</li>
+          <li>Historical EOD 日期范围最多 3660 天。</li>
+          <li>T+n helper 只做 UI 日期填充，不绕过后端日期范围校验；business-day 模式当前按周一到周五计算，不含交易所节假日。</li>
+          <li>Intraday 支持 <code>1m</code>、<code>5m</code>、<code>1h</code>；如果提供 timestamp range，会按官方区间上限校验。</li>
+          <li>Bulk EOD 默认必须提供 symbols；除非用户显式勾选 full exchange。</li>
+          <li>Bulk EOD 默认最多 2000 个 symbols。</li>
+          <li>Bulk EOD 支持 <code>trade_date</code> 或 <code>date_from</code>/<code>date_to</code>，日期范围最多 31 个 calendar days，会生成每个日期一个 bulk URL。</li>
+          <li>Intraday / Technical / Live OHLCV 支持最多 2000 个 symbols 用于 code generation；Live OHLCV 会按 20 symbols 一组生成请求。</li>
+          <li>Pool browser 每次最多返回 2000 rows，数据源是现有 MySQL <code>us_share.instrument</code>。</li>
+          <li>Pool browser 不需要 stored token / <code>EODHD_API_KEY</code>，不会调用 EODHD API；缺少 DB、schema 不可读或 DB 查询失败时显示 explicit unavailable。</li>
+          <li>Pool Browser 的前端加载使用 request sequence guard，避免慢的旧 pool 响应覆盖用户刚切换到的新 pool。</li>
+          <li>Index Assets 只代表 DB 中 <code>asset_type=index</code> 的指数资产，不代表指数成分股。</li>
+          <li>Sectors/industry pools 当前禁用，因为现有 DB schema 没有 sector/industry taxonomy 或 membership table。</li>
+          <li>前端 import 支持 <code>.csv</code> / <code>.txt</code> 和 pasted text；浏览器本地解析后调用本地 DB resolver，只接受 <code>us_share.instrument</code> 中 active instrument 的 <code>symbol</code> 或 <code>provider_symbol</code> exact match，大小写不敏感，命中后用 DB 名称进入 selected list；未命中的 token 会 rejected。</li>
+          <li>Historical / Intraday / Dividends / Splits / Technical 这类 one-symbol-per-request 执行结果会补 <code>_provider_symbol</code>，避免多个 symbol 返回行混在一起时无法判断来源。</li>
+          <li>前端 selection 最多 2000 tickers；超过 100 tickers 时显示强提醒，但不阻止生成代码。</li>
+          <li>Search query 最多 80 个字符。</li>
+          <li>Screener filters 必须是 JSON array。</li>
+          <li>Preview rows 限制在 1 到 500。</li>
+          <li>JSON-only endpoint 不允许 CSV。</li>
+          <li>Bulk/high-call execute 必须通过后端 cost confirmation；前端会弹出显式确认，未确认时后端拒绝执行。</li>
+          <li>本地 <code>Execute API</code> 硬限制最多 50 个 generated HTTP requests；超过上限只能生成代码，不由 preview UI 批量执行。</li>
+        </ul>
+        <p>这些是 app-level guardrails，目的是保护交互式研究查询，不代表 EODHD 协议本身的全部限制。</p>
+      </section>
+      <section>
+        <h2>9. API Key 和安全边界</h2>
+        <p>真实 API key 只在服务器端使用，默认来自页面 <code>Login / Config</code> 保存的本地 token。环境变量只作为脚本化运行 fallback：</p>
+        <pre><code>
+EODHD_API_KEY
+          </code></pre>
+        <p>安全规则：</p>
+        <ul>
+          <li>不提交真实 <code>.env</code>。</li>
+          <li>不把真实 token 写进代码。</li>
+          <li>不把真实 token 返回给浏览器。</li>
+          <li><code>Login / Config</code> 默认将 token 存入用户本地 app config 文件，权限为 <code>0600</code>。Keychain 支持保留为可选模块路径，但不作为默认保存路径，因为 macOS <code>security</code> 在本地 HTTP 请求中可能阻塞。</li>
+          <li>已保存 token 只能显示 configured/source 状态，不能查看，只能删除后重填。</li>
+          <li>Direct URL 使用 <code>YOUR_EODHD_API_KEY</code> 占位符。</li>
+          <li>Python 示例使用 <code>os.environ[&quot;EODHD_API_KEY&quot;]</code>。</li>
+          <li>curl 示例使用 <code>${EODHD_API_KEY}</code>。</li>
+          <li>JavaScript 示例使用 <code>process.env.EODHD_API_KEY</code>。</li>
+          <li><code>Config token</code> 代码示例调用当前 localhost port 的本地 <code>/api/execute</code>，由本地 app 使用 Login / Config 中保存的 token，不把 token 明文塞进生成代码。</li>
+          <li>upstream error 返回浏览器前会 redaction 当前 API key。</li>
+          <li>缺少 stored token 且没有 <code>EODHD_API_KEY</code> fallback 时，<code>Execute API</code> 返回显式错误；不会 silent fallback 到 demo key。</li>
+          <li>本地 side-effect routes 只接受 loopback <code>Host</code>/<code>Origin</code>，POST 必须是 <code>application/json</code>，以降低随机网页触发本机 API 消耗 token 的风险。</li>
+        </ul>
+        <p>当前不实现复杂安全机制或认证层，因此只应在本机 <code>127.0.0.1</code> 开发环境使用。</p>
+      </section>
+      <section>
+        <h2>10. 数据预览和导出</h2>
+        <p><code>/api/execute</code> 返回：</p>
+        <ul>
+          <li>normalized request</li>
+          <li>parsed rows</li>
+          <li>preview rows</li>
+          <li>source row count</li>
+          <li>returned row count</li>
+          <li>request count</li>
+          <li>status codes</li>
+        </ul>
+        <p>前端展示 preview table，并允许把最近一次返回的 rows 导出为 CSV。</p>
+        <p>限制：</p>
+        <ul>
+          <li>server 返回 rows 最多 5000 行。</li>
+          <li><code>Execute API</code> 最多执行 50 个 generated HTTP requests；更大的 symbol list 只生成代码。</li>
+          <li>preview table 使用用户选择的 preview limit。</li>
+          <li>CSV 导出在浏览器端完成。</li>
+          <li>CSV cell 会 quote；以 <code>=</code>, <code>+</code>, <code>-</code>, <code>@</code> 开头的值会加前缀，降低 spreadsheet formula injection 风险。</li>
+          <li>Excel <code>.xlsx</code> 导出是 P1，不属于当前实现。</li>
+        </ul>
+      </section>
+      <section>
+        <h2>11. 错误处理</h2>
+        <p>HTTP API 错误语义：</p>
+        <ul>
+          <li><code>400</code>：用户请求参数非法。</li>
+          <li><code>404</code>：未知 route。</li>
+          <li><code>502</code>：EODHD upstream request 失败或缺少 stored token / <code>EODHD_API_KEY</code> fallback。</li>
+        </ul>
+        <p>缺少 stored token 且没有 <code>EODHD_API_KEY</code> fallback 时，<code>Execute API</code> 返回显式错误；不会 silent fallback 到 demo key。</p>
+      </section>
+      <section>
+        <h2>12. 测试</h2>
+        <p>运行测试：</p>
+        <pre><code>
+cd &quot;/Users/boqingxin/tandon MSCS/My_Own/financial-data-platform/database_app&quot;
+PYTHONPATH=src ../database_system_cli/.venv/bin/python -m pytest
+          </code></pre>
+        <p>静态检查：</p>
+        <pre><code>
+../database_system_cli/.venv/bin/ruff check src tests
+          </code></pre>
+        <p>当前覆盖：</p>
+        <ul>
+          <li>endpoint registry 结构和官方依据字段。</li>
+          <li>request validation。</li>
+          <li>endpoint boundary checks。</li>
+          <li>token-safe code generation。</li>
+          <li>Historical / intraday / technical / screener / ID mapping URL generation。</li>
+          <li>JSON / CSV execution parsing。</li>
+          <li>nested JSON preview flattening。</li>
+          <li>CSV-mode Python/JavaScript snippet behavior。</li>
+          <li>upstream token redaction。</li>
+          <li>token store env/keychain behavior。</li>
+          <li>local request guard against non-loopback origin/host and non-JSON POST。</li>
+          <li>DB-backed universe menu/load contract。</li>
+          <li>DB env parser precedence and no-secret public status。</li>
+          <li>preset/exchange/asset_type/index asset pool query semantics。</li>
+          <li>API cost estimation and bulk confirmation guard。</li>
+          <li>frontend static smoke for single workspace, wizard import/confirm, stale-result boundary, and no-key execute error path。</li>
+        </ul>
+        <p><code>database_system_cli</code> 主线测试可单独在其目录运行，不依赖 <code>database_app</code>。</p>
+      </section>
+      <section>
+        <h2>13. 文档</h2>
+        <p>文档职责：</p>
+        <ul>
+          <li><code>PROJECT.md</code>：项目规格源文件。</li>
+          <li><code>PROJECT.html</code>：与 <code>PROJECT.md</code> 同步生成的浏览器友好版。</li>
+          <li><code>README.md</code>：快速启动和使用说明。</li>
+          <li><code>PROGRESS.md</code>：实现进度看板。</li>
+          <li><code>docs/OFFICIAL_ENDPOINTS.md</code>：官方 endpoint、套餐依据、rate/cost 依据、Wind 研究笔记。</li>
+          <li><code>docs/TECHNICAL_DESIGN.md</code>：技术实现细节和维护说明。</li>
+          <li><code>docs/RELEASE_NOTES_v1.0.md</code>：v1.0 release notes 和发布验证摘要。</li>
+        </ul>
+        <p>修改 <code>PROJECT.md</code> 时，应同步更新 <code>PROJECT.html</code>。</p>
+        <p>本项目现在采用 repo-level Trellis 工作流做大任务执行记录，但 <code>PROJECT.md</code>、<code>PROJECT.html</code>、<code>PROGRESS.md</code> 和 <code>docs/</code> 仍是长期项目事实来源。Trellis task artifacts 不替代本项目规格文档。</p>
+      </section>
+      <section>
+        <h2>14. Roadmap</h2>
+        <p>P1:</p>
+        <ul>
+          <li>Wind-like Python client package:
+            <ul>
+              <li><code>pip install eodhd-codegen-app</code> 或未来拆出的 <code>eodhd-client</code>。</li>
+              <li>Python 中支持 <code>from eodhd_client import w</code>。</li>
+              <li>第一次 <code>w.start()</code> 如果没有 token，打开本地 Login / Config 子窗口或 CLI prompt 保存 token；之后 <code>w.start()</code> 直接读取本地 token store。</li>
+              <li><code>w.start()</code> 成功后打印 <code>EODHD is connected</code> 或返回连接状态，接近 WindPy 的 <code>w.start()</code> 使用心智。</li>
+              <li><code>w.isconnected()</code> 返回本地 token 是否可用以及一次 lightweight endpoint probe 是否成功。</li>
+              <li><code>w.wsd(&quot;AAPL.US&quot;, &quot;close,volume&quot;, &quot;2024-01-01&quot;, &quot;2024-01-31&quot;)</code> 映射到 EODHD historical EOD；<code>w.wss()</code> 映射到 snapshot/search/fundamental-like safe subset；<code>w.wset()</code> 映射到 whitelist dataset/bulk/screener。</li>
+              <li>不把真实 token 写入代码、不要求用户手动 export env；默认使用本地 app config 或系统 keyring。</li>
+            </ul>
+          </li>
+          <li>迁移到 FastAPI + Jinja2，并保留当前 registry/service 分层。</li>
+          <li>Excel <code>.xlsx</code> export。</li>
+          <li>保存 request templates，但不保存 API key。</li>
+          <li>Server-side streaming export for large responses。</li>
+          <li>更清楚的 endpoint group/status 页面。</li>
+          <li>更完整的 ambiguity-aware paste matcher，例如 Bloomberg-style <code>AAPL US Equity</code> 和跨交易所重名处理。</li>
+        </ul>
+        <p>P2:</p>
+        <ul>
+          <li>C++ code generation。</li>
+          <li>多资产完整支持。</li>
+          <li>抽取 shared EODHD URL/client/validation package。</li>
+          <li>可选本地审计日志，但不得写入 <code>database_system_cli</code> schema。</li>
+          <li>真正的 native webview/PyInstaller/Briefcase packaging。</li>
+        </ul>
+      </section>
+      <section>
+        <h2>15. 当前状态</h2>
+        <p><code>database_app</code> 已实现 registry-driven 产品化版本，支持 14 个官方确认可用于 29.99 Extended 研究工作流的 endpoint，并保留 inventory-only 区分不在当前白名单内的 endpoint group。v0.6 已完成 read-only MySQL pool browser，Stocks wizard 的候选加载不再调用 EODHD API；Index Assets 明确为指数资产而非成分股，Sectors 在 taxonomy source 加入前禁用。v1.0 release 收口将当前本地工具作为独立子项目发布，并采用 Trellis 作为未来大任务执行层。<code>database_system_cli</code> schema 和源码未被修改，<code>database_app</code> 当前作为独立子项目存在。</p>
+      </section>
+</main></body></html>

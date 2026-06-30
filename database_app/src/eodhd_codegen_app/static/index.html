@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EODHD API Code Generator</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <div class="desktop-frame">
+      <div class="window-titlebar">
+        <div class="title-left">
+          <span class="app-mark">E</span>
+          <span>EODHD API Code Generator</span>
+        </div>
+        <div class="window-controls" aria-hidden="true">
+          <span>_</span>
+          <span>[]</span>
+          <span>X</span>
+        </div>
+      </div>
+
+      <header class="ribbon">
+        <div class="ribbon-group language-group">
+          <label for="program_language">Program language</label>
+          <select id="program_language">
+            <option>Python</option>
+            <option>JavaScript</option>
+            <option>curl</option>
+          </select>
+        </div>
+        <div class="ribbon-scroll">
+          <button type="button" class="ribbon-tool" id="configure_active">
+            <span class="tool-icon calendar-icon"></span>
+            <strong>Config</strong>
+            <span>Request</span>
+          </button>
+          <button type="button" class="ribbon-tool" id="ribbon_tdays">
+            <span class="tool-icon clock-icon"></span>
+            <strong>TDays</strong>
+            <span>Dates</span>
+          </button>
+          <button type="button" class="ribbon-tool" id="config_open">
+            <span class="tool-icon wrench-icon"></span>
+            <strong>Tools</strong>
+            <span>Login</span>
+          </button>
+          <div class="status" id="status">Ready</div>
+        </div>
+      </header>
+
+      <main class="app-main">
+        <section class="function-panel child-window">
+          <div class="child-titlebar">
+            <span>Market Data Functions / 行情取数入口</span>
+            <span>Click a function to configure</span>
+          </div>
+          <div class="function-toolbar" id="function_toolbar">
+            <button type="button" class="function-card active" data-endpoint="historical_eod">
+              <strong>Historical Price</strong>
+              <span>历史行情</span>
+            </button>
+            <button type="button" class="function-card" data-endpoint="bulk_last_day_eod">
+              <strong>Bulk Last-Day EOD</strong>
+              <span>批量日终行情</span>
+            </button>
+            <button type="button" class="function-card" data-endpoint="live_ohlcv">
+              <strong>Latest Snapshot</strong>
+              <span>最新快照</span>
+            </button>
+            <button type="button" class="function-card" data-endpoint="intraday">
+              <strong>Intraday Bars</strong>
+              <span>分钟线</span>
+            </button>
+            <button type="button" class="function-card" data-endpoint="instrument_search">
+              <strong>Instrument Lookup</strong>
+              <span>证券搜索</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="summary-panel child-window">
+          <div class="child-titlebar">
+            <span>Confirmed Request / 已确认请求</span>
+            <button type="button" id="edit_confirmed" class="copy-button">Configure</button>
+          </div>
+          <div class="request-summary" id="request_summary">
+            <div>
+              <strong>No confirmed request</strong>
+              <span>Click a function above and finish the wizard to generate code.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="code-panel child-window">
+          <div class="child-titlebar">
+            <span>Code Generation / 代码生成</span>
+            <button type="button" id="copy_snippet" class="copy-button">Copy active</button>
+          </div>
+          <div class="tabs">
+            <button type="button" class="tab active" data-tab="urls">Direct URL</button>
+            <button type="button" class="tab" data-tab="python">Python</button>
+            <button type="button" class="tab" data-tab="python_loop">Python loop</button>
+            <button type="button" class="tab" data-tab="curl">curl</button>
+            <button type="button" class="tab" data-tab="javascript">JavaScript</button>
+            <button type="button" class="tab" data-tab="javascript_loop">JS loop</button>
+            <button type="button" class="tab" data-tab="local_proxy">Config token</button>
+          </div>
+          <pre id="urls" class="code tab-panel">Confirm a request to generate direct URLs.</pre>
+          <pre id="python" class="code tab-panel hidden"></pre>
+          <pre id="python_loop" class="code tab-panel hidden"></pre>
+          <pre id="curl" class="code tab-panel hidden"></pre>
+          <pre id="javascript" class="code tab-panel hidden"></pre>
+          <pre id="javascript_loop" class="code tab-panel hidden"></pre>
+          <pre id="local_proxy" class="code tab-panel hidden"></pre>
+        </section>
+
+        <section class="preview-panel child-window">
+          <div class="child-titlebar">
+            <span>Execute API Result / 执行结果</span>
+            <span id="preview_meta">No request executed</span>
+          </div>
+          <div class="actions result-actions">
+            <button type="button" id="execute">Execute API</button>
+            <button type="button" id="export_csv" disabled>Export CSV</button>
+          </div>
+          <div class="table-wrap">
+            <table id="preview_table">
+              <thead></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal hidden" id="request_modal">
+      <div class="modal-panel wizard-panel child-window">
+        <div class="child-titlebar">
+          <span id="wizard_title">Configure Request</span>
+          <button type="button" id="wizard_close" class="icon-button">Close</button>
+        </div>
+
+        <div class="wizard-steps" aria-label="Wizard steps">
+          <button type="button" class="step-pill active" data-step="1">1 Stocks / 选股</button>
+          <button type="button" class="step-pill" data-step="2">2 Parameters / 参数</button>
+          <button type="button" class="step-pill" data-step="3">3 Review / 确认</button>
+        </div>
+
+        <section class="wizard-step" data-step-panel="1">
+          <div id="selection_step"></div>
+        </section>
+
+        <section class="wizard-step hidden" data-step-panel="2">
+          <div class="endpoint-note" id="wizard_endpoint_note"></div>
+          <div class="date-offset-panel hidden" id="date_offset_panel">
+            <div class="offset-title">
+              <strong>Date helper: T+n</strong>
+              <span>Business-day mode skips weekends only.</span>
+            </div>
+            <div class="grid four">
+              <div class="field">
+                <label for="date_anchor">Anchor date T</label>
+                <input id="date_anchor" type="date">
+              </div>
+              <div class="field">
+                <label for="date_from_offset">From offset</label>
+                <input id="date_from_offset" type="number" value="-30">
+              </div>
+              <div class="field">
+                <label for="date_to_offset">To offset</label>
+                <input id="date_to_offset" type="number" value="0">
+              </div>
+              <div class="field">
+                <label for="date_offset_calendar">Calendar</label>
+                <select id="date_offset_calendar">
+                  <option value="business">US business days</option>
+                  <option value="calendar">Calendar days</option>
+                </select>
+              </div>
+            </div>
+            <button type="button" id="apply_date_offset" class="secondary-button">Apply T offsets</button>
+          </div>
+          <div class="dynamic-grid" id="wizard_params"></div>
+        </section>
+
+        <section class="wizard-step hidden" data-step-panel="3">
+          <div class="grid two">
+            <div class="field">
+              <label for="wizard_fmt">Format</label>
+              <select id="wizard_fmt"></select>
+            </div>
+            <div class="field">
+              <label for="wizard_preview_limit">Preview rows</label>
+              <input id="wizard_preview_limit" type="number" min="1" max="500" value="50">
+            </div>
+          </div>
+          <div class="review-box" id="wizard_review"></div>
+        </section>
+
+        <div class="wizard-footer">
+          <button type="button" id="wizard_back" class="secondary-button">Back</button>
+          <button type="button" id="wizard_next">Next</button>
+          <button type="button" id="wizard_confirm" class="hidden">Confirm request</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="config_modal">
+      <div class="modal-panel child-window">
+        <div class="child-titlebar">
+          <span>Login / Config</span>
+          <button type="button" id="config_close" class="icon-button">Close</button>
+        </div>
+        <p class="config-status" id="token_status">Checking token status</p>
+        <div class="field">
+          <label for="token_input">EODHD API token</label>
+          <input id="token_input" type="password" autocomplete="off" placeholder="Paste token once">
+        </div>
+        <div class="actions">
+          <button type="button" id="save_token">Save token</button>
+          <button type="button" id="delete_token" class="secondary-button">Delete stored token</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

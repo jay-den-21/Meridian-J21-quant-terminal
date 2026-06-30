@@ -1,0 +1,341 @@
+# EODHD Code Generator App Technical Design
+
+This document describes the implementation under `database_app/`. The app is a lightweight EODHD API playground and code generator for small equity research queries. It is intentionally separate from `database_system_cli/`.
+
+## Design Goals
+
+- Keep the app independent from the database ingestion system.
+- Use endpoint registry data rather than per-endpoint hardcoded pages.
+- Add a stock workflow that loads a universe, lets users select or paste-match symbols, and then maps the selection into endpoint params.
+- Generate copyable EODHD direct URLs, Python `requests`, curl, and JavaScript `fetch` snippets.
+- Execute whitelisted EODHD endpoints for interactive preview.
+- Read the real API token from the local app token store first; `EODHD_API_KEY` is only a fallback for scripted runs.
+- Avoid silent fallback to demo keys.
+- Avoid database writes, schema changes, Alembic migrations, and shared import path coupling.
+- Keep API tokens server-side; config status must not expose the token value.
+
+## Non-Goals
+
+- No large batch downloader.
+- No database persistence.
+- No authentication layer.
+- No `.xlsx` export in the current implementation.
+- No complete multi-asset implementation beyond reserved UI buttons.
+- No import from `database_system_cli`; future sharing should be done through an explicit shared package.
+
+## Runtime Architecture
+
+```text
+Browser UI
+  |
+  | GET /, /static/*
+  | GET /api/endpoints
+  | POST /api/generate
+  | POST /api/execute
+  v
+ThreadingHTTPServer
+  |
+  +-- endpoints.py      -> endpoint registry, param specs, docs/plan evidence
+  +-- request_model.py  -> validate payload and normalize endpoint params
+  +-- cost.py           -> estimate API-call cost and require bulk confirmation
+  +-- codegen.py        -> generate token-safe URLs and code snippets
+  +-- client.py         -> execute real EODHD requests with server-resolved token
+  +-- token_store.py    -> local app config/environment fallback token status/save/delete
+  +-- universe.py       -> exchange and screener universe loading
+  +-- server.py         -> route handling and loopback/JSON side-effect guards
+  +-- static/app.js     -> stock workflow, dynamic form renderer, copy button, preview, CSV export
+```
+
+The frontend never receives the real API token. Generated snippets use placeholders:
+
+- `YOUR_EODHD_API_KEY` for direct URLs.
+- `os.environ["EODHD_API_KEY"]` for Python.
+- `${EODHD_API_KEY}` for curl.
+- `process.env.EODHD_API_KEY` for JavaScript examples.
+
+## Dependency Choice
+
+The app currently uses the Python standard library server instead of FastAPI/Jinja2. The reason is practical: the current environment already runs this app without runtime dependencies, while the product risk is endpoint registry correctness, validation, code generation, preview parsing, and token safety. A FastAPI + Jinja2 migration remains a P1/P2 refactor after the app contract stabilizes.
+
+## Directory Layout
+
+```text
+database_app/
+  pyproject.toml
+  README.md
+  PROGRESS.md
+  PROJECT.md
+  PROJECT.html
+  docs/
+    OFFICIAL_ENDPOINTS.md
+    TECHNICAL_DESIGN.md
+  src/eodhd_codegen_app/
+    __main__.py
+    client.py
+    codegen.py
+    cost.py
+    endpoints.py
+    request_model.py
+    server.py
+    token_store.py
+    universe.py
+    static/
+      index.html
+      styles.css
+      app.js
+  tests/
+    test_client.py
+    test_codegen.py
+    test_cost.py
+    test_endpoint_registry.py
+    test_request_model.py
+    test_server_security.py
+    test_token_store.py
+    test_universe.py
+  scripts/
+    run_local.command
+    package_macos_app.sh
+```
+
+## Endpoint Registry
+
+`endpoints.py` defines:
+
+- `EndpointSpec`: endpoint id, label, category, path pattern, official docs URL, plan evidence, call cost, formats, params, implementation status.
+- `ParamSpec`: UI/validation contract for one parameter.
+- `SUPPORTED_ENDPOINTS`: executable whitelist.
+- `INVENTORY_ONLY_ENDPOINTS`: documented but non-executable endpoint groups.
+
+The browser calls `/api/endpoints`, builds the endpoint dropdown and parameter form from the registry, then posts a generic payload:
+
+```json
+{
+  "endpoint": "historical_eod",
+  "fmt": "json",
+  "preview_limit": 50,
+  "params": {
+    "symbols": "AAPL.US",
+    "date_from": "2024-01-01",
+    "date_to": "2024-01-31"
+  }
+}
+```
+
+This keeps the UI maintainable as endpoints are added.
+
+## Request Flow
+
+### Generate Code
+
+```text
+POST /api/generate
+  -> validate_payload(...)
+  -> generate_snippets(...)
+  -> return public request model + token-safe snippets
+```
+
+This path does not need `EODHD_API_KEY` because it only builds examples.
+
+### Execute API
+
+```text
+POST /api/execute
+  -> validate_payload(...)
+  -> resolve token from the local app token store or EODHD_API_KEY fallback
+  -> build real EODHD URL server-side
+  -> urllib request
+  -> parse JSON or CSV response
+  -> cap returned rows
+  -> return preview/export rows without token or real URL
+```
+
+If both the local app token and `EODHD_API_KEY` fallback are missing, the server returns an explicit error. There is no silent fallback to a demo token.
+
+### Token Config
+
+The `Login / Config` dialog posts a token to `/api/config/token`. The server stores it in a user-local app config file with `0600` permissions by default. The token-store module still has an optional Keychain path, but it is not the default because macOS `security` can block when called from a local HTTP request. The browser never receives the token value; it only receives:
+
+- configured/not configured
+- source: `environment`, `local_file`, `keychain`, or `none`
+- whether delete is available
+- a short status message
+
+Stored local tokens have priority over `EODHD_API_KEY`. Environment variable `EODHD_API_KEY` is only a fallback and cannot be deleted from the app. Stored local tokens can be deleted but not viewed.
+
+### Local Request Guard
+
+This is still a local single-user app, not an authenticated hosted service. To reduce accidental local CSRF/token-spend risk while the app is running, side-effect routes enforce:
+
+- `Host` must be loopback: `127.0.0.1`, `localhost`, or `::1`.
+- If an `Origin` header is present, it must also be loopback over `http`.
+- POST bodies must use `Content-Type: application/json`.
+
+This blocks simple `text/plain` cross-site POSTs from arbitrary web pages. It is not a replacement for a full authentication layer.
+
+### Stock Workflow
+
+The v0.5 UI is a single workspace. The main screen keeps only the function toolbar, confirmed request summary, generated code tabs, and Execute API result table. Endpoint-specific setup happens in a floating 3-step wizard:
+
+```text
+Function card -> Stocks / 选股 -> Parameters / 参数 -> Review / 确认 -> confirmed request -> generate/execute
+```
+
+Supported candidate sources:
+
+- Exchange source through `exchange_symbol_list`.
+- EODHD Filtered Pools through `screener`.
+- User imported `.csv` / `.txt` / pasted text parsed locally in the browser.
+
+Official index constituents are not enabled because the EODHD index-constituents product is not whitelisted for the 29.99 Extended plan in this app. EODHD Filtered Pools are labeled as filtered pools, not index membership.
+
+State model:
+
+- `draftRequest`: wizard state only; does not update the main screen.
+- `confirmedRequest`: the only payload used by generated code and Execute API.
+- `executionResult`: last executed rows and metadata.
+- `resultStale`: set after a new Confirm when previous Execute rows remain visible.
+
+Selection behavior:
+
+- checkbox toggles selection.
+- double-click toggles selection.
+- Command/Ctrl-click toggles selection.
+- regular click only focuses a candidate row.
+- valid imported tickers are automatically selected; duplicate and rejected tokens are summarized in the wizard.
+
+Bulk execution uses `cost.py`. The frontend shows an explicit browser confirmation when cost confirmation is required, and the server rejects execution unless the request carries `confirm_cost=true`.
+The local execution path is also hard-capped at 50 generated HTTP requests. Larger research lists remain valid for code generation, but the preview UI will not batch-execute them.
+
+The code generator exposes multiple output styles:
+
+- `Direct URL`: one URL per generated request.
+- `Python` / `JavaScript`: URL-template loops.
+- `Python loop` / `JS loop`: explicit `symbols = [...]` / `const symbols = [...]` loop requests.
+- Bulk loop snippets iterate dates and pass the full symbol list once per date, avoiding repeated identical bulk calls.
+- Live OHLCV snippets group symbols into 20-symbol requests using the official `s=` parameter.
+- `Config token`: local proxy Python code that calls `/api/execute` on the current localhost port so the local app can use the stored Login / Config token without exposing it in generated code.
+
+## Implemented Endpoint Groups
+
+| Group | Endpoint ids |
+| --- | --- |
+| Market Data | `historical_eod`, `intraday`, `live_ohlcv`, `bulk_last_day_eod` |
+| Corporate Actions | `dividends`, `splits` |
+| Analytics | `technical` |
+| Discovery | `screener` |
+| Exchange & Instruments | `exchange_symbol_list`, `instrument_search`, `exchanges_list`, `exchange_details`, `symbol_change_history`, `id_mapping` |
+
+Official documentation links and subscription notes are in `docs/OFFICIAL_ENDPOINTS.md`.
+
+## Validation Rules
+
+The request validator rejects unsupported input before URL generation or execution:
+
+- Unknown endpoint or asset type.
+- Unsupported symbols or exchange characters.
+- Missing required endpoint params.
+- Required params are not silently filled from UI defaults.
+- Historical requests without symbols or dates.
+- More than 2000 historical symbols.
+- US class-share pasted symbols such as `BRK.B` are normalized to `BRK-B.US` for normal calls.
+- US exchange-list listing venue suffixes such as `AA.NYSE` and `AABB.PINK` are normalized to `AA.US` and `AABB.US` for normal historical provider-symbol calls.
+- Historical ranges where `date_from > date_to`.
+- Historical ranges longer than 3660 days.
+- Intraday unsupported intervals and oversized timestamp ranges.
+- Bulk requests without symbols unless full exchange is explicitly allowed.
+- More than 2000 bulk symbols by default.
+- More than 2000 symbols for intraday/technical/live code generation.
+- Exchange universe load limits above 2000 rows.
+- Screener preset universe load limits above 100 rows.
+- CSV format on JSON-only endpoints.
+- Search query longer than 80 characters.
+- Screener filters that are not a JSON array.
+- Preview limits outside 1 to 500.
+- Bulk/high-call execution without `confirm_cost=true`.
+- Local preview execution above 50 generated HTTP requests.
+
+These rules are app-level guardrails for small manual research usage. They are not EODHD protocol limits.
+
+## Preview Parsing
+
+`client.py` parses:
+
+- CSV responses with `csv.DictReader`.
+- JSON list responses into rows.
+- JSON dict responses into one row.
+- JSON dicts with a `data` list into the `data` rows, which fits APIs such as ID mapping.
+- Nested dict/list cell values into JSON strings so the browser table and CSV export do not render `[object Object]`.
+
+The server caps returned rows at 5000 to keep the browser responsive and caps local preview execution at 50 generated HTTP requests. The preview table uses the user-selected preview row limit. When execution fails, the frontend clears the previous rows, resets preview metadata, and disables CSV export so users do not accidentally export stale data.
+
+## CSV Export
+
+Browser export uses the last returned row set and writes a CSV file client-side. Export values are quoted, and values beginning with `=`, `+`, `-`, or `@` are prefixed to reduce spreadsheet formula injection risk when opened in Excel-like tools. Generated URL/Python/curl/JavaScript snippets can be copied from the active tab through the `Copy active` button.
+
+Excel `.xlsx` export is P1. CSV covers the current research workflow without adding runtime dependencies.
+
+## Error Handling
+
+The server distinguishes:
+
+- `400` for invalid app request payloads.
+- `502` for upstream EODHD execution failures or missing stored token / `EODHD_API_KEY` fallback.
+- `404` for unknown routes.
+
+Upstream error messages are redacted with the current API key before returning to the browser.
+
+## Testing
+
+Use the existing CLI venv if no standalone app venv exists:
+
+```bash
+cd /Users/boqingxin/tandon\ MSCS/My_Own/financial-data-platform/database_app
+PYTHONPATH=src ../database_system_cli/.venv/bin/python -m pytest
+../database_system_cli/.venv/bin/ruff check src tests
+```
+
+Current test coverage includes:
+
+- Endpoint registry docs/plan metadata.
+- Token store env/keychain behavior.
+- Local side-effect request guards.
+- Universe menu/load normalization.
+- API cost estimation.
+- Request validation and endpoint boundary checks.
+- Required params not silently filled from UI defaults.
+- URL generation for market data, analytics, screener, and ID mapping endpoints.
+- Token-safe direct URL/Python/curl/JavaScript snippets.
+- CSV-mode Python/JavaScript snippet behavior.
+- JSON and CSV execution parsing.
+- Nested JSON preview parsing.
+- Token redaction on upstream errors.
+
+## Local Operation
+
+Run the local server directly, then save the real API token in `Login / Config`:
+
+```bash
+cd /Users/boqingxin/tandon\ MSCS/My_Own/financial-data-platform/database_app
+PYTHONPATH=src ../database_system_cli/.venv/bin/python -m eodhd_codegen_app --host 127.0.0.1 --port 8000
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000
+```
+
+Stop the server with `Ctrl+C` in the terminal running it.
+
+## Future Extraction Path
+
+If this app and `database_system_cli` both continue to use EODHD URL and parameter logic, extract only stable shared pieces into a future package such as:
+
+```text
+shared/eodhd/
+  endpoints.py
+  url_builder.py
+  validation.py
+```
+
+Do not create implicit cross-project imports from `database_app` into `database_system_cli`. Shared code should have its own tests and a clear ownership boundary.

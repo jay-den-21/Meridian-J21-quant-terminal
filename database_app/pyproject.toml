@@ -1,0 +1,26 @@
+[project]
+name = "eodhd-codegen-app"
+version = "1.0.0"
+description = "Lightweight EODHD API code generator and playground for small equity research queries."
+requires-python = ">=3.11"
+dependencies = ["pymysql>=1.1", "sqlalchemy>=2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+eodhd-codegen-app = "eodhd_codegen_app.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+eodhd_codegen_app = ["static/*.html", "static/*.css", "static/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
