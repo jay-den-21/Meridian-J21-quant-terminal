@@ -149,7 +149,7 @@ def _annotate_rows(
     if request.endpoint not in SINGLE_SYMBOL_RESPONSE_ENDPOINTS or request_index >= len(request.symbols):
         return rows
     provider_symbol = request.symbols[request_index]
-    return [{"_provider_symbol": provider_symbol, **row} for row in rows]
+    return [{**row, "_provider_symbol": provider_symbol} for row in rows]
 
 
 def _status_code(response: Any) -> int:

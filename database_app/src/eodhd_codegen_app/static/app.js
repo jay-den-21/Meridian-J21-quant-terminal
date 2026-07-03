@@ -1443,6 +1443,7 @@ function renderConfirmedSummary() {
   ];
   if (selected.length) {
     chips.push(`${selected.length} ticker(s)`);
+    chips.push(`symbols: ${compactSymbolList(selected)}`);
   }
   if (params.date_from || params.date_to) {
     chips.push(`${params.date_from || "..."} to ${params.date_to || "..."}`);
@@ -1529,17 +1530,12 @@ function renderTable(rows) {
     return;
   }
 
-  const columns = Array.from(
-    rows.reduce((keys, row) => {
-      Object.keys(row).forEach((key) => keys.add(key));
-      return keys;
-    }, new Set())
-  );
+  const columns = orderedResultColumns(rows);
 
   const headRow = document.createElement("tr");
   columns.forEach((column) => {
     const th = document.createElement("th");
-    th.textContent = column;
+    th.textContent = displayColumnName(column);
     headRow.appendChild(th);
   });
   thead.appendChild(headRow);
@@ -1593,20 +1589,35 @@ function buildCsvText(rows) {
   if (!rows.length) {
     return "";
   }
-  const columns = Array.from(
-    rows.reduce((keys, row) => {
-      Object.keys(row).forEach((key) => keys.add(key));
-      return keys;
-    }, new Set())
-  );
+  const columns = orderedResultColumns(rows);
   if (!columns.length) {
     return "";
   }
-  const lines = [columns.map(csvCell).join(",")];
+  const lines = [columns.map((column) => csvCell(displayColumnName(column))).join(",")];
   rows.forEach((row) => {
     lines.push(columns.map((column) => csvCell(row[column])).join(","));
   });
   return lines.join("\n");
+}
+
+function orderedResultColumns(rows) {
+  const keys = rows.reduce((columns, row) => {
+    Object.keys(row).forEach((key) => columns.add(key));
+    return columns;
+  }, new Set());
+  const priority = ["_provider_symbol", "provider_symbol", "code", "symbol", "datetime", "date"];
+  const ordered = priority.filter((column) => keys.delete(column));
+  return ordered.concat(Array.from(keys));
+}
+
+function displayColumnName(column) {
+  return column === "_provider_symbol" ? "request_symbol" : column;
+}
+
+function compactSymbolList(symbols) {
+  const visible = symbols.slice(0, 8);
+  const suffix = symbols.length > visible.length ? `, +${symbols.length - visible.length} more` : "";
+  return `${visible.join(", ")}${suffix}`;
 }
 
 function downloadCsvText(csvText) {

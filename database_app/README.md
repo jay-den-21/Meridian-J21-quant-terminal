@@ -30,16 +30,32 @@ cd database_app
 ./scripts/run_local.command
 ```
 
-To generate a lightweight macOS `.app` wrapper:
+To generate local macOS install artifacts:
 
 ```bash
 cd database_app
 ./scripts/package_macos_app.sh
 open "dist/EODHD Code Generator.app"
+open "dist/EODHD-Code-Generator-1.0.0.dmg"
 ```
 
-The wrapper starts the same local server on `127.0.0.1` with a random port and opens it in the system browser. The generated `.app` copies the app source/docs into its bundle, but it does not bundle Python; it expects `python3` or a `PYTHON_BIN` override.
+The script builds:
+
+- `dist/EODHD Code Generator.app`
+- `dist/EODHD-Code-Generator-1.0.0.dmg`
+- `dist/EODHD-Code-Generator-1.0.0.pkg`
+- `dist/SHA256SUMS.txt`
+
+It also copies the DMG/PKG and checksums to `site/downloads/`, so the static personal website download buttons work after packaging:
+
+```bash
+open site/index.html
+```
+
+The wrapper starts the same local server on `127.0.0.1` with a random port and opens it in the system browser. The generated `.app` copies the app source/docs and pure Python dependencies into its bundle, but it does not bundle the Python runtime; it expects Python 3.11+ or a `PYTHON_BIN` override.
 Direct launch scripts unset `EODHD_API_KEY` before starting the server, so the desktop-style flow uses the token saved in `Login / Config`.
+
+The generated DMG/PKG are local developer artifacts. Public Mac distribution should use Apple Developer ID signing and notarization before posting the files on a public website.
 
 The Stocks wizard pool browser reads candidates from the existing MySQL `us_share.instrument` table. It uses process `FDP_DATABASE_URL` / `FDP_DB_*` first, then read-only `../database_system_cli/.env`. If DB config or connection is missing, the app still opens and can generate/execute confirmed API requests, but Pool Resources shows an explicit unavailable state instead of calling EODHD API.
 
@@ -114,7 +130,7 @@ Notes:
 - `Index Assets` are DB index instruments only, not index constituents. Sectors are disabled until a sector/industry taxonomy or membership source is added.
 - The app does not label S&P/MSCI/broker/申万-style industry or index pools unless there is an official/authorized constituent source.
 - Imported tickers must exact-match active DB `symbol` or `provider_symbol` values case-insensitively. Unknown strings are rejected instead of being normalized into fake provider symbols.
-- US exchange-list rows are converted to canonical EODHD provider symbols for historical endpoints. For example, `AA.NYSE` becomes `AA.US`, `AABB.PINK` becomes `AABB.US`, and `BRK.B` becomes `BRK-B.US`.
+- Imported tickers are DB-exact. Class-share aliases are not guessed; use the active DB `symbol` or `provider_symbol` spelling, for example `BRK-B` / `BRK-B.US` if that is how the instrument is stored.
 - Most per-symbol endpoints consume one API call per ticker. The UI strongly warns above 100 selected tickers and caps selection at 2000.
 - High-call execution requires explicit confirmation, and the local `Execute API` button is hard-capped at 50 generated HTTP requests. Use generated code for larger research lists.
 - Code tabs include one-URL-per-line output and list/array loop snippets. Bulk loop snippets iterate dates, not symbols, so they do not repeat the same bulk request per ticker.

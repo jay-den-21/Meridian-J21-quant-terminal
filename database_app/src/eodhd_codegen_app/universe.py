@@ -14,7 +14,6 @@ from eodhd_codegen_app.universe_db import (
 
 
 SYMBOL_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$")
-US_CLASS_SUFFIXES = {"A", "B", "C", "K"}
 
 PRESET_POOLS = {
     "us_major_common": {
@@ -170,7 +169,7 @@ def resolve_universe_symbols(payload: dict[str, Any], *, repository: Any | None 
     original_tokens = [_clean_text(token) for token in raw_tokens if _clean_text(token)][:MAX_UNIVERSE_ROWS]
     invalid = [token.upper() for token in original_tokens if not SYMBOL_TOKEN_RE.fullmatch(token)]
     valid_tokens = [token for token in original_tokens if SYMBOL_TOKEN_RE.fullmatch(token)]
-    query_tokens = sorted({variant for token in valid_tokens for variant in _symbol_match_variants(token)})
+    query_tokens = sorted({token.upper() for token in valid_tokens})
 
     if not status.available:
         return {
@@ -207,7 +206,7 @@ def resolve_universe_symbols(payload: dict[str, Any], *, repository: Any | None 
     resolved: list[dict[str, object]] = []
     unmatched: list[str] = []
     for token in valid_tokens:
-        row = next((row_by_key.get(variant.lower()) for variant in _symbol_match_variants(token) if row_by_key.get(variant.lower())), None)
+        row = row_by_key.get(token.lower())
         if row is None:
             unmatched.append(token.upper())
         else:
@@ -299,13 +298,3 @@ def _bool(value: Any, *, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _symbol_match_variants(token: str) -> tuple[str, ...]:
-    text = token.strip().upper()
-    variants = [text]
-    if "." in text:
-        base, suffix = text.rsplit(".", 1)
-        if base and suffix in US_CLASS_SUFFIXES:
-            variants.extend([f"{base}-{suffix}", f"{base}-{suffix}.US"])
-    return tuple(dict.fromkeys(variants))

@@ -51,3 +51,11 @@ def test_import_tickers_resolves_against_database_instead_of_regex_only() -> Non
     assert 'postJson("/api/universe/resolve", { tokens })' in import_body
     assert "providerSymbolFromToken(token" not in import_body
     assert "normalizeResolvedRow" in import_body
+
+
+def test_result_preview_prioritizes_request_symbol_column() -> None:
+    script = _app_js()
+
+    assert 'const priority = ["_provider_symbol", "provider_symbol", "code", "symbol", "datetime", "date"];' in script
+    assert 'return column === "_provider_symbol" ? "request_symbol" : column;' in script
+    assert "chips.push(`symbols: ${compactSymbolList(selected)}`);" in script

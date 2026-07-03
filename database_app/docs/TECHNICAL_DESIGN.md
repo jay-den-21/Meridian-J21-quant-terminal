@@ -69,6 +69,14 @@ database_app/
   docs/
     OFFICIAL_ENDPOINTS.md
     TECHNICAL_DESIGN.md
+  site/
+    index.html
+    styles.css
+    PLAN.md
+    assets/
+      app-preview.svg
+    downloads/
+      .gitignore
   src/eodhd_codegen_app/
     __main__.py
     client.py
@@ -172,6 +180,19 @@ This is still a local single-user app, not an authenticated hosted service. To r
 
 This blocks simple `text/plain` cross-site POSTs from arbitrary web pages. It is not a replacement for a full authentication layer.
 
+### Mac Packaging
+
+`scripts/package_macos_app.sh` builds local Mac distribution artifacts without changing `database_system_cli`:
+
+- `dist/EODHD Code Generator.app`
+- `dist/EODHD-Code-Generator-1.0.0.dmg`
+- `dist/EODHD-Code-Generator-1.0.0.pkg`
+- `dist/SHA256SUMS.txt`
+
+The bundle copies `database_app` source/docs and pure Python dependencies into app resources. The launcher prepends those resource paths to `PYTHONPATH`, sets `PYTHONDONTWRITEBYTECODE=1` so Python does not mutate signed bundle resources, unsets `EODHD_API_KEY`, and starts the local server on `127.0.0.1` with a random port. It still expects Python 3.11+ on the Mac or a `PYTHON_BIN` override.
+
+The script also copies DMG/PKG/checksum artifacts into `site/downloads/`, so `site/index.html` can serve as a local personal website download page after packaging. Public distribution requires a separate signing and notarization release process.
+
 ### Stock Workflow
 
 The v0.5 UI is a single workspace. The main screen keeps only the function toolbar, confirmed request summary, generated code tabs, and Execute API result table. Endpoint-specific setup happens in a floating 3-step wizard:
@@ -182,11 +203,11 @@ Function card -> Stocks / 选股 -> Parameters / 参数 -> Review / 确认 -> co
 
 Supported candidate sources:
 
-- Exchange source through `exchange_symbol_list`.
-- EODHD Filtered Pools through `screener`.
+- Read-only DB pool browser backed by `us_share.instrument`.
+- Preset Pools, Exchange, Asset Type, and Index Assets categories.
 - User imported `.csv` / `.txt` / pasted text parsed locally in the browser.
 
-Official index constituents are not enabled because the EODHD index-constituents product is not whitelisted for the 29.99 Extended plan in this app. EODHD Filtered Pools are labeled as filtered pools, not index membership.
+Candidate loading does not consume EODHD API calls. Official index constituents are not enabled because there is no current constituent membership source in the app. Index Assets are index instruments, not constituent membership lists, and Sectors stay disabled until a taxonomy source exists.
 
 State model:
 
@@ -237,8 +258,8 @@ The request validator rejects unsupported input before URL generation or executi
 - Required params are not silently filled from UI defaults.
 - Historical requests without symbols or dates.
 - More than 2000 historical symbols.
-- US class-share pasted symbols such as `BRK.B` are normalized to `BRK-B.US` for normal calls.
-- US exchange-list listing venue suffixes such as `AA.NYSE` and `AABB.PINK` are normalized to `AA.US` and `AABB.US` for normal historical provider-symbol calls.
+- Wizard ticker import resolves against active DB `symbol` or `provider_symbol` exact matches, case-insensitively.
+- Unknown strings and guessed aliases, such as `BRK.B` when only `BRK-B` is stored, are rejected.
 - Historical ranges where `date_from > date_to`.
 - Historical ranges longer than 3660 days.
 - Intraday unsupported intervals and oversized timestamp ranges.

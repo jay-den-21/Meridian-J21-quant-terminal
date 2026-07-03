@@ -39,6 +39,7 @@
         <p>v0.4 把产品形态从普通 web form 推向本地桌面工具：主窗口使用 Wind 风格 ribbon，WSD/WSS/WST/WSET/TDays 作为快捷入口；页面内部用 task tab 和 MDI-like child window 承载不同工作区；代码区和输出结果保持像 Wind 代码生成器一样的上下文并列关系。当前仍由本地 HTTP server 驱动，但用户入口以 <code>.app</code> wrapper / 本地桌面 review 为主。</p>
         <p>v0.5 把前端交互从“大块 endpoint 工作区”收敛为 single workspace：主屏只保留中英双语 function toolbar、已确认请求摘要、code generation 区域和 Execute API result 区域。所有 endpoint-specific 配置、股票池、ticker import、日期和输出格式都进入 3-step floating wizard。Wizard 内的 draft request 不会影响主屏；只有 Confirm 后才更新 codegen 和 Execute 使用的 confirmed request。</p>
         <p>v0.6 把 Stocks wizard 的候选加载从 EODHD API 改成 read-only MySQL pool browser。Pool browser 只读 <code>database_system_cli/.env</code> 中的 <code>FDP_DATABASE_URL</code> 或 <code>FDP_DB_*</code> 配置，并查询现有 <code>us_share.instrument</code>，不写数据库、不新增 schema、不消耗 EODHD API call。EODHD token 只用于 Execute API 和 Instrument Lookup。</p>
+        <p>v1.1 加入本地 Mac 分发打包和个人网站下载页。<code>scripts/package_macos_app.sh</code> 会生成 <code>.app</code>、<code>.dmg</code>、<code>.pkg</code>，并把 DMG/PKG 复制到 <code>site/downloads/</code>，使 <code>site/index.html</code> 的下载按钮可直接下载本地构建产物。当前是 local developer distribution：可用于本机安装和个人测试，但公开分发仍需要 Apple Developer ID signing 和 notarization。</p>
         <p>Wind 学习依据：</p>
         <ul>
           <li>用户提供的 <code>Wind_API接口说明_2025_.pdf</code>，文档日期 2025-04-10。</li>
@@ -93,7 +94,7 @@
           <li>CSV/TXT and pasted-text ticker import, parsed locally in the browser without uploading files。</li>
           <li>Draft request vs confirmed request state separation; Execute API only uses the confirmed request。</li>
           <li>Previous Execute result is retained and marked as previous/stale after a new Confirm。</li>
-          <li>Frontend and backend US ticker normalization for <code>AA.NYSE</code> -&gt; <code>AA.US</code>, <code>AABB.PINK</code> -&gt; <code>AABB.US</code>, and <code>BRK.B</code> -&gt; <code>BRK-B.US</code>。</li>
+          <li>Imported ticker validation resolves against active DB <code>symbol</code> or <code>provider_symbol</code> exact matches, case-insensitively; unknown or guessed aliases are rejected。</li>
           <li><code>Date helper: T+n</code> for business-day or calendar-day offsets into date fields。</li>
           <li>Program language selector that switches generated code tabs。</li>
           <li>Login / Config token dialog backed by server-side token store。</li>
@@ -132,6 +133,8 @@
           <li>SQLAlchemy Core read-only queries for pool browser</li>
           <li>PyMySQL for MySQL connectivity</li>
           <li>原生 HTML / CSS / JavaScript</li>
+          <li>macOS <code>.app</code> wrapper + DMG/PKG build script</li>
+          <li>static personal website under <code>site/</code></li>
           <li>pytest 测试</li>
           <li>ruff 静态检查</li>
         </ul>
@@ -152,6 +155,14 @@ financial-data-platform/
     docs/
       OFFICIAL_ENDPOINTS.md
       TECHNICAL_DESIGN.md
+    site/
+      index.html
+      styles.css
+      PLAN.md
+      assets/
+        app-preview.svg
+      downloads/
+        .gitignore
     src/
       eodhd_codegen_app/
         __init__.py
@@ -228,13 +239,34 @@ http://127.0.0.1:8000
         <pre><code>
 ./scripts/run_local.command
           </code></pre>
-        <p>生成轻量 macOS <code>.app</code>：</p>
+        <p>生成本地 macOS 安装产物：</p>
         <pre><code>
 ./scripts/package_macos_app.sh
 open &quot;dist/EODHD Code Generator.app&quot;
+open &quot;dist/EODHD-Code-Generator-1.0.0.dmg&quot;
           </code></pre>
-        <p>该 wrapper 会用随机本地端口绑定 <code>127.0.0.1</code> 并打开系统浏览器。生成的 <code>.app</code> 会复制 <code>database_app</code> 源码和文档到 bundle resources，移动 <code>.app</code> 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目的是给本机 review 一个实体入口。</p>
+        <p>该脚本会生成：</p>
+        <ul>
+          <li><code>dist/EODHD Code Generator.app</code></li>
+          <li><code>dist/EODHD-Code-Generator-1.0.0.dmg</code></li>
+          <li><code>dist/EODHD-Code-Generator-1.0.0.pkg</code></li>
+          <li><code>dist/SHA256SUMS.txt</code></li>
+          <li><code>site/downloads/EODHD-Code-Generator-1.0.0.dmg</code></li>
+          <li><code>site/downloads/EODHD-Code-Generator-1.0.0.pkg</code></li>
+          <li><code>site/downloads/SHA256SUMS.txt</code></li>
+        </ul>
+        <p>个人网站下载页：</p>
+        <pre><code>
+open site/index.html
+          </code></pre>
+        <p>该 wrapper 会用随机本地端口绑定 <code>127.0.0.1</code> 并打开系统浏览器。生成的 <code>.app</code> 会复制 <code>database_app</code> 源码、文档和纯 Python 依赖到 bundle resources，移动 <code>.app</code> 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。目标机器需要 Python 3.11+，或用 <code>PYTHON_BIN</code> 指向兼容 Python。</p>
         <p>直接启动脚本会在启动 server 前 <code>unset EODHD_API_KEY</code>，因此桌面式启动路径只使用 <code>Login / Config</code> 中保存的 token。</p>
+        <p>公开下载边界：</p>
+        <ul>
+          <li>当前 DMG/PKG 是 unsigned/not notarized developer artifacts。</li>
+          <li>对外发布前需要 Developer ID certificate、notarization、stapling 和 checksum。</li>
+          <li><code>site/PLAN.md</code> 记录个人网站上线计划、发布存储选项和 production checklist。</li>
+        </ul>
       </section>
       <section>
         <h2>7. Endpoint 白名单</h2>
@@ -279,9 +311,9 @@ open &quot;dist/EODHD Code Generator.app&quot;
           <li>必填参数不能被 server 静默填入 UI default；API payload 必须显式带值。</li>
           <li>Historical EOD 必须提供 symbols、<code>date_from</code>、<code>date_to</code>。</li>
           <li>Historical EOD 最多 2000 个 symbols。</li>
-          <li>US class-share paste 会把 <code>BRK.B</code> 这类输入规范为 <code>BRK-B.US</code>。</li>
-          <li>US exchange list 中的 listing venue suffix 会规范为 EODHD historical provider suffix：例如 <code>AA.NYSE</code> -&gt; <code>AA.US</code>，<code>AABB.PINK</code> -&gt; <code>AABB.US</code>。</li>
-          <li>前端手动粘贴和后端 request validation 使用同一类 US ticker 规范化语义，避免 UI 显示 <code>AA.NYSE</code> 但生成 URL 使用另一个 symbol。</li>
+          <li>Wizard ticker import 必须命中 active DB <code>symbol</code> 或 <code>provider_symbol</code>；例如 DB 存 <code>BRK-B</code> / <code>BRK-B.US</code> 时，<code>BRK.B</code> 不会被猜测接收。</li>
+          <li>已确认请求进入后端时，request validation 仍会校验 provider symbol 字符集和 endpoint 数量上限。</li>
+          <li>前端 selected rows、codegen payload、Execute API 使用同一批 confirmed DB provider symbols，避免 UI 显示一个 symbol 但生成 URL 使用另一个 symbol。</li>
           <li>Historical EOD 日期范围最多 3660 天。</li>
           <li>T+n helper 只做 UI 日期填充，不绕过后端日期范围校验；business-day 模式当前按周一到周五计算，不含交易所节假日。</li>
           <li>Intraday 支持 <code>1m</code>、<code>5m</code>、<code>1h</code>；如果提供 timestamp range，会按官方区间上限校验。</li>

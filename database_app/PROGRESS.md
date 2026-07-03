@@ -76,9 +76,8 @@ Completed:
 - Updated `.app` packaging so bundle resources include the app source/docs instead of hard-coding the checkout path.
 - Fixed clipboard paste handling:
   - Up to 2000-symbol US research lists can be pasted directly without preloading a universe.
-  - `BRK.B` normalizes to `BRK-B.US` for normal calls and `BRK-B` for bulk.
-  - US listing venue suffixes from exchange lists normalize to EODHD provider suffixes; for example `AA.NYSE` -> `AA.US` and `AABB.PINK` -> `AABB.US`.
-  - Frontend manual paste now applies the same normalization, so selected rows do not display `AA.NYSE`/`AABB.PINK` as provider symbols.
+  - Superseded in v0.6: pasted/file ticker import now requires active DB `symbol` or `provider_symbol` exact matches, case-insensitively.
+  - Unknown strings and guessed aliases such as `BRK.B` when only `BRK-B` is stored are rejected.
   - Historical EOD normal mode now supports up to 2000 symbols.
   - Selected manual-paste symbols are shown in a dedicated selected table.
 - Added code generation modes:
@@ -142,6 +141,12 @@ Completed:
   - Intraday and other one-symbol-per-request endpoints now annotate preview/export rows with `_provider_symbol`.
   - Ticker import now resolves pasted/file tokens against active `us_share.instrument` `symbol` or `provider_symbol` exact matches, case-insensitively.
   - Unknown tokens such as `FUCK` are rejected instead of being normalized into fake provider symbols.
+- Added v1.1 local Mac distribution artifacts:
+  - `scripts/package_macos_app.sh` now builds `dist/EODHD Code Generator.app`, `dist/EODHD-Code-Generator-1.0.0.dmg`, `dist/EODHD-Code-Generator-1.0.0.pkg`, and `dist/SHA256SUMS.txt`.
+  - The `.app` bundle now includes app source/docs plus pure Python dependencies used by the DB pool browser.
+  - The launcher still unsets `EODHD_API_KEY`, requires Python 3.11+, and uses the Login / Config token path for normal desktop startup.
+  - Added `site/index.html`, `site/styles.css`, `site/assets/app-preview.svg`, and `site/PLAN.md` as the personal website download page and rollout plan.
+  - Packaging copies DMG/PKG/checksums into `site/downloads/` so the static download buttons point at real local artifacts after a build.
 - Added Wind study notes from the user-provided 2025 PDF and Kancloud link into `PROJECT.md`.
 - Added P1 plan for a WindPy-like Python client: `from eodhd_client import w`, `w.start()`, `w.isconnected()`, and `w.wsd`/`w.wss`/`w.wset` mappings.
 - Added tests for token store, universe normalization, and API cost estimation.
@@ -153,19 +158,37 @@ Validation latest run:
 
 ```text
 ../database_system_cli/.venv/bin/python -m pytest -q
-79 passed
+80 passed
 
-../database_system_cli/.venv/bin/ruff check --no-cache src tests
+../database_system_cli/.venv/bin/python -m ruff check src tests
 All checks passed
 
-node --check database_app/src/eodhd_codegen_app/static/app.js
+node --check src/eodhd_codegen_app/static/app.js
 passed
 
-v1.0 release smoke on http://127.0.0.1:8123/
-GET / returned 200; GET /api/endpoints returned the registry; POST /api/generate for historical AAPL.US returned token-safe direct URL, Python, curl, JavaScript, and local proxy snippets; isolated no-token POST /api/execute returned {"error": "EODHD_API_KEY is not set"}.
+zsh -n scripts/package_macos_app.sh
+passed
+
+./scripts/package_macos_app.sh
+built dist/EODHD Code Generator.app, dist/EODHD-Code-Generator-1.0.0.dmg, dist/EODHD-Code-Generator-1.0.0.pkg, dist/SHA256SUMS.txt, and copied release artifacts to site/downloads/.
+
+codesign --verify --deep --verbose=2 "dist/EODHD Code Generator.app"
+valid on disk; satisfies its Designated Requirement.
+
+hdiutil verify dist/EODHD-Code-Generator-1.0.0.dmg
+checksum is VALID.
+
+DMG mount smoke
+/Volumes/EODHD Code Generator contained EODHD Code Generator.app and Applications shortcut; image was detached after inspection.
+
+Packaged bundle smoke on http://127.0.0.1:8125/
+GET /api/endpoints returned 200 and contained historical_eod; no __pycache__ directories were written into the signed bundle.
+
+site/index.html link audit
+10 local refs checked; missing=[].
 
 In-app browser smoke on http://127.0.0.1:8010/
-status Ready; no task tabs or old Stocks workspace; function toolbar shows five P0 cards; import AAPL,NVDA,MSFT,GOOGL,AMZN,META,TSLA,NFLX,AMD,BRK.B -> selected provider symbols including BRK-B.US; Review estimates 10 API calls; Confirm generates /eod URLs; opening Intraday then closing does not change the confirmed Historical request; double-clicking an imported candidate toggles selection.
+status Ready; no task tabs or old Stocks workspace; function toolbar shows five P0 cards; DB-backed import resolves exact active DB symbols and rejects unknown/guessed aliases; Confirm generates /eod URLs; opening Intraday then closing does not change the confirmed Historical request; double-clicking an imported candidate toggles selection.
 
 Isolated no-token execute smoke on http://127.0.0.1:8011/
 with HOME=/private/tmp/fdp_no_token and no EODHD_API_KEY, POST /api/execute returns 502 {"error": "EODHD_API_KEY is not set"}.

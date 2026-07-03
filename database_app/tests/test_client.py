@@ -131,6 +131,7 @@ def test_intraday_rows_include_provider_symbol_for_multi_symbol_preview() -> Non
             json.dumps(
                 [
                     {
+                        "_provider_symbol": "UPSTREAM.VALUE",
                         "datetime": "2024-01-02 09:35:00",
                         "open": 100,
                         "close": 101,

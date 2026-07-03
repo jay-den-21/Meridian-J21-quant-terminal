@@ -121,11 +121,12 @@ def test_resolve_universe_symbols_uses_database_exact_matches_case_insensitive()
     payload = resolve_universe_symbols({"tokens": ["aapl", "FUCK", "BRK.B", "bad!"]}, repository=repo)
 
     resolved = payload["resolved"]
-    assert [item["input"] for item in resolved] == ["AAPL", "BRK.B"]
-    assert [item["row"]["provider_symbol"] for item in resolved] == ["AAPL.US", "BRK-B.US"]
-    assert payload["unmatched"] == ["FUCK"]
+    assert [item["input"] for item in resolved] == ["AAPL"]
+    assert [item["row"]["provider_symbol"] for item in resolved] == ["AAPL.US"]
+    assert payload["unmatched"] == ["FUCK", "BRK.B"]
     assert payload["invalid"] == ["BAD!"]
-    assert "BRK-B.US" in repo.last_resolve_tokens
+    assert "BRK-B.US" not in repo.last_resolve_tokens
+    assert "BRK.B" in repo.last_resolve_tokens
 
 
 def test_resolve_universe_symbols_reports_unavailable_without_fallback() -> None:
