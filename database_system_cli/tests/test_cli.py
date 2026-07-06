@@ -310,3 +310,18 @@ def test_run_daily_range_ingest_aggregates_parallel_success_and_failure(
         "partial_failed": 0,
         "failed": 1,
     }
+
+
+def test_cli_registers_delisted_instruments_ingest_command() -> None:
+    result = CliRunner().invoke(app, ["ingest", "delisted-instruments", "--help"])
+
+    assert result.exit_code == 0
+    assert "--market" in result.output
+    assert "--source" in result.output
+
+
+def test_cli_history_supports_include_inactive_flag() -> None:
+    result = CliRunner().invoke(app, ["ingest", "history", "--help"])
+
+    assert result.exit_code == 0
+    assert "--include-inactive" in result.output

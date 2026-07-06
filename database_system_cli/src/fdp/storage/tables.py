@@ -141,45 +141,32 @@ instrument_identifier_history = Table(
     schema=US_SHARE_SCHEMA,
 )
 
-# us_share.daily_price example row:
-# - daily_price_id: 1
+# us_share.instrument_lifecycle_event example row:
+# - lifecycle_event_id: 1
 # - instrument_id: 1
-# - symbol: "META"
-# - provider_symbol: "META.US"
-# - trade_date: date(2026, 5, 22)
-# - open: Decimal("200.150000")
-# - high: Decimal("202.740000")
-# - low: Decimal("199.700000")
-# - close: Decimal("201.360000")
-# - adjusted_close: Decimal("201.360000")
-# - volume: 48750000
-# - currency: "USD"
-# - source: "EODHD"
-# - source_updated_at: datetime(2026, 5, 23, 1, 15, 0)
-# - created_at: datetime(2026, 5, 23, 1, 20, 0)
-# - updated_at: datetime(2026, 5, 23, 1, 20, 0)
-daily_price = Table(
-    "daily_price",
+# - event_type: "delisted"
+# - event_date: date(2024, 5, 20)
+# - symbol: "OLD"
+# - provider_symbol: "OLD.US"
+# - source: "EODHD_DELISTED_EXCHANGE_SYMBOLS"
+# - event_key: "delisted:OLD.US:2024-05-20"
+instrument_lifecycle_event = Table(
+    "instrument_lifecycle_event",
     metadata,
-    Column("daily_price_id", BigInteger, primary_key=True, autoincrement=True),
+    Column("lifecycle_event_id", BigInteger, primary_key=True, autoincrement=True),
     Column(
         "instrument_id",
         BigInteger,
         ForeignKey(f"{US_SHARE_SCHEMA}.instrument.instrument_id"),
         nullable=False,
     ),
+    Column("event_type", String(32), nullable=False),
+    Column("event_date", Date),
     Column("symbol", String(64), nullable=False),
     Column("provider_symbol", String(128), nullable=False),
-    Column("trade_date", Date, nullable=False),
-    Column("open", Numeric(20, 6), nullable=False),
-    Column("high", Numeric(20, 6), nullable=False),
-    Column("low", Numeric(20, 6), nullable=False),
-    Column("close", Numeric(20, 6), nullable=False),
-    Column("adjusted_close", Numeric(20, 6), nullable=False),
-    Column("volume", BigInteger, nullable=False),
-    Column("currency", String(16), nullable=False),
-    Column("source", String(32), nullable=False),
-    Column("source_updated_at", DateTime),
+    Column("source", String(64), nullable=False),
+    Column("event_key", String(255), nullable=False),
+    Column("details", Text),
     Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
     Column(
         "updated_at",
@@ -188,9 +175,9 @@ daily_price = Table(
         server_default=func.current_timestamp(),
         server_onupdate=func.current_timestamp(),
     ),
-    UniqueConstraint("instrument_id", "trade_date", name="uq_daily_price_instrument_date"),
-    Index("ix_daily_price_symbol_date", "symbol", "trade_date"),
-    Index("ix_daily_price_trade_date", "trade_date"),
+    UniqueConstraint("source", "event_key", name="uq_lifecycle_event_source_key"),
+    Index("ix_lifecycle_event_provider_symbol", "provider_symbol"),
+    Index("ix_lifecycle_event_type_date", "event_type", "event_date"),
     schema=US_SHARE_SCHEMA,
 )
 

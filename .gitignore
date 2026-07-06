@@ -14,6 +14,7 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+backups/
 
 .trellis/.developer
 .trellis/.runtime/

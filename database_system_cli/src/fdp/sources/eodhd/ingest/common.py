@@ -2,7 +2,7 @@
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.engine import Connection
 
 from fdp.sources.eodhd.ingest.models import DEFAULT_INDEX_NAMES
@@ -206,16 +206,21 @@ def load_active_instruments(
     symbols: list[str],
     market: str,
     asset_types: list[str] | None = None,
+    include_inactive: bool = False,
 ) -> list[dict[str, object]]:
-    """Fetch active EODHD instruments for current standard symbols."""
+    """Fetch EODHD instruments for current symbols, optionally including inactive rows."""
     if not symbols:
         return []
     conditions = [
         instrument.c.market == market,
         instrument.c.provider == "EODHD",
-        instrument.c.is_active.is_(True),
-        instrument.c.symbol.in_(symbols),
+        or_(
+            instrument.c.symbol.in_(symbols),
+            instrument.c.provider_symbol.in_(symbols),
+        ),
     ]
+    if not include_inactive:
+        conditions.append(instrument.c.is_active.is_(True))
     if asset_types:
         conditions.append(instrument.c.asset_type.in_(asset_types))
 
@@ -228,8 +233,21 @@ def load_active_instruments(
             instrument.c.currency,
         ).where(*conditions)
     )
-    rows_by_symbol = {row["symbol"]: dict(row) for row in result.mappings()}
-    return [rows_by_symbol[symbol] for symbol in symbols if symbol in rows_by_symbol]
+    rows = [dict(row) for row in result.mappings()]
+    rows_by_provider_symbol = {str(row["provider_symbol"]).upper(): row for row in rows}
+    rows_by_symbol = {str(row["symbol"]).upper(): row for row in rows}
+    ordered_rows: list[dict[str, object]] = []
+    seen_ids: set[int] = set()
+    for symbol in symbols:
+        row = rows_by_provider_symbol.get(symbol) or rows_by_symbol.get(symbol)
+        if row is None:
+            continue
+        instrument_id = int(row["instrument_id"])
+        if instrument_id in seen_ids:
+            continue
+        ordered_rows.append(row)
+        seen_ids.add(instrument_id)
+    return ordered_rows
 
 
 def load_active_instruments_by_provider_symbols(

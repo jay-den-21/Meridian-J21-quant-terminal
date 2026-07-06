@@ -58,6 +58,14 @@ Completed:
 - EODHD Bulk EOD endpoint wrapped through `EodhdClient.get_bulk_eod(...)`
 - `j21 ingest daily` added as the bulk daily update path: one EODHD bulk request, active stock/ETF instrument matching, OHLCV validation, split-table upsert, and task/API audit logging
 - `j21 ingest daily-range` added as a guarded multi-day Bulk EOD path: dry-run by default, `--execute --yes` gated writes, per-day transactions, optional bounded parallel workers, request-rate throttling, and pre-run API-call/storage budget checks
+- Real active stock+ETF daily bulk backfill completed for `2018-08-01` to `2022-07-07`: 990 trading days, 49,201,725 rows fetched, 31,612,511 rows inserted, 17,589,214 unmatched active-universe rows rejected, 990 HTTP requests, 99,000 estimated API-call cost, and 0 failed days
+- Post-backfill DB verification passed: `stock_daily_price` and `etf_daily_price` both cover all 990 trading days in `2018-08-01..2022-07-07`, with 0 duplicate `(instrument_id, trade_date)` groups and no missing trading-day sample
+- Full MySQL backup created after the active bulk run and before delisted rerun: `/private/tmp/j21-daily-backfill-delisted/backups/j21_mysql_contains-delisted_pre-delisted-rerun_20260707_035632.sql.gz`; name is explicit because the live DB already contained inactive/delisted rows
+- EODHD delisted/inactive universe workflow added through `j21 ingest delisted-instruments --market US`; idempotent rerun fetched 58,322 rows, accepted 53,645 stock/ETF/fund rows, rejected 4,677 unsupported/malformed rows, and left lifecycle duplicate keys at 0
+- Real EODHD delisted-symbol-list payload does not include a delisting date field, so the workflow can reliably set `instrument.is_active = false` and write lifecycle events, but `instrument.delisted_date` remains `NULL` unless a later source supplies a date
+- Inactive history smoke test passed: `j21 ingest history --symbols TWTR.US --from 2022-10-20 --to 2022-10-28 --include-inactive` fetched and inserted 6 `stock_daily_price` rows with `instrument.is_active = false`
+- Legacy `us_share.daily_price` was removed after verification: it had 5,265 rows and only one row not already represented in split tables, the known bad holiday row `DJI.INDX` on `2024-12-25`
+- Code migration head is `0008_delisted_lifecycle`; live DB `alembic current` currently fails because the database is stamped at an older dirty-workflow revision `0022_quarantine` that is not part of the clean v0.2 migration chain. This was not auto-stamped or force-fixed to avoid importing unrelated endpoint/news/intraday schema work into this scoped branch.
 - EODHD runtime knobs added to `config/default.yaml` / `.env.example`: max retries, retry delay, request rate, daily API-call budget, daily-range parallel flag, and worker count
 - Documentation workflow rule added to `AGENTS.md`: when human-facing Markdown docs are updated, matching HTML docs and the `PROGRESS.md` board must be kept in sync when applicable
 - `PROJECT.md` / `PROJECT.html` audience rule documented: Markdown is the Codex/AI-facing specification source, while HTML is the shared readable board for user and Codex/AI
@@ -76,5 +84,7 @@ Not started:
 ## Next Step
 
 - add an explicit operator-controlled skip/manual-review path for future rename-history API outages
-- run an operator-approved real smoke check for `j21 ingest daily` because the EODHD bulk endpoint consumes at least 100 API calls per exchange request
-- run an operator-approved small real smoke check for `j21 ingest daily-range --execute --yes` on a short date window after confirming the API-call budget
+- decide the next delisted-date source: EODHD Fundamentals/Corporate Actions, Nasdaq/FINRA lists, or manual enrichment, because the EODHD delisted symbol list does not expose delist dates
+- reconcile live DB Alembic version history before the next schema-changing release, either by adopting the later endpoint migration chain intentionally or by creating a documented bridge/stamp plan
+- plan point-in-time universe membership so active-only backtests can be clearly separated from survivorship-bias-aware research
+- extend delisted historical backfill in small, budgeted batches after date-source and universe policy are settled

@@ -34,6 +34,7 @@ from fdp.sources.eodhd.ingest import (
     DEFAULT_INDEX_PROVIDER_SYMBOLS,
     SYMBOL_CHANGE_HISTORY_START,
     load_bulk_daily_prices,
+    load_delisted_instruments,
     load_index_daily_prices,
     load_exchange_symbols,
     load_historical_daily_prices,
@@ -110,6 +111,11 @@ def ingest_history(
     date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
     date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
     market: str = typer.Option("US", "--market", help="Market code to ingest."),
+    include_inactive: bool = typer.Option(
+        False,
+        "--include-inactive/--active-only",
+        help="Allow inactive/delisted stock/ETF instruments to be matched.",
+    ),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
 ) -> None:
     if source.lower() != "eodhd":
@@ -140,6 +146,7 @@ def ingest_history(
             date_from=parsed_from,
             date_to=parsed_to,
             market=market,
+            include_inactive=include_inactive,
         )
 
     typer.echo(
@@ -148,6 +155,31 @@ def ingest_history(
         f"symbols={result.symbols_loaded}/{result.symbols_requested} "
         f"fetched={result.rows_fetched} inserted={result.rows_inserted} "
         f"rejected={result.rows_rejected}"
+    )
+
+
+@ingest_app.command("delisted-instruments")
+def ingest_delisted_instruments(
+    market: str = typer.Option("US", "--market", help="Market code to ingest."),
+    source: str = typer.Option("eodhd", "--source", help="Source provider."),
+) -> None:
+    """Load inactive/delisted stock and ETF instruments from EODHD."""
+    if source.lower() != "eodhd":
+        raise typer.BadParameter("only eodhd is supported")
+
+    api_key = eodhd_api_key_from_env()
+    engine = create_engine(database_url_from_env())
+    client = _eodhd_client(api_key)
+
+    with engine.begin() as connection:
+        ensure_runtime_schemas(connection)
+        result = load_delisted_instruments(connection, client, market=market)
+
+    typer.echo(
+        "delisted-instruments ingest "
+        f"run_id={result.run_id} status={result.status} "
+        f"fetched={result.rows_fetched} accepted={result.rows_accepted} "
+        f"rejected={result.rows_rejected} lifecycle_events={result.lifecycle_events_inserted}"
     )
 
 

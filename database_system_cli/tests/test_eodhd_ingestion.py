@@ -9,6 +9,7 @@ from fdp.sources.eodhd.ingestion import (
     SYMBOL_CHANGE_HISTORY_START,
     load_bulk_daily_prices,
     load_daily_prices_for_instrument_ids,
+    load_delisted_instruments,
     load_index_daily_prices,
     load_exchange_symbols,
     load_historical_daily_prices,
@@ -23,6 +24,7 @@ from fdp.storage.tables import (
     ingestion_task_run,
     instrument,
     instrument_identifier_history,
+    instrument_lifecycle_event,
     market_calendar,
     stock_daily_price,
 )
@@ -47,6 +49,22 @@ class FakeSelectResult:
 
     def mappings(self) -> FakeMappings:
         return FakeMappings(self.row)
+
+
+class FakeAllMappings:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
+class FakeAllSelectResult:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+
+    def mappings(self) -> FakeAllMappings:
+        return FakeAllMappings(self.rows)
 
 
 class FakeConnection:
@@ -123,6 +141,67 @@ def test_load_exchange_symbols_records_task_api_log_and_upserts_valid_rows() -> 
         api_call_log,
         api_call_log,
         instrument,
+        ingestion_task_run,
+    ]
+
+
+class FakeDelistedConnection:
+    def __init__(self) -> None:
+        self.statements: list[Any] = []
+
+    def execute(self, statement):
+        self.statements.append(statement)
+        table = getattr(statement, "table", None)
+        if table is ingestion_task_run:
+            return FakeResult(inserted_primary_key=(321,))
+        if table is None:
+            return FakeAllSelectResult(
+                [{"provider_symbol": "OLD.US", "instrument_id": 987}]
+            )
+        return FakeResult()
+
+
+class FakeDelistedClient:
+    def get_delisted_exchange_symbols(self, market: str) -> EodhdApiResponse:
+        assert market == "US"
+        return EodhdApiResponse(
+            endpoint="/exchange-symbol-list/US?delisted=1",
+            status_code=200,
+            success=True,
+            retry_count=0,
+            rows_returned=1,
+            duration_ms=15,
+            payload=[
+                {
+                    "Code": "OLD",
+                    "Name": "Old Inc.",
+                    "Exchange": "NYSE",
+                    "Type": "Common Stock",
+                    "Currency": "USD",
+                    "DelistedDate": "2024-05-20",
+                }
+            ],
+        )
+
+
+def test_load_delisted_instruments_upserts_inactive_rows_and_lifecycle_events() -> None:
+    connection = FakeDelistedConnection()
+
+    result = load_delisted_instruments(connection, FakeDelistedClient())
+
+    assert result.status == "success"
+    assert result.run_id == 321
+    assert result.rows_fetched == 1
+    assert result.rows_accepted == 1
+    assert result.rows_rejected == 0
+    assert result.lifecycle_events_inserted == 1
+    statement_tables = [getattr(statement, "table", None) for statement in connection.statements]
+    assert statement_tables == [
+        ingestion_task_run,
+        api_call_log,
+        instrument,
+        None,
+        instrument_lifecycle_event,
         ingestion_task_run,
     ]
 
@@ -508,6 +587,52 @@ class FakeBulkClient:
         )
 
 
+class FakeInactiveHistoryConnection(FakeHistoryConnection):
+    def __init__(self) -> None:
+        super().__init__()
+        self.instrument_rows = [
+            {
+                "instrument_id": 77,
+                "symbol": "OLD",
+                "provider_symbol": "OLD.US",
+                "asset_type": "stock",
+                "currency": "USD",
+            }
+        ]
+
+
+class FakeInactiveHistoryClient:
+    def get_historical_eod(
+        self,
+        provider_symbol: str,
+        *,
+        date_from: date,
+        date_to: date,
+    ) -> EodhdApiResponse:
+        assert provider_symbol == "OLD.US"
+        assert date_from == date(2020, 1, 1)
+        assert date_to == date(2020, 1, 31)
+        return EodhdApiResponse(
+            endpoint="/eod/OLD.US",
+            status_code=200,
+            success=True,
+            retry_count=0,
+            rows_returned=1,
+            duration_ms=10,
+            payload=[
+                {
+                    "date": "2020-01-02",
+                    "open": "10",
+                    "high": "11",
+                    "low": "9",
+                    "close": "10.5",
+                    "adjusted_close": "10.5",
+                    "volume": "1000",
+                }
+            ],
+        )
+
+
 def test_load_bulk_daily_prices_uses_one_api_call_and_split_table_upserts() -> None:
     connection = FakeBulkConnection()
 
@@ -562,6 +687,25 @@ def test_load_historical_daily_prices_upserts_valid_rows() -> None:
         stock_daily_price,
         ingestion_task_run,
     ]
+
+
+def test_load_historical_daily_prices_can_match_inactive_provider_symbol() -> None:
+    connection = FakeInactiveHistoryConnection()
+
+    result = load_historical_daily_prices(
+        connection,
+        FakeInactiveHistoryClient(),
+        symbols=["OLD.US"],
+        date_from=date(2020, 1, 1),
+        date_to=date(2020, 1, 31),
+        include_inactive=True,
+    )
+
+    assert result.status == "success"
+    assert result.symbols_loaded == 1
+    assert result.symbols_requested == 1
+    assert result.rows_inserted == 1
+    assert result.error_message is None
 
 
 def test_load_daily_prices_for_instrument_ids_upserts_valid_rows() -> None:

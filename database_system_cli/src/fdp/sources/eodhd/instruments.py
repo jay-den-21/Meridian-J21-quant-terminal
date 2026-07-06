@@ -92,6 +92,7 @@ def parse_exchange_symbol(
     *,
     market: str = "US",
     provider: str = "EODHD",
+    force_inactive: bool = False,
 ) -> dict[str, Any] | None:
     """Parse one EODHD exchange-symbol row into an `instrument` row.
 
@@ -125,7 +126,7 @@ def parse_exchange_symbol(
         "exchange": exchange,
         "asset_type": asset_type,
         "currency": currency,
-        "is_active": delisted_date is None,
+        "is_active": False if force_inactive else delisted_date is None,
         "listed_date": _optional_date(payload, "IPODate", "listed_date"),
         "delisted_date": delisted_date,
     }
@@ -136,6 +137,8 @@ def parse_exchange_symbol_rows(
     *,
     market: str = "US",
     provider: str = "EODHD",
+    include_inactive: bool = False,
+    force_inactive: bool = False,
 ) -> ParsedInstrumentRows:
     """Parse a batch of exchange-symbol rows with per-row rejection tracking.
 
@@ -148,7 +151,12 @@ def parse_exchange_symbol_rows(
 
     for index, row in enumerate(rows):
         try:
-            parsed = parse_exchange_symbol(row, market=market, provider=provider)
+            parsed = parse_exchange_symbol(
+                row,
+                market=market,
+                provider=provider,
+                force_inactive=force_inactive,
+            )
         except ValueError as exc:
             rejected.append(RejectedInstrumentRow(index=index, reason=str(exc), row=row))
             continue
@@ -159,7 +167,7 @@ def parse_exchange_symbol_rows(
             )
             continue
 
-        if not parsed["is_active"]:
+        if not include_inactive and not parsed["is_active"]:
             rejected.append(RejectedInstrumentRow(index=index, reason="inactive_instrument", row=row))
             continue
 

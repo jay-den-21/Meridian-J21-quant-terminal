@@ -37,6 +37,26 @@ class InstrumentLoadResult:
 
 
 @dataclass(frozen=True)
+class DelistedInstrumentLoadResult:
+    """Summary returned by `load_delisted_instruments`.
+
+    Input: delisted symbol API outcome, parser counts, instrument writes, lifecycle writes.
+    Output: compact result for CLI output and tests.
+    Flow: delisted symbols -> inactive instruments -> lifecycle events -> load result.
+    """
+
+    run_id: int
+    status: str
+    rows_fetched: int
+    rows_accepted: int
+    rows_rejected: int
+    lifecycle_events_inserted: int
+    api_calls: int
+    rejected_rows: list[RejectedInstrumentRow]
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
 class HistoricalDailyPriceLoadResult:
     """Summary returned by historical daily price loaders.
 

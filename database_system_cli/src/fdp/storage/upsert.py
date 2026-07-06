@@ -9,11 +9,11 @@ from sqlalchemy.sql import func
 from sqlalchemy.sql.dml import Insert
 
 from fdp.storage.tables import (
-    daily_price,
     etf_daily_price,
     index_daily_price,
     instrument,
     instrument_identifier_history,
+    instrument_lifecycle_event,
     market_calendar,
     stock_daily_price,
 )
@@ -111,17 +111,25 @@ def build_identifier_history_upsert(rows: Row | Sequence[Row]) -> Insert:
     )
 
 
-def build_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
-    """Build the upsert for `us_share.daily_price`.
+def build_instrument_lifecycle_event_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.instrument_lifecycle_event`.
 
-    Input: daily OHLCV rows keyed by `instrument_id` and `trade_date`.
-    Output: MySQL upsert that refreshes prices and display symbols.
-    Flow: daily rows -> unique(instrument_id, trade_date) -> OHLCV update.
+    Input: instrument lifecycle event rows keyed by source/event key.
+    Output: MySQL upsert that refreshes event details and timestamps.
+    Flow: lifecycle rows -> unique(source, event_key) -> event metadata update.
     """
     return build_mysql_upsert(
-        daily_price,
+        instrument_lifecycle_event,
         rows,
-        update_columns=DAILY_PRICE_UPDATE_COLUMNS,
+        update_columns=[
+            "instrument_id",
+            "event_type",
+            "event_date",
+            "symbol",
+            "provider_symbol",
+            "details",
+            "updated_at",
+        ],
     )
 
 

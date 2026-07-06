@@ -1,4 +1,5 @@
 from datetime import date
+import inspect
 
 from fdp.get_data.historical.get_index_daily import get_index_daily
 from fdp.get_data.historical.get_market_calendar import get_market_calendar
@@ -20,3 +21,11 @@ def test_historical_get_data_function_annotations_keep_date_range_contract() -> 
 
     assert annotations["date_from"] is date
     assert annotations["date_to"] is date
+
+
+def test_historical_get_data_wrappers_can_opt_into_inactive_symbols() -> None:
+    stock_signature = inspect.signature(get_stk_daily)
+    etf_signature = inspect.signature(get_etf_daily)
+
+    assert stock_signature.parameters["include_inactive"].default is False
+    assert etf_signature.parameters["include_inactive"].default is False

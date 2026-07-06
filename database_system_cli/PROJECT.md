@@ -10,7 +10,7 @@
 
 - 数据源：EODHD paid API
 - 市场：`US`
-- 数据范围：当前活跃股票+ETF；可额外保存常用市场指数作为 benchmark time series；不包含退市标的
+- 数据范围：当前活跃股票+ETF；退市/非活跃股票+ETF 保存为 instrument lifecycle/universe；可额外保存常用市场指数作为 benchmark time series
 - 历史深度：近 20 年
 - 数据粒度：一个标的一天一行
 - 数据库：本机 MySQL
@@ -26,6 +26,7 @@
 - 按 ticker 回填近 20 年历史日频 OHLCV。
 - 按 provider symbol 拉取常用市场指数的历史日频 OHLCV，用于 benchmark/market regime 研究。
 - 使用 EODHD Bulk EOD 做每日盘后增量更新。
+- 拉取 EODHD delisted/inactive stock+ETF universe，并把生命周期状态写入 `instrument` 和 `instrument_lifecycle_event`。
 - 将结构化数据写入 MySQL。
 - 使用唯一键 upsert 防止重复写入。
 - 将任务运行状态、API 调用摘要、质量检查结果写入 `system` schema。
@@ -40,7 +41,8 @@
 - 不保存全量 raw API response。
 - 不自动修正价格。
 - 不给缺失交易日插入空价格行。
-- 不包含退市股票；后续单独设计 survivorship bias / delisted instrument 模块。
+- 不在每日价格表物理保存 `is_active` / `delisted_date`；这些字段从 `instrument` 或读取层 join 暴露。
+- 不在本阶段全量回填所有 delisted 标的历史价格；delisted 历史价格先通过 `--include-inactive` 做小样本集成验证，后续单独扩展。
 
 ## 3. 技术栈
 
@@ -160,7 +162,8 @@ instrument_id | market | symbol | provider | provider_symbol | name       | exch
 - 必须保留 `provider_symbol`，例如 `AAPL.US`。
 - 必须保留标准 `symbol`，例如 `AAPL`。
 - 必须保留 `market`、`exchange`、`asset_type`、`currency`。
-- 第一阶段 instrument 清单只纳入 active stock/ETF；常用市场指数可作为 `asset_type = "index"` 的手动 provider-symbol 集合写入。
+- active instrument 清单纳入当前活跃 stock/ETF；delisted/inactive stock+ETF 通过独立 `delisted-instruments` workflow 幂等写入。
+- 常用市场指数可作为 `asset_type = "index"` 的手动 provider-symbol 集合写入。
 
 ### 5.3 `us_share.instrument_identifier_history`
 
@@ -204,7 +207,7 @@ v0.1 使用“身份统一，价格拆表”的结构：
 - `us_share.instrument` 是唯一可写 identity master。
 - `us_share.stock_instrument`、`us_share.etf_instrument`、`us_share.index_instrument` 是只读 view，按 `asset_type` 从 `instrument` 过滤出来。
 - `us_share.stock_daily_price`、`us_share.etf_daily_price`、`us_share.index_daily_price` 是真实日频量价表。
-- 旧 `us_share.daily_price` 暂时保留为 legacy 过渡表，不作为 v0.1 新 ingest 的主要写入目标。
+- 旧 `us_share.daily_price` 已退出运行模型；有效 stock/ETF/index 行迁移到 split tables 后，legacy 表应删除。
 
 这样做的原因：
 
@@ -250,6 +253,7 @@ unique(instrument_id, trade_date)
 - ETF 数据写 `etf_daily_price`。
 - benchmark index 数据写 `index_daily_price`。
 - `j21 ingest history` 用于历史回填，按 provider symbol 逐个调用历史 EOD API。
+- `j21 ingest history --include-inactive` 可用于人工选择的小样本 delisted/inactive 标的价格验证。
 - `j21 ingest daily` 用于每日增量，调用 EODHD Bulk EOD API 后写入 stock/ETF split tables。
 
 读取层提供价格口径开关：
@@ -263,7 +267,34 @@ DailyPriceReader(connection, date_from=start, date_to=end).get_daily_prices(
 
 第一阶段 `adjusted=True` 至少使用 `adjusted_close` 作为复权收盘价。完整 adjusted OHLC 可在后续通过明确算法扩展。
 
-### 5.5 `us_share.market_calendar`
+### 5.5 `us_share.instrument_lifecycle_event`
+
+`instrument_lifecycle_event` 记录标的生命周期事件，例如 delisting。它不是价格表，也不是手工备注表，而是用来保留 survivorship-bias 相关事实。
+
+建议字段：
+
+```text
+lifecycle_event_id
+instrument_id
+event_type
+event_date
+symbol
+provider_symbol
+source
+event_key
+details
+created_at
+updated_at
+```
+
+规则：
+
+- `event_type = "delisted"` 表示标的已经退市或变为 inactive。
+- `event_key` 必须唯一，确保 delisted universe 重跑不会重复写事件。
+- delisted workflow 更新 `instrument.is_active = false`；只有当数据源提供可靠日期时才更新 `instrument.delisted_date`。当前 EODHD `exchange-symbol-list?delisted=1` 返回字段不含 delisting date，因此该列可能保持 `NULL`。
+- 每日价格表不加 `is_active` / `delisted_date` 物理列；读取层通过 join 暴露。
+
+### 5.6 `us_share.market_calendar`
 
 市场交易日历表，用于判断缺失交易日。
 
@@ -285,7 +316,7 @@ updated_at
 - 优先从 EODHD exchange details / holidays 能力构建。
 - 如果 EODHD 日历覆盖不足，必须定义明确的交易日历生成算法，不能靠猜测式补丁。
 
-### 5.6 `system.ingestion_task_run`
+### 5.7 `system.ingestion_task_run`
 
 记录每一次数据拉取/入库任务。
 
@@ -324,7 +355,7 @@ partial_failed
 cancelled
 ```
 
-### 5.7 `system.api_call_log`
+### 5.8 `system.api_call_log`
 
 记录 API 调用摘要，不保存全量 raw response。
 
@@ -347,7 +378,7 @@ called_at
 duration_ms
 ```
 
-### 5.8 `system.data_quality_check_run`
+### 5.9 `system.data_quality_check_run`
 
 记录每一次质量检查。
 
@@ -366,7 +397,7 @@ issues_found
 error_message
 ```
 
-### 5.9 `system.data_quality_issue`
+### 5.10 `system.data_quality_issue`
 
 记录具体质量问题。
 
@@ -402,7 +433,7 @@ price_on_non_trading_day
 
 异常值不得自动修正。缺失交易日不得插空价格行。
 
-### 5.10 `system.repair_plan`
+### 5.11 `system.repair_plan`
 
 记录可人工确认执行的修复计划。
 
@@ -447,7 +478,23 @@ backfill_missing_daily_price
 - 写入 `us_share.instrument`。
 - 使用 upsert，重复执行不得产生重复标的。
 
-### 6.2 Historical backfill
+### 6.2 Delisted instrument lifecycle
+
+退市标的不是通过 ticker 猜测合并，而是从 EODHD delisted symbol list 拉取。
+
+流程：
+
+```text
+call EODHD exchange-symbol-list with delisted=1
+parse inactive stock/ETF rows
+upsert into us_share.instrument with is_active=false
+upsert delisted lifecycle event by event_key
+write task state and api call summary
+```
+
+该 workflow 必须幂等。重跑可以更新 `instrument` 当前生命周期状态，但不能重复制造 lifecycle event。
+
+### 6.3 Historical backfill
 
 首次建库按 ticker 回填近 20 年历史。
 
@@ -466,7 +513,9 @@ for each provider_symbol:
 
 回填必须可分批执行。推荐先用 20-50 个 symbol 验证，再扩大到全量股票+ETF。
 
-### 6.3 Daily bulk update
+delisted/inactive 标的历史价格只在显式传入 `--include-inactive` 时纳入查找范围，避免普通 active 回填误把已退市标的混入日常任务。
+
+### 6.4 Daily bulk update
 
 历史建好后，每日盘后优先使用 EODHD Bulk EOD 更新 US 市场。
 
@@ -490,7 +539,7 @@ EODHD 限额规则：
 - Bulk EOD 全 exchange 一次请求按 100 API calls 估算。
 - 超过 `--max-api-calls` 或 `--max-estimated-gb` 时，命令必须在读取 API key 和调用 EODHD 之前拒绝执行。
 
-### 6.4 Validate quality
+### 6.5 Validate quality
 
 质量检查不应该隐藏在 ingest 内部。`validate` 必须可以独立运行。
 
@@ -506,7 +555,7 @@ EODHD 限额规则：
 
 检查结果必须写入 `system.data_quality_check_run` 和 `system.data_quality_issue`。
 
-### 6.5 Repair plan
+### 6.6 Repair plan
 
 缺失数据不自动插入空行。正确流程是生成 repair plan。
 
@@ -525,7 +574,7 @@ CLI 必须先列出将补哪些 `symbol/date range`，再要求人工输入确�
 
 坏行或多余行不走 repair。`invalid_ohlcv`、`price_on_non_trading_day` 和 `duplicate_key` 这类已经存在于价格表里的问题行，必须先进入 `system.quarantine_plan`，人工确认时预览当前匹配源行，执行前 claim plan 并锁定源行，先写入 `system.quarantined_daily_price_row` 归档 payload/hash，再按源表主键删除源行。删除数量必须等于归档数量；删除后重新验证问题已消失，才能把 linked `data_quality_issue` 标记为 `resolved`。`duplicate_key` 的 action 是 `dedupe_daily_price_rows`，只自动处理 exact duplicate payload；如果重复组价格/volume/source payload 不一致，必须拒绝自动删除并转人工 review。如果 calendar 已变化导致 non-trading issue 变 stale，但源行仍存在，不允许静默 resolved，必须重新 validate 或人工处理。
 
-### 6.6 Query access
+### 6.7 Query access
 
 研究和未来 app 不直接读 EODHD，而是通过数据库读取。
 
@@ -541,6 +590,7 @@ get_daily_prices(symbols, start, end, adjusted=True)
 - 支持日期范围。
 - 默认返回 adjusted 口径。
 - `adjusted=False` 返回 raw OHLCV。
+- 返回 `instrument.is_active` 和 `instrument.delisted_date`，避免把生命周期字段复制到每日价格表。
 - 查询前可选检查目标范围是否存在 open quality issue。
 
 ## 7. CLI 语义
@@ -558,6 +608,8 @@ get_daily_prices(symbols, start, end, adjusted=True)
 ```bash
 poetry run j21 ingest instruments --market US --source eodhd
 poetry run j21 ingest history --market US --years 20 --symbols AAPL,MSFT,SPY
+poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --include-inactive
+poetry run j21 ingest delisted-instruments --market US
 poetry run j21 ingest daily --market US --date 2026-05-20
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --dry-run
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --execute --yes --parallel --workers 4
@@ -619,6 +671,8 @@ if still invalid:
 - 异常行重拉 3 次仍失败后不得入库，并写入 `data_quality_issue`。
 - repair CLI 列出 plan 后要求人工确认。
 - `get_daily_prices(..., adjusted=True/False)` 返回不同价格口径。
+- `j21 ingest delisted-instruments` 幂等写入 inactive instruments 和 lifecycle events。
+- `j21 ingest history --include-inactive` 能按人工指定的小样本 inactive symbol 写入对应 split daily table。
 
 测试数据库必须使用独立 schema，例如 `test_us_share`、`test_system`。
 
@@ -634,7 +688,7 @@ A 股通常按上交所、深交所、北交所，以及主板、科创板、创
 - Cboe / BATS
 - NYSE Arca
 
-ETF 与普通股票都可以在交易所上市。第一阶段覆盖当前活跃股票+ETF。
+ETF 与普通股票都可以在交易所上市。第一阶段的 active backfill 覆盖当前活跃股票+ETF；退市/非活跃标的以 instrument lifecycle/universe 形式纳入，避免数据库长期存在明显 survivorship bias 盲区。
 
 指数例如 S&P 500、Nasdaq 100、Russell 2000 不是交易所。指数暂不作为第一阶段核心数据，但架构必须保留扩展空间。
 

@@ -252,11 +252,11 @@
 <tbody>
 <tr>
 <td>数据源</td>
-<td>EODHD paid API；第一阶段只做 US active stock/ETF</td>
+<td>EODHD paid API；当前覆盖 US active stock/ETF、benchmark index，并已接入 delisted/inactive universe</td>
 </tr>
 <tr>
 <td>数据范围</td>
-<td>近 20 年日频 OHLCV；当前不含退市标的</td>
+<td>日频 OHLCV；active stock/ETF 已用 bulk 补到 2018-08-01，退市标的历史价格仍按预算小样本验证</td>
 </tr>
 <tr>
 <td>数据库</td>
@@ -268,7 +268,7 @@
 </tr>
 <tr>
 <td>主表</td>
-<td><code>us_share.instrument</code>、<code>us_share.daily_price</code>、<code>us_share.market_calendar</code></td>
+<td><code>us_share.instrument</code>、<code>us_share.stock_daily_price</code>、<code>us_share.etf_daily_price</code>、<code>us_share.index_daily_price</code>、<code>us_share.market_calendar</code></td>
 </tr>
 <tr>
 <td>系统表</td>
@@ -280,11 +280,11 @@
 </tr>
 <tr>
 <td>已完成</td>
-<td>scaffold、初始 schema/migration、EODHD instrument parser、instrument ingestion、upsert builder、单元测试</td>
+<td>scaffold、schema/migration、EODHD instrument/parser、symbol-change history、split daily tables、bulk daily-range、quality/repair/quarantine/dedupe、database-backed research reader、delisted universe</td>
 </tr>
 <tr>
 <td>未开始</td>
-<td>historical daily price ingestion、quality checks、repair workflow、database-backed access functions</td>
+<td>CUSIP/ISIN/FIGI/LEI/CIK validation、point-in-time universe、全量 delisted 历史价格批量回填</td>
 </tr>
 </tbody></table></div>
 <p>本报告的假设：</p>
@@ -759,9 +759,9 @@
 <td>需要人工/规则化 lineage decision</td>
 </tr>
 </tbody></table></div>
-<p>EODHD 的历史 EOD 文档说明，其 OHLC 是 raw，不按 split/dividend 调整；adjusted close 按 split 和 dividend 调整，volume 按 split 调整。这个正好符合本项目 <code>daily_price</code> 同时保存 raw OHLCV 和 <code>adjusted_close</code> 的设计。后续如果要完整 adjusted OHLC，不应直接覆盖 raw OHLC，而应通过 factor table 或明确算法生成 view。</p>
+<p>EODHD 的历史 EOD 文档说明，其 OHLC 是 raw，不按 split/dividend 调整；adjusted close 按 split 和 dividend 调整，volume 按 split 调整。这个正好符合本项目 split daily price tables 同时保存 raw OHLCV 和 <code>adjusted_close</code> 的设计。后续如果要完整 adjusted OHLC，不应直接覆盖 raw OHLC，而应通过 factor table 或明确算法生成 view。</p>
 <h3 id="section-13"><a class="anchor" href="#section-13">#</a>4.7 Delisting 与 survivorship bias</h3>
-<p>当前 <code>PROJECT.md</code> 明确第一阶段不包含 delisted instrument，后续单独设计 survivorship bias / delisted instrument 模块。这是合理的阶段切分，但长期必须补。</p>
+<p>当前项目已把 delisted/inactive universe 纳入 <code>instrument</code> lifecycle 设计：<code>instrument.is_active</code> 保存当前活跃状态，<code>instrument.delisted_date</code> 在数据源提供可靠日期时保存日期，<code>instrument_lifecycle_event</code> 保存 delisting event。实际测试确认 EODHD <code>exchange-symbol-list?delisted=1</code> 当前不返回 delisting date 字段，因此日期需要后续用其他来源或人工 enrichment 补齐。全量 delisted 历史价格回填仍应单独规划，避免污染 active bulk backfill。</p>
 <p>最小设计：</p>
 <div class="table-wrap"><table>
 <thead><tr>
@@ -843,7 +843,7 @@
 <li>UTP Plan 负责 Nasdaq-listed Tape C securities 的 quotation and transaction information。</li>
 <li>SIP 计算并传播 NBBO、LULD price bands、short sale restriction、regulatory halt 等信息。</li>
 </ul>
-<p>如果未来从日频升级到 intraday/TAQ，建议不要从 <code>daily_price</code> 硬扩，而是新增：</p>
+<p>如果未来从日频升级到 intraday/TAQ，建议不要从 split daily price tables 硬扩，而是新增：</p>
 <div class="table-wrap"><table>
 <thead><tr>
 <th>表</th>
@@ -877,7 +877,7 @@
 <td>instrument_id + trade_date + source</td>
 </tr>
 </tbody></table></div>
-<p>日频阶段也应在 <code>daily_price.source</code> 或后续 audit 表中说明：EODHD bars 是 vendor EOD，不是本系统从 TAQ 重算的 official consolidated bars。</p>
+<p>日频阶段也应在 split daily price tables 的 <code>source</code> 或后续 audit 表中说明：EODHD bars 是 vendor EOD，不是本系统从 TAQ 重算的 official consolidated bars。</p>
 <h3 id="section-16"><a class="anchor" href="#section-16">#</a>4.10 Price increments、round lots、odd lots</h3>
 <p>Regulation NMS 2005 版本包含 sub-penny rule。SEC 2024 amendments 对 minimum pricing increments、access fee caps、round lot 和 odd-lot information 做了更新：Rule 612 新增 $0.005 minimum pricing increment 机制，tick size 按 quoted spread 评估期分配；Rule 612/610 和 round lot definition 的 compliance date 是 2025 年 11 月第一个 business day，odd-lot information compliance date 是 2026 年 5 月第一个 business day。</p>
 <p>数据库影响：</p>
@@ -948,7 +948,7 @@
         Listing[&quot;listing_history&quot;]
         Corp[&quot;corporate_action&quot;]
         Factor[&quot;adjustment_factor&quot;]
-        Daily[&quot;daily_price&quot;]
+        Daily[&quot;stock_daily_price / etf_daily_price / index_daily_price&quot;]
         Calendar[&quot;market_calendar&quot;]
         Session[&quot;market_session&quot;]
     end
@@ -985,7 +985,9 @@
     issuer ||--o{ instrument : issues
     instrument ||--o{ instrument_identifier_history : has
     instrument ||--o{ listing_history : listed_as
-    instrument ||--o{ daily_price : priced_by_day
+    instrument ||--o{ stock_daily_price : stock_priced_by_day
+    instrument ||--o{ etf_daily_price : etf_priced_by_day
+    instrument ||--o{ index_daily_price : index_priced_by_day
     instrument ||--o{ corporate_action : affected_by
     corporate_action ||--o{ adjustment_factor : produces
     instrument ||--o{ trading_halt_event : may_have
@@ -1053,8 +1055,34 @@
         string source
     }
 
-    daily_price {
-        bigint daily_price_id PK
+    stock_daily_price {
+        bigint stock_daily_price_id PK
+        bigint instrument_id FK
+        date trade_date
+        decimal open
+        decimal high
+        decimal low
+        decimal close
+        decimal adjusted_close
+        bigint volume
+        string source
+    }
+
+    etf_daily_price {
+        bigint etf_daily_price_id PK
+        bigint instrument_id FK
+        date trade_date
+        decimal open
+        decimal high
+        decimal low
+        decimal close
+        decimal adjusted_close
+        bigint volume
+        string source
+    }
+
+    index_daily_price {
+        bigint index_daily_price_id PK
         bigint instrument_id FK
         date trade_date
         decimal open
@@ -1077,8 +1105,8 @@
 <tbody>
 <tr>
 <td>P0</td>
-<td>保持 <code>instrument_id</code> + <code>daily_price(instrument_id, trade_date)</code></td>
-<td>第一阶段 EODHD active universe 足够</td>
+<td>保持 <code>instrument_id</code> + split daily tables <code>(instrument_id, trade_date)</code></td>
+<td>股票、ETF、指数分表后仍保持同一身份键</td>
 <td>是，当前已符合</td>
 </tr>
 <tr>
@@ -1091,13 +1119,13 @@
 <td>P1</td>
 <td>增加 <code>instrument_identifier_history</code></td>
 <td>ticker/provider_symbol/CUSIP/ISIN 历史不可丢</td>
-<td>historical ingestion 稳定后做</td>
+<td>已完成 ticker/provider_symbol 基础版</td>
 </tr>
 <tr>
 <td>P1</td>
 <td>增加 <code>listing_history</code></td>
 <td>exchange/tier/tape/status 是时间变化属性</td>
-<td>delisted 模块前做</td>
+<td>point-in-time universe 前做</td>
 </tr>
 <tr>
 <td>P1</td>
@@ -1119,9 +1147,9 @@
 </tr>
 <tr>
 <td>P2</td>
-<td>增加 <code>delisting_event</code></td>
+<td>增加/完善 <code>instrument_lifecycle_event</code> 与 delist-date source</td>
 <td>防 survivorship bias</td>
-<td>扩 active-only 范围时做</td>
+<td>已有 EODHD universe，日期源待补</td>
 </tr>
 <tr>
 <td>P2</td>
@@ -1183,15 +1211,15 @@
 </tbody></table></div>
 <h2 id="section-23"><a class="anchor" href="#section-23">#</a>9. 实施路线</h2>
 <ol>
-<li>完成当前 <code>fdp ingest history</code> 小范围路径：AAPL/MSFT/SPY 等，确保 raw OHLCV、adjusted_close、upsert、task/API log、invalid row rejection 都稳定。</li>
-<li>建立 <code>market_calendar</code> 数据源和 validator：先覆盖 core trading day、holiday、early close。</li>
-<li>在不扩大 universe 的前提下新增 <code>instrument_identifier_history</code> 和 <code>listing_history</code> migration：把当前 <code>instrument</code> 的 symbol/provider/exchange 复制成第一段 history。</li>
+<li>先修正 live DB migration version 链，避免下一次 schema release 被旧 <code>0022_quarantine</code> stamp 卡住。</li>
+<li>决定 delisted date source：EODHD Fundamentals/Corporate Actions、Nasdaq/FINRA Daily List，或人工 enrichment。</li>
+<li>建 point-in-time universe / universe membership，把 active-only 回测和 survivor-bias-aware 回测分开。</li>
 <li>接 EODHD split/dividend 或 bulk split/dividend：新增 <code>corporate_action</code>，但不要重算覆盖现有 raw price。</li>
-<li>再做 delisted/inactive universe：先设计 event 和 identifier lineage，再扩大 ingestion，否则会污染 active-only 假设。</li>
-<li>最后才考虑 intraday/TAQ：按 trade/quote/condition/venue/tape 分层，不挤进 <code>daily_price</code>。</li>
+<li>扩展 delisted/inactive 历史价格回填：已有 universe/lifecycle 基础后，再按预算和研究需求分批拉取 inactive symbols。</li>
+<li>最后才考虑 intraday/TAQ：按 trade/quote/condition/venue/tape 分层，不挤进 split daily price tables。</li>
 </ol>
 <h2 id="section-24"><a class="anchor" href="#section-24">#</a>10. 结论</h2>
-<p>本项目当前第一阶段 schema 是合理的最小起点：<code>instrument</code> + <code>daily_price</code> + <code>market_calendar</code> + <code>system</code> audit/quality/repair。美股特殊性要求后续不要沿用 A 股“代码近似永久身份”的思维，而要采用 CRSP 风格的永久 security id、company id、identifier history、listing history 和 corporate action event 模型。</p>
+<p>本项目当前第一阶段 schema 是合理的最小起点：<code>instrument</code> + split daily price tables + <code>market_calendar</code> + <code>system</code> audit/quality/repair。美股特殊性要求后续不要沿用 A 股“代码近似永久身份”的思维，而要采用 CRSP 风格的永久 security id、company id、identifier history、listing/lifecycle history 和 corporate action event 模型。</p>
 <p>最重要的工程原则：</p>
 <ul>
 <li>ticker 是查询入口，不是主键。</li>

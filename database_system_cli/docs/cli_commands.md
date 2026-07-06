@@ -38,3 +38,28 @@ Runtime defaults live in `config/default.yaml` and can be overridden with:
 - `EODHD_DAILY_CALL_BUDGET`
 - `EODHD_DAILY_RANGE_PARALLEL`
 - `EODHD_DAILY_RANGE_MAX_WORKERS`
+
+## Delisted Instruments
+
+Load EODHD inactive/delisted stock+ETF universe:
+
+```bash
+poetry run j21 ingest delisted-instruments --market US
+```
+
+This writes inactive instruments to `us_share.instrument` and records delisting facts in
+`us_share.instrument_lifecycle_event`. It is idempotent and does not backfill all
+delisted historical prices by default. The current EODHD delisted symbol list does not
+return a delisting date, so `instrument.delisted_date` can remain `NULL` until another
+source supplies that date.
+
+Run a small inactive-symbol historical price smoke test only when explicitly needed:
+
+```bash
+poetry run j21 ingest history \
+  --market US \
+  --symbols TWTR.US \
+  --from 2022-10-20 \
+  --to 2022-10-28 \
+  --include-inactive
+```

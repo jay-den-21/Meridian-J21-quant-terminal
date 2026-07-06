@@ -50,6 +50,28 @@ def test_eodhd_client_fetches_active_exchange_symbols() -> None:
     assert response.payload == [{"Code": "AAPL", "Type": "Common Stock"}]
 
 
+def test_eodhd_client_fetches_delisted_exchange_symbols() -> None:
+    requested_urls: list[str] = []
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        requested_urls.append(request.full_url)
+        return FakeResponse([{"Code": "OLD", "Type": "Common Stock"}])
+
+    client = EodhdClient(api_key="test-token", transport=fake_transport)
+    response = client.get_delisted_exchange_symbols("US")
+
+    parsed_url = urlparse(requested_urls[0])
+    query = parse_qs(parsed_url.query)
+
+    assert parsed_url.path == "/api/exchange-symbol-list/US"
+    assert query["api_token"] == ["test-token"]
+    assert query["fmt"] == ["json"]
+    assert query["delisted"] == ["1"]
+    assert response.success is True
+    assert response.endpoint == "/exchange-symbol-list/US"
+    assert response.rows_returned == 1
+
+
 def test_eodhd_client_fetches_symbol_change_history() -> None:
     requested_urls: list[str] = []
 

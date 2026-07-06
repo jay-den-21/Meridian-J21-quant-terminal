@@ -120,6 +120,8 @@ class DailyPriceReader:
                 instrument.c.name,
                 instrument.c.exchange,
                 instrument.c.asset_type,
+                instrument.c.is_active,
+                instrument.c.delisted_date,
                 price_table.c.symbol.label("price_symbol"),
                 price_table.c.provider_symbol.label("price_provider_symbol"),
                 price_table.c.trade_date,

@@ -91,6 +91,29 @@ def test_parse_exchange_symbol_rows_rejects_unsupported_malformed_and_inactive_r
     ]
 
 
+def test_parse_exchange_symbol_rows_can_force_and_include_inactive_rows() -> None:
+    parsed = parse_exchange_symbol_rows(
+        [
+            {
+                "Code": "OLD",
+                "Name": "Old Inc.",
+                "Exchange": "NYSE",
+                "Type": "Common Stock",
+                "Currency": "USD",
+                "DelistedDate": "2024-05-20",
+            }
+        ],
+        include_inactive=True,
+        force_inactive=True,
+    )
+
+    assert len(parsed.accepted) == 1
+    assert parsed.accepted[0]["symbol"] == "OLD"
+    assert parsed.accepted[0]["is_active"] is False
+    assert parsed.accepted[0]["delisted_date"] == date(2024, 5, 20)
+    assert parsed.rejected == []
+
+
 def test_parse_symbol_change_history_maps_old_and_new_provider_symbols() -> None:
     symbol_change = parse_symbol_change_history(
         {

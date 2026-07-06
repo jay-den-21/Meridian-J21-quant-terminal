@@ -104,6 +104,29 @@ class EodhdClient:
             object_name="exchange symbol",
         )
 
+    def get_delisted_exchange_symbols(self, market: str) -> EodhdApiResponse:
+        """Fetch the inactive/delisted EODHD exchange symbol list for one market.
+
+        Input: market code such as "US".
+        Output: inactive symbol rows from `/exchange-symbol-list/{market}` with `delisted=1`.
+        Flow: market -> URL with `delisted=1` -> retrying GET -> parsed rows.
+        """
+        endpoint = f"/exchange-symbol-list/{market}"
+        query = urlencode(
+            {
+                "api_token": self.api_key,
+                "fmt": "json",
+                "delisted": "1",
+            }
+        )
+        url = f"{self.base_url}{endpoint}?{query}"
+
+        return self._get_json_list(
+            endpoint=endpoint,
+            url=url,
+            object_name="delisted exchange symbol",
+        )
+
     def get_symbol_change_history(self, from_date: date | str) -> EodhdApiResponse:
         """Fetch EODHD US ticker rename events from a start date.
 

@@ -86,6 +86,8 @@ def test_daily_price_reader_builds_stock_query_with_identifier_history() -> None
     assert "stock_daily_price" in sql
     assert "instrument_identifier_history" in sql
     assert "adjusted_close AS analysis_close" in sql
+    assert "instrument.is_active" in sql
+    assert "instrument.delisted_date" in sql
     assert "asset_type = %s" in sql
 
 

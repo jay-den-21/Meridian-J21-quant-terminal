@@ -24,15 +24,15 @@ CRSP 的公开说明给出最重要的架构启发：用永久 security id 和 c
 
 | 层 | 当前设计 |
 | --- | --- |
-| 数据源 | EODHD paid API；第一阶段只做 US active stock/ETF |
-| 数据范围 | 近 20 年日频 OHLCV；当前不含退市标的 |
+| 数据源 | EODHD paid API；当前覆盖 US active stock/ETF、benchmark index，并已接入 delisted/inactive universe |
+| 数据范围 | 日频 OHLCV；active stock/ETF 已用 bulk 补到 2018-08-01，退市标的历史价格仍按预算小样本验证 |
 | 数据库 | 本机 MySQL；schema 为 `us_share`、`a_share`、`system` |
 | 工程栈 | Python、Poetry、SQLAlchemy Core、Alembic、Typer、pytest、YAML、`.env` |
-| 主表 | `us_share.instrument`、`us_share.daily_price`、`us_share.market_calendar` |
+| 主表 | `us_share.instrument`、`us_share.stock_daily_price`、`us_share.etf_daily_price`、`us_share.index_daily_price`、`us_share.market_calendar` |
 | 系统表 | `system.ingestion_task_run`、`system.api_call_log`、`system.data_quality_check_run`、`system.data_quality_issue`、`system.repair_plan` |
 | 写入原则 | 大批量写入必须唯一键 upsert；异常 OHLCV 不入库；缺失交易日不插空行 |
-| 已完成 | scaffold、初始 schema/migration、EODHD instrument parser、instrument ingestion、upsert builder、单元测试 |
-| 未开始 | historical daily price ingestion、quality checks、repair workflow、database-backed access functions |
+| 已完成 | scaffold、schema/migration、EODHD instrument/parser、symbol-change history、split daily tables、bulk daily-range、quality/repair/quarantine/dedupe、database-backed research reader、delisted universe |
+| 未开始 | CUSIP/ISIN/FIGI/LEI/CIK validation、point-in-time universe、全量 delisted 历史价格批量回填 |
 
 本报告的假设：
 
@@ -203,11 +203,11 @@ Corporate actions 是美股历史连续性最大风险之一。
 | Bankruptcy | listing/financial status 变化，可能退市转 OTC | status history + delisting event |
 | Relisting | 可能同公司新 security，也可能原 security lineage 继续 | 需要人工/规则化 lineage decision |
 
-EODHD 的历史 EOD 文档说明，其 OHLC 是 raw，不按 split/dividend 调整；adjusted close 按 split 和 dividend 调整，volume 按 split 调整。这个正好符合本项目 `daily_price` 同时保存 raw OHLCV 和 `adjusted_close` 的设计。后续如果要完整 adjusted OHLC，不应直接覆盖 raw OHLC，而应通过 factor table 或明确算法生成 view。
+EODHD 的历史 EOD 文档说明，其 OHLC 是 raw，不按 split/dividend 调整；adjusted close 按 split 和 dividend 调整，volume 按 split 调整。这个正好符合本项目 split daily price tables 同时保存 raw OHLCV 和 `adjusted_close` 的设计。后续如果要完整 adjusted OHLC，不应直接覆盖 raw OHLC，而应通过 factor table 或明确算法生成 view。
 
 ### 4.7 Delisting 与 survivorship bias
 
-当前 `PROJECT.md` 明确第一阶段不包含 delisted instrument，后续单独设计 survivorship bias / delisted instrument 模块。这是合理的阶段切分，但长期必须补。
+当前项目已把 delisted/inactive universe 纳入 `instrument` lifecycle 设计：`instrument.is_active` 保存当前活跃状态，`instrument.delisted_date` 在数据源提供可靠日期时保存日期，`instrument_lifecycle_event` 保存 delisting event。实际测试确认 EODHD `exchange-symbol-list?delisted=1` 当前不返回 delisting date 字段，因此日期需要后续用其他来源或人工 enrichment 补齐。全量 delisted 历史价格回填仍应单独规划，避免污染 active bulk backfill。
 
 最小设计：
 
@@ -252,7 +252,7 @@ SEC Regulation NMS 建立了 order protection、access、sub-penny、market-data
 - UTP Plan 负责 Nasdaq-listed Tape C securities 的 quotation and transaction information。
 - SIP 计算并传播 NBBO、LULD price bands、short sale restriction、regulatory halt 等信息。
 
-如果未来从日频升级到 intraday/TAQ，建议不要从 `daily_price` 硬扩，而是新增：
+如果未来从日频升级到 intraday/TAQ，建议不要从 split daily price tables 硬扩，而是新增：
 
 | 表 | 粒度 | 主键建议 |
 | --- | --- | --- |
@@ -262,7 +262,7 @@ SEC Regulation NMS 建立了 order protection、access、sub-penny、market-data
 | `market_data_condition_code` | sale/quote condition 维表 | code + source |
 | `daily_bar_source_audit` | daily bar 从哪些规则聚合 | instrument_id + trade_date + source |
 
-日频阶段也应在 `daily_price.source` 或后续 audit 表中说明：EODHD bars 是 vendor EOD，不是本系统从 TAQ 重算的 official consolidated bars。
+日频阶段也应在 split daily price tables 的 `source` 或后续 audit 表中说明：EODHD bars 是 vendor EOD，不是本系统从 TAQ 重算的 official consolidated bars。
 
 ### 4.10 Price increments、round lots、odd lots
 
@@ -327,7 +327,7 @@ flowchart LR
         Listing["listing_history"]
         Corp["corporate_action"]
         Factor["adjustment_factor"]
-        Daily["daily_price"]
+        Daily["stock_daily_price / etf_daily_price / index_daily_price"]
         Calendar["market_calendar"]
         Session["market_session"]
     end
@@ -368,7 +368,9 @@ erDiagram
     issuer ||--o{ instrument : issues
     instrument ||--o{ instrument_identifier_history : has
     instrument ||--o{ listing_history : listed_as
-    instrument ||--o{ daily_price : priced_by_day
+    instrument ||--o{ stock_daily_price : stock_priced_by_day
+    instrument ||--o{ etf_daily_price : etf_priced_by_day
+    instrument ||--o{ index_daily_price : index_priced_by_day
     instrument ||--o{ corporate_action : affected_by
     corporate_action ||--o{ adjustment_factor : produces
     instrument ||--o{ trading_halt_event : may_have
@@ -436,8 +438,34 @@ erDiagram
         string source
     }
 
-    daily_price {
-        bigint daily_price_id PK
+    stock_daily_price {
+        bigint stock_daily_price_id PK
+        bigint instrument_id FK
+        date trade_date
+        decimal open
+        decimal high
+        decimal low
+        decimal close
+        decimal adjusted_close
+        bigint volume
+        string source
+    }
+
+    etf_daily_price {
+        bigint etf_daily_price_id PK
+        bigint instrument_id FK
+        date trade_date
+        decimal open
+        decimal high
+        decimal low
+        decimal close
+        decimal adjusted_close
+        bigint volume
+        string source
+    }
+
+    index_daily_price {
+        bigint index_daily_price_id PK
         bigint instrument_id FK
         date trade_date
         decimal open
@@ -456,14 +484,14 @@ erDiagram
 
 | 优先级 | 变更 | 原因 | 是否现在做 |
 | --- | --- | --- | --- |
-| P0 | 保持 `instrument_id` + `daily_price(instrument_id, trade_date)` | 第一阶段 EODHD active universe 足够 | 是，当前已符合 |
+| P0 | 保持 `instrument_id` + split daily tables `(instrument_id, trade_date)` | 股票、ETF、指数分表后仍保持同一身份键 | 是，当前已符合 |
 | P0 | 保留 `provider_symbol` 和 `symbol` | EODHD 与标准 symbol 都需要 | 是，当前已符合 |
-| P1 | 增加 `instrument_identifier_history` | ticker/provider_symbol/CUSIP/ISIN 历史不可丢 | historical ingestion 稳定后做 |
-| P1 | 增加 `listing_history` | exchange/tier/tape/status 是时间变化属性 | delisted 模块前做 |
+| P1 | 增加 `instrument_identifier_history` | ticker/provider_symbol/CUSIP/ISIN 历史不可丢 | 已完成 ticker/provider_symbol 基础版 |
+| P1 | 增加 `listing_history` | exchange/tier/tape/status 是时间变化属性 | point-in-time universe 前做 |
 | P1 | 增加 `corporate_action` | adjusted price 需要可解释来源 | split/dividend ingestion 时做 |
 | P1 | 增加 `adjustment_factor` | 生成 adjusted OHLC/returns，不覆盖 raw | corporate action 后做 |
 | P2 | 增加 `issuer` | 多 share class、CIK、fund issuer 需要 | delisted/issuer mapping 时做 |
-| P2 | 增加 `delisting_event` | 防 survivorship bias | 扩 active-only 范围时做 |
+| P2 | 增加/完善 `instrument_lifecycle_event` 与 delist-date source | 防 survivorship bias | 已有 EODHD universe，日期源待补 |
 | P2 | 增加 `market_session` | pre/core/after-hours/early close | calendar 质量检查增强时做 |
 | P3 | Intraday trade/quote schema | 只有做 TAQ/微观结构研究才需要 | 暂不做 |
 
@@ -485,16 +513,16 @@ erDiagram
 
 ## 9. 实施路线
 
-1. 完成当前 `fdp ingest history` 小范围路径：AAPL/MSFT/SPY 等，确保 raw OHLCV、adjusted_close、upsert、task/API log、invalid row rejection 都稳定。
-2. 建立 `market_calendar` 数据源和 validator：先覆盖 core trading day、holiday、early close。
-3. 在不扩大 universe 的前提下新增 `instrument_identifier_history` 和 `listing_history` migration：把当前 `instrument` 的 symbol/provider/exchange 复制成第一段 history。
+1. 先修正 live DB migration version 链，避免下一次 schema release 被旧 `0022_quarantine` stamp 卡住。
+2. 决定 delisted date source：EODHD Fundamentals/Corporate Actions、Nasdaq/FINRA Daily List，或人工 enrichment。
+3. 建 point-in-time universe / universe membership，把 active-only 回测和 survivor-bias-aware 回测分开。
 4. 接 EODHD split/dividend 或 bulk split/dividend：新增 `corporate_action`，但不要重算覆盖现有 raw price。
-5. 再做 delisted/inactive universe：先设计 event 和 identifier lineage，再扩大 ingestion，否则会污染 active-only 假设。
-6. 最后才考虑 intraday/TAQ：按 trade/quote/condition/venue/tape 分层，不挤进 `daily_price`。
+5. 扩展 delisted/inactive 历史价格回填：已有 universe/lifecycle 基础后，再按预算和研究需求分批拉取 inactive symbols。
+6. 最后才考虑 intraday/TAQ：按 trade/quote/condition/venue/tape 分层，不挤进 split daily price tables。
 
 ## 10. 结论
 
-本项目当前第一阶段 schema 是合理的最小起点：`instrument` + `daily_price` + `market_calendar` + `system` audit/quality/repair。美股特殊性要求后续不要沿用 A 股“代码近似永久身份”的思维，而要采用 CRSP 风格的永久 security id、company id、identifier history、listing history 和 corporate action event 模型。
+本项目当前第一阶段 schema 是合理的最小起点：`instrument` + split daily price tables + `market_calendar` + `system` audit/quality/repair。美股特殊性要求后续不要沿用 A 股“代码近似永久身份”的思维，而要采用 CRSP 风格的永久 security id、company id、identifier history、listing/lifecycle history 和 corporate action event 模型。
 
 最重要的工程原则：
 

@@ -1,7 +1,6 @@
 from fdp.storage import (
     SYSTEM_SCHEMA,
     US_SHARE_SCHEMA,
-    daily_price,
     data_quality_issue,
     etf_daily_price,
     etf_instrument,
@@ -9,6 +8,7 @@ from fdp.storage import (
     index_instrument,
     instrument,
     instrument_identifier_history,
+    instrument_lifecycle_event,
     market_calendar,
     metadata,
     quarantine_plan,
@@ -24,7 +24,7 @@ def test_initial_metadata_contains_project_tables() -> None:
     assert f"{US_SHARE_SCHEMA}.etf_instrument" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.index_instrument" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.instrument_identifier_history" in metadata.tables
-    assert f"{US_SHARE_SCHEMA}.daily_price" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.instrument_lifecycle_event" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.stock_daily_price" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.etf_daily_price" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.index_daily_price" in metadata.tables
@@ -41,14 +41,6 @@ def test_instrument_keeps_standard_and_provider_symbols() -> None:
     assert "provider_symbol" in instrument.c
     assert {"provider", "provider_symbol"} in [
         set(constraint.columns.keys()) for constraint in instrument.constraints
-    ]
-
-
-def test_daily_price_has_instrument_date_uniqueness() -> None:
-    assert "symbol" in daily_price.c
-    assert "provider_symbol" in daily_price.c
-    assert {"instrument_id", "trade_date"} in [
-        set(constraint.columns.keys()) for constraint in daily_price.constraints
     ]
 
 
@@ -84,6 +76,26 @@ def test_identifier_history_supports_symbol_and_provider_symbol_history() -> Non
     assert expected_columns.issubset(instrument_identifier_history.c.keys())
     assert {"instrument_id", "id_type", "id_value", "valid_from", "source"} in [
         set(constraint.columns.keys()) for constraint in instrument_identifier_history.constraints
+    ]
+
+
+def test_lifecycle_event_records_instrument_state_changes() -> None:
+    expected_columns = {
+        "lifecycle_event_id",
+        "instrument_id",
+        "event_type",
+        "event_date",
+        "symbol",
+        "provider_symbol",
+        "source",
+        "event_key",
+        "details",
+        "created_at",
+        "updated_at",
+    }
+    assert expected_columns == set(instrument_lifecycle_event.c.keys())
+    assert {"source", "event_key"} in [
+        set(constraint.columns.keys()) for constraint in instrument_lifecycle_event.constraints
     ]
 
 

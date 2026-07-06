@@ -59,6 +59,17 @@ Execute with bounded per-day parallelism after reviewing the estimate:
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --execute --yes --parallel --workers 4
 ```
 
+Load delisted/inactive stock+ETF universe, then optionally smoke test a small inactive symbol:
+
+```bash
+poetry run j21 ingest delisted-instruments --market US
+poetry run j21 ingest history --symbols TWTR.US --from 2022-10-20 --to 2022-10-28 --include-inactive
+```
+
+The EODHD delisted symbol list marks inactive symbols but does not currently include a
+delisting date field, so `instrument.delisted_date` may stay `NULL` until another source
+or manual enrichment supplies the date.
+
 Create and review missing daily-price repair plans:
 
 ```bash

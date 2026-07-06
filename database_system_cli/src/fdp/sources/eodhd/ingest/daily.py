@@ -43,6 +43,7 @@ def load_historical_daily_prices(
     date_from: date,
     date_to: date,
     market: str = "US",
+    include_inactive: bool = False,
 ) -> HistoricalDailyPriceLoadResult:
     """Load historical daily EOD prices for an explicit stock/ETF symbol list.
 
@@ -58,6 +59,7 @@ def load_historical_daily_prices(
         date_to=date_to,
         market=market,
         asset_types=["stock", "etf"],
+        include_inactive=include_inactive,
         job_name="eodhd_historical_daily_price",
         target_table="stock_daily_price,etf_daily_price",
     )
@@ -71,6 +73,7 @@ def load_stock_daily_prices(
     date_from: date,
     date_to: date,
     market: str = "US",
+    include_inactive: bool = False,
 ) -> HistoricalDailyPriceLoadResult:
     """Load historical daily EOD prices for stock symbols only.
 
@@ -86,6 +89,7 @@ def load_stock_daily_prices(
         date_to=date_to,
         market=market,
         asset_types=["stock"],
+        include_inactive=include_inactive,
         job_name="eodhd_stock_daily_price",
         target_table="stock_daily_price",
     )
@@ -99,6 +103,7 @@ def load_etf_daily_prices(
     date_from: date,
     date_to: date,
     market: str = "US",
+    include_inactive: bool = False,
 ) -> HistoricalDailyPriceLoadResult:
     """Load historical daily EOD prices for ETF symbols only.
 
@@ -114,6 +119,7 @@ def load_etf_daily_prices(
         date_to=date_to,
         market=market,
         asset_types=["etf"],
+        include_inactive=include_inactive,
         job_name="eodhd_etf_daily_price",
         target_table="etf_daily_price",
     )
@@ -332,6 +338,7 @@ def _load_symbol_daily_prices(
     date_to: date,
     market: str,
     asset_types: list[str],
+    include_inactive: bool,
     job_name: str,
     target_table: str,
 ) -> HistoricalDailyPriceLoadResult:
@@ -354,9 +361,13 @@ def _load_symbol_daily_prices(
         symbols=normalized_symbols,
         market=market,
         asset_types=asset_types,
+        include_inactive=include_inactive,
     )
-    found_symbols = {row["symbol"] for row in instruments}
-    missing_symbols = [symbol for symbol in normalized_symbols if symbol not in found_symbols]
+    found_identifiers: set[str] = set()
+    for row in instruments:
+        found_identifiers.add(str(row["symbol"]).upper())
+        found_identifiers.add(str(row["provider_symbol"]).upper())
+    missing_symbols = [symbol for symbol in normalized_symbols if symbol not in found_identifiers]
 
     return _load_daily_prices_for_instruments(
         connection,

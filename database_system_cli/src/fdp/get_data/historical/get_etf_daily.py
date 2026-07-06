@@ -16,6 +16,7 @@ def get_etf_daily(
     date_from: date,
     date_to: date,
     market: str = "US",
+    include_inactive: bool = False,
 ) -> HistoricalDailyPriceLoadResult:
     """Load ETF daily bars through the historical daily price ingest service.
 
@@ -30,4 +31,5 @@ def get_etf_daily(
         date_from=date_from,
         date_to=date_to,
         market=market,
+        include_inactive=include_inactive,
     )
