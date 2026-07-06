@@ -21,6 +21,7 @@ pytest = ">=8.0"
 ruff = ">=0.5"
 
 [tool.poetry.scripts]
+j21 = "fdp.cli:app"
 fdp = "fdp.cli:app"
 
 [build-system]

@@ -2,9 +2,13 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from sqlalchemy.dialects import mysql
+
 from fdp.sources.eodhd.client import EodhdApiResponse
 from fdp.sources.eodhd.ingestion import (
+    SYMBOL_CHANGE_HISTORY_START,
     load_bulk_daily_prices,
+    load_daily_prices_for_instrument_ids,
     load_index_daily_prices,
     load_exchange_symbols,
     load_historical_daily_prices,
@@ -59,7 +63,7 @@ class FakeConnection:
 
 class FakeClient:
     def get_symbol_change_history(self, from_date: date) -> EodhdApiResponse:
-        assert from_date == date(2022, 7, 22)
+        assert from_date == date(2022, 1, 1)
         return EodhdApiResponse(
             endpoint="/symbol-change-history",
             status_code=200,
@@ -195,9 +199,9 @@ def test_load_exchange_symbols_fails_when_symbol_change_history_fails() -> None:
 
 
 class FakeReconcileConnection:
-    def __init__(self) -> None:
+    def __init__(self, select_rows: list[dict[str, Any] | None] | None = None) -> None:
         self.statements: list[Any] = []
-        self.select_rows = [{"instrument_id": 42}, None]
+        self.select_rows = [{"instrument_id": 42}, None] if select_rows is None else select_rows
 
     def execute(self, statement):
         self.statements.append(statement)
@@ -207,9 +211,8 @@ class FakeReconcileConnection:
         return FakeResult()
 
 
-def test_reconcile_symbol_changes_updates_existing_old_provider_symbol() -> None:
-    connection = FakeReconcileConnection()
-    symbol_change = SymbolChange(
+def _meta_symbol_change() -> SymbolChange:
+    return SymbolChange(
         exchange="US",
         old_symbol="FB",
         new_symbol="META",
@@ -219,12 +222,136 @@ def test_reconcile_symbol_changes_updates_existing_old_provider_symbol() -> None
         effective=date(2022, 6, 9),
     )
 
-    reconciled = reconcile_symbol_changes(connection, [symbol_change])
+
+def _identifier_history_statement(connection: FakeReconcileConnection):
+    return next(
+        statement
+        for statement in connection.statements
+        if getattr(statement, "table", None) is instrument_identifier_history
+        and getattr(statement, "is_insert", False)
+    )
+
+
+def _identifier_history_delete_statement(connection: FakeReconcileConnection):
+    return next(
+        statement
+        for statement in connection.statements
+        if getattr(statement, "table", None) is instrument_identifier_history
+        and getattr(statement, "is_delete", False)
+    )
+
+
+def _identifier_history_instrument_ids(statement) -> set[int]:
+    params = statement.compile(dialect=mysql.dialect()).params
+    return {
+        value
+        for key, value in params.items()
+        if key.startswith("instrument_id")
+    }
+
+
+def _identifier_history_id_values(statement) -> set[str]:
+    params = statement.compile(dialect=mysql.dialect()).params
+    return {
+        value
+        for key, value in params.items()
+        if key.startswith("id_value")
+    }
+
+
+def _identifier_history_valid_to_values(statement) -> set[date]:
+    params = statement.compile(dialect=mysql.dialect()).params
+    return {
+        value
+        for key, value in params.items()
+        if key.startswith("valid_to")
+    }
+
+
+def test_symbol_change_history_default_includes_fb_meta_event() -> None:
+    assert SYMBOL_CHANGE_HISTORY_START <= date(2022, 6, 9)
+
+
+def test_reconcile_symbol_changes_updates_existing_old_provider_symbol() -> None:
+    connection = FakeReconcileConnection()
+
+    reconciled = reconcile_symbol_changes(connection, [_meta_symbol_change()])
 
     assert reconciled == 1
     statement_tables = [getattr(statement, "table", None) for statement in connection.statements]
     assert instrument in statement_tables
     assert instrument_identifier_history in statement_tables
+
+
+def test_reconcile_symbol_changes_updates_when_new_provider_is_same_instrument() -> None:
+    connection = FakeReconcileConnection(
+        [
+            {"instrument_id": 42},
+            {"instrument_id": 42},
+        ]
+    )
+
+    reconciled = reconcile_symbol_changes(connection, [_meta_symbol_change()])
+
+    assert reconciled == 1
+    statement_tables = [getattr(statement, "table", None) for statement in connection.statements]
+    assert statement_tables == [
+        None,
+        None,
+        instrument,
+        instrument_identifier_history,
+        instrument_identifier_history,
+    ]
+
+
+def test_reconcile_symbol_changes_appends_history_when_old_ticker_is_reused() -> None:
+    connection = FakeReconcileConnection(
+        [
+            {"instrument_id": 10},
+            {"instrument_id": 20},
+        ]
+    )
+
+    reconciled = reconcile_symbol_changes(connection, [_meta_symbol_change()])
+
+    assert reconciled == 0
+    statement_tables = [getattr(statement, "table", None) for statement in connection.statements]
+    assert statement_tables == [
+        None,
+        None,
+        instrument_identifier_history,
+        instrument_identifier_history,
+    ]
+    assert instrument not in statement_tables
+    delete_statement = _identifier_history_delete_statement(connection)
+    assert _identifier_history_valid_to_values(delete_statement) == {date(2022, 6, 8)}
+    history_statement = _identifier_history_statement(connection)
+    assert _identifier_history_instrument_ids(history_statement) == {20}
+    assert _identifier_history_id_values(history_statement) == {"FB", "FB.US", "META", "META.US"}
+
+
+def test_reconcile_symbol_changes_appends_history_when_database_was_built_after_rename() -> None:
+    connection = FakeReconcileConnection(
+        [
+            None,
+            {"instrument_id": 20},
+        ]
+    )
+
+    reconciled = reconcile_symbol_changes(connection, [_meta_symbol_change()])
+
+    assert reconciled == 0
+    statement_tables = [getattr(statement, "table", None) for statement in connection.statements]
+    assert statement_tables == [
+        None,
+        None,
+        instrument_identifier_history,
+        instrument_identifier_history,
+    ]
+    assert instrument not in statement_tables
+    history_statement = _identifier_history_statement(connection)
+    assert _identifier_history_instrument_ids(history_statement) == {20}
+    assert _identifier_history_id_values(history_statement) == {"FB", "FB.US", "META", "META.US"}
 
 
 class FakeHistoryMappings:
@@ -419,6 +546,35 @@ def test_load_historical_daily_prices_upserts_valid_rows() -> None:
         symbols=["AAPL"],
         date_from=date(2023, 1, 1),
         date_to=date(2024, 1, 1),
+    )
+
+    assert result.status == "success"
+    assert result.run_id == 456
+    assert result.symbols_loaded == 1
+    assert result.rows_fetched == 1
+    assert result.rows_inserted == 1
+    assert result.rows_rejected == 0
+    statement_tables = [getattr(statement, "table", None) for statement in connection.statements]
+    assert statement_tables == [
+        ingestion_task_run,
+        None,
+        api_call_log,
+        stock_daily_price,
+        ingestion_task_run,
+    ]
+
+
+def test_load_daily_prices_for_instrument_ids_upserts_valid_rows() -> None:
+    connection = FakeHistoryConnection()
+
+    result = load_daily_prices_for_instrument_ids(
+        connection,
+        FakeHistoryClient(),
+        instrument_ids=[1],
+        date_from=date(2023, 1, 1),
+        date_to=date(2024, 1, 1),
+        asset_types=["stock"],
+        target_table="stock_daily_price",
     )
 
     assert result.status == "success"

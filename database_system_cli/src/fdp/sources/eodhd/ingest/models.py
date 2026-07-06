@@ -6,7 +6,7 @@ from datetime import date
 from fdp.sources.eodhd.instruments import RejectedInstrumentRow
 from fdp.sources.eodhd.prices import RejectedDailyPriceRow
 
-SYMBOL_CHANGE_HISTORY_START = date(2022, 7, 22)
+SYMBOL_CHANGE_HISTORY_START = date(2022, 1, 1)
 SYMBOL_CHANGE_HISTORY_SOURCE = "EODHD_SYMBOL_CHANGE_HISTORY"
 DEFAULT_INDEX_PROVIDER_SYMBOLS = ("GSPC.INDX", "DJI.INDX", "IXIC.INDX", "NDX.INDX")
 DEFAULT_INDEX_NAMES = {

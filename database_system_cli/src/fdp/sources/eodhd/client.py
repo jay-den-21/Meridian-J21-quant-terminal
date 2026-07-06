@@ -15,6 +15,7 @@ from fdp.sources.eodhd.retry import (
     DEFAULT_RETRY_DELAY_SECONDS,
     EodhdApiEvent,
     EodhdProgressCallback,
+    EodhdRequestRateLimiter,
     should_retry,
 )
 
@@ -59,6 +60,7 @@ class EodhdClient:
         timeout_seconds: int = 30,
         transport: Transport = urlopen,
         sleeper: Sleeper = sleep,
+        rate_limiter: EodhdRequestRateLimiter | None = None,
         progress_callback: EodhdProgressCallback | None = None,
     ) -> None:
         """Store EODHD connection settings.
@@ -76,6 +78,7 @@ class EodhdClient:
         self.timeout_seconds = timeout_seconds
         self.transport = transport
         self.sleeper = sleeper
+        self.rate_limiter = rate_limiter
         self.progress_callback = progress_callback
 
     def get_exchange_symbols(self, market: str) -> EodhdApiResponse:
@@ -306,6 +309,8 @@ class EodhdClient:
 
         for attempt in range(max_attempts):
             retry_count = attempt
+            if self.rate_limiter is not None:
+                self.rate_limiter.wait()
             self._emit_progress(
                 EodhdApiEvent(
                     kind="request",

@@ -481,3 +481,74 @@ repair_plan = Table(
     Index("ix_repair_plan_status", "status"),
     schema=SYSTEM_SCHEMA,
 )
+
+# system.quarantine_plan example row:
+# - quarantine_plan_id: 8001
+# - issue_id: 9002
+# - action_type: "quarantine_daily_price_row"
+# - target_table: "stock_daily_price"
+# - status: "pending_confirmation"
+quarantine_plan = Table(
+    "quarantine_plan",
+    metadata,
+    Column("quarantine_plan_id", BigInteger, primary_key=True, autoincrement=True),
+    Column(
+        "issue_id",
+        BigInteger,
+        ForeignKey(f"{SYSTEM_SCHEMA}.data_quality_issue.issue_id"),
+        nullable=False,
+    ),
+    Column("market", String(16), nullable=False),
+    Column("action_type", String(64), nullable=False),
+    Column("target_schema", String(64), nullable=False),
+    Column("target_table", String(64), nullable=False),
+    Column("instrument_id", BigInteger),
+    Column("symbol", String(64)),
+    Column("provider_symbol", String(128)),
+    Column("date_from", Date, nullable=False),
+    Column("date_to", Date, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column("confirmed_at", DateTime),
+    Column("executed_at", DateTime),
+    Column("row_count", BigInteger, nullable=False, server_default="0"),
+    Column("result_message", Text),
+    UniqueConstraint("issue_id", "action_type", name="uq_quarantine_plan_issue_action"),
+    Index("ix_quarantine_plan_status", "status"),
+    schema=SYSTEM_SCHEMA,
+)
+
+# system.quarantined_daily_price_row preserves source row payloads before destructive cleanup.
+quarantined_daily_price_row = Table(
+    "quarantined_daily_price_row",
+    metadata,
+    Column("quarantined_row_id", BigInteger, primary_key=True, autoincrement=True),
+    Column(
+        "quarantine_plan_id",
+        BigInteger,
+        ForeignKey(f"{SYSTEM_SCHEMA}.quarantine_plan.quarantine_plan_id"),
+        nullable=False,
+    ),
+    Column(
+        "issue_id",
+        BigInteger,
+        ForeignKey(f"{SYSTEM_SCHEMA}.data_quality_issue.issue_id"),
+        nullable=False,
+    ),
+    Column("market", String(16), nullable=False),
+    Column("target_schema", String(64), nullable=False),
+    Column("target_table", String(64), nullable=False),
+    Column("source_primary_key", BigInteger, nullable=False),
+    Column("instrument_id", BigInteger),
+    Column("symbol", String(64)),
+    Column("provider_symbol", String(128)),
+    Column("trade_date", Date),
+    Column("action_type", String(64), nullable=False),
+    Column("quarantine_reason", String(128), nullable=False),
+    Column("row_payload", Text, nullable=False),
+    Column("row_hash", String(64), nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Index("ix_quarantined_daily_price_row_plan", "quarantine_plan_id"),
+    Index("ix_quarantined_daily_price_row_source", "target_table", "instrument_id", "trade_date"),
+    schema=SYSTEM_SCHEMA,
+)

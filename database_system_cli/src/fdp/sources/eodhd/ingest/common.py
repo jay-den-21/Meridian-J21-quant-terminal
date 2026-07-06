@@ -266,6 +266,39 @@ def load_active_instruments_by_provider_symbols(
     ]
 
 
+def load_active_instruments_by_ids(
+    connection: Connection,
+    *,
+    instrument_ids: list[int],
+    market: str,
+    asset_types: list[str] | None = None,
+) -> list[dict[str, object]]:
+    """Fetch active EODHD instruments by immutable database ids."""
+    if not instrument_ids:
+        return []
+    unique_ids = list(dict.fromkeys(instrument_ids))
+    conditions = [
+        instrument.c.instrument_id.in_(unique_ids),
+        instrument.c.market == market,
+        instrument.c.provider == "EODHD",
+        instrument.c.is_active.is_(True),
+    ]
+    if asset_types:
+        conditions.append(instrument.c.asset_type.in_(asset_types))
+
+    result = connection.execute(
+        select(
+            instrument.c.instrument_id,
+            instrument.c.symbol,
+            instrument.c.provider_symbol,
+            instrument.c.asset_type,
+            instrument.c.currency,
+        ).where(*conditions)
+    )
+    rows_by_id = {int(row["instrument_id"]): dict(row) for row in result.mappings()}
+    return [rows_by_id[instrument_id] for instrument_id in unique_ids if instrument_id in rows_by_id]
+
+
 def load_active_instruments_for_market(
     connection: Connection,
     *,

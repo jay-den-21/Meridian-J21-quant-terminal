@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.engine import Connection
 
 from fdp.sources.eodhd.client import EodhdClient
@@ -22,7 +22,7 @@ from fdp.sources.eodhd.instruments import (
     parse_exchange_symbol_rows,
     parse_symbol_change_history_rows,
 )
-from fdp.storage.tables import instrument
+from fdp.storage.tables import instrument, instrument_identifier_history
 from fdp.storage.upsert import build_identifier_history_upsert, build_instrument_upsert
 
 
@@ -136,45 +136,72 @@ def reconcile_symbol_changes(connection: Connection, symbol_changes: list[Symbol
 
     Input: parsed `SymbolChange` rows from EODHD symbol-change-history.
     Output: count of instruments whose current symbol/provider_symbol were updated.
-    Flow: old provider_symbol lookup -> conflict check -> instrument update -> history upsert.
+    Flow: old/new provider_symbol lookup -> safe current update or append-only history upsert.
     """
     reconciled = 0
     for symbol_change in symbol_changes:
-        existing_old = connection.execute(
-            select(instrument.c.instrument_id).where(
-                instrument.c.provider == "EODHD",
-                instrument.c.provider_symbol == symbol_change.old_provider_symbol,
-            )
-        ).mappings().first()
-        if existing_old is None:
-            continue
+        existing_old = _find_eodhd_instrument_id(connection, symbol_change.old_provider_symbol)
+        existing_new = _find_eodhd_instrument_id(connection, symbol_change.new_provider_symbol)
 
-        instrument_id = existing_old["instrument_id"]
-        existing_new = connection.execute(
-            select(instrument.c.instrument_id).where(
-                instrument.c.provider == "EODHD",
-                instrument.c.provider_symbol == symbol_change.new_provider_symbol,
-            )
-        ).mappings().first()
-        if existing_new is not None and existing_new["instrument_id"] != instrument_id:
-            continue
-
-        update_values = {
-            "symbol": symbol_change.new_symbol,
-            "provider_symbol": symbol_change.new_provider_symbol,
-        }
-        if symbol_change.company_name:
-            update_values["name"] = symbol_change.company_name
-
-        connection.execute(
-            update(instrument)
-            .where(instrument.c.instrument_id == instrument_id)
-            .values(**update_values)
+        should_update_current = existing_old is not None and (
+            existing_new is None or existing_new["instrument_id"] == existing_old["instrument_id"]
         )
-        connection.execute(build_identifier_history_upsert(_identifier_history_rows(instrument_id, symbol_change)))
-        reconciled += 1
+        if should_update_current:
+            instrument_id = existing_old["instrument_id"]
+            update_values = {
+                "symbol": symbol_change.new_symbol,
+                "provider_symbol": symbol_change.new_provider_symbol,
+            }
+            if symbol_change.company_name:
+                update_values["name"] = symbol_change.company_name
+
+            connection.execute(
+                update(instrument)
+                .where(instrument.c.instrument_id == instrument_id)
+                .values(**update_values)
+            )
+            reconciled += 1
+        elif existing_new is not None:
+            instrument_id = existing_new["instrument_id"]
+        else:
+            continue
+
+        history_rows = _identifier_history_rows(instrument_id, symbol_change)
+        _delete_null_start_identifier_history_rows(connection, history_rows)
+        connection.execute(build_identifier_history_upsert(history_rows))
 
     return reconciled
+
+
+def _find_eodhd_instrument_id(connection: Connection, provider_symbol: str):
+    return connection.execute(
+        select(instrument.c.instrument_id).where(
+            instrument.c.provider == "EODHD",
+            instrument.c.provider_symbol == provider_symbol,
+        )
+    ).mappings().first()
+
+
+def _delete_null_start_identifier_history_rows(
+    connection: Connection,
+    history_rows: list[dict[str, object]],
+) -> None:
+    nullable_start_rows = [row for row in history_rows if row["valid_from"] is None]
+    if not nullable_start_rows:
+        return
+
+    predicates = [
+        (
+            (instrument_identifier_history.c.instrument_id == row["instrument_id"])
+            & (instrument_identifier_history.c.id_type == row["id_type"])
+            & (instrument_identifier_history.c.id_value == row["id_value"])
+            & instrument_identifier_history.c.valid_from.is_(None)
+            & (instrument_identifier_history.c.valid_to == row["valid_to"])
+            & (instrument_identifier_history.c.source == row["source"])
+        )
+        for row in nullable_start_rows
+    ]
+    connection.execute(delete(instrument_identifier_history).where(or_(*predicates)))
 
 
 def _identifier_history_rows(instrument_id: int, symbol_change: SymbolChange) -> list[dict[str, object]]:

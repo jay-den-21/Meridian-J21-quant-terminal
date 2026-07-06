@@ -4,6 +4,11 @@ from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
 
 from fdp.sources.eodhd.client import EodhdClient
+from fdp.sources.eodhd.retry import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_DELAY_SECONDS,
+    EodhdRequestRateLimiter,
+)
 
 
 class FakeResponse:
@@ -220,3 +225,53 @@ def test_eodhd_client_retries_transient_failures_with_progress() -> None:
     assert [event.kind for event in events] == ["request", "retry", "request", "success"]
     assert events[1].endpoint == "/exchange-symbol-list/US"
     assert "temporary disconnect" in events[1].error_message
+
+
+def test_eodhd_client_default_retry_policy_matches_runtime_default() -> None:
+    client = EodhdClient(api_key="test-token", transport=lambda request, timeout: None)
+
+    assert client.max_retries == DEFAULT_MAX_RETRIES == 5
+    assert client.retry_delay_seconds == DEFAULT_RETRY_DELAY_SECONDS == 61
+
+
+def test_request_rate_limiter_spaces_request_starts() -> None:
+    now = [0.0]
+    sleeps: list[float] = []
+
+    def sleeper(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    limiter = EodhdRequestRateLimiter(
+        600,
+        sleeper=sleeper,
+        clock=lambda: now[0],
+    )
+
+    limiter.wait()
+    limiter.wait()
+
+    assert sleeps == [0.1]
+
+
+def test_eodhd_client_waits_on_rate_limiter_before_request() -> None:
+    events: list[str] = []
+
+    class FakeLimiter:
+        def wait(self) -> None:
+            events.append("wait")
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        events.append("request")
+        return FakeResponse([{"Code": "AAPL", "Type": "Common Stock"}])
+
+    client = EodhdClient(
+        api_key="test-token",
+        transport=fake_transport,
+        rate_limiter=FakeLimiter(),
+    )
+
+    response = client.get_exchange_symbols("US")
+
+    assert response.success is True
+    assert events == ["wait", "request"]

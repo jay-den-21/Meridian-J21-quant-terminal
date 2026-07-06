@@ -22,4 +22,11 @@ sources:
   eodhd:
     api_key: ${EODHD_API_KEY}
     base_url: https://eodhd.com/api
-    max_retries: 3
+    max_retries: 5
+    retry_delay_seconds: 61
+    # EODHD documents 1000 requests/minute. Keep the default below the hard ceiling.
+    max_requests_per_minute: 600
+    daily_call_budget: 100000
+    daily_range_parallel:
+      enabled: false
+      max_workers: 4

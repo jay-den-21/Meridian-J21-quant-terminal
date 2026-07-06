@@ -78,6 +78,7 @@ financial-data-platform/
     alembic/
       versions/
     docs/
+      architecture.md
     src/
       fdp/
         cli.py
@@ -98,7 +99,8 @@ financial-data-platform/
 - `quality/` 负责重复、缺失、OHLCV 合法性、空值等检查。
 - `repair/` 负责生成和执行人工确认后的 backfill plan。
 - `research/` 负责 Python/notebook/backtest 读取接口，例如 `DailyPriceReader.get_daily_prices(...)`。
-- `cli.py` 暴露 `fdp ingest`、`fdp validate`、`fdp repair`、`fdp research`。
+- `docs/architecture.md` 记录 Data Core / future Terminal 的边界，以及 MySQL daily 与 intraday Parquet bar store 的取舍。
+- `cli.py` 暴露 `j21 ingest`、`j21 validate`、`j21 repair`、`j21 research`；`fdp` 暂时保留为兼容 alias。
 
 ## 5. 数据模型
 
@@ -247,8 +249,8 @@ unique(instrument_id, trade_date)
 - stock 数据写 `stock_daily_price`。
 - ETF 数据写 `etf_daily_price`。
 - benchmark index 数据写 `index_daily_price`。
-- `fdp ingest history` 用于历史回填，按 provider symbol 逐个调用历史 EOD API。
-- `fdp ingest daily` 用于每日增量，调用 EODHD Bulk EOD API 后写入 stock/ETF split tables。
+- `j21 ingest history` 用于历史回填，按 provider symbol 逐个调用历史 EOD API。
+- `j21 ingest daily` 用于每日增量，调用 EODHD Bulk EOD API 后写入 stock/ETF split tables。
 
 读取层提供价格口径开关：
 
@@ -478,6 +480,16 @@ upsert into stock_daily_price / etf_daily_price by asset_type
 write task state and api call summary
 ```
 
+多日批量补数使用 `j21 ingest daily-range`。该命令默认只做 dry-run 估算，必须显式传入 `--execute --yes` 才会写库。写库时按交易日拆分，每个交易日独立 transaction；开启 `--parallel` 后只是并行处理多个交易日，不改变表结构和 upsert 语义。
+
+EODHD 限额规则：
+
+- paid plan 默认日 API-call budget 按 100000 控制。
+- EODHD 官方 request rate ceiling 按 1000 requests/minute 控制。
+- 本项目默认限速为 600 requests/minute，低于官方上限。
+- Bulk EOD 全 exchange 一次请求按 100 API calls 估算。
+- 超过 `--max-api-calls` 或 `--max-estimated-gb` 时，命令必须在读取 API key 和调用 EODHD 之前拒绝执行。
+
 ### 6.4 Validate quality
 
 质量检查不应该隐藏在 ingest 内部。`validate` 必须可以独立运行。
@@ -509,6 +521,9 @@ issue status is updated
 ```
 
 CLI 必须先列出将补哪些 `symbol/date range`，再要求人工输入确认。
+确认和执行时必须重新校验 linked issue 仍为 open，且当前 `instrument.provider_symbol` 与 plan preview 一致；执行前将 plan 从 `confirmed` claim 到 `executing`，避免同一 plan 被两个 operator 同时运行。同一 `target_table + instrument_id + trade_date` 的重复 open issue 只能生成一个 active repair plan；补数成功后，同一缺口的 open issue 一起标记 resolved。
+
+坏行或多余行不走 repair。`invalid_ohlcv`、`price_on_non_trading_day` 和 `duplicate_key` 这类已经存在于价格表里的问题行，必须先进入 `system.quarantine_plan`，人工确认时预览当前匹配源行，执行前 claim plan 并锁定源行，先写入 `system.quarantined_daily_price_row` 归档 payload/hash，再按源表主键删除源行。删除数量必须等于归档数量；删除后重新验证问题已消失，才能把 linked `data_quality_issue` 标记为 `resolved`。`duplicate_key` 的 action 是 `dedupe_daily_price_rows`，只自动处理 exact duplicate payload；如果重复组价格/volume/source payload 不一致，必须拒绝自动删除并转人工 review。如果 calendar 已变化导致 non-trading issue 变 stale，但源行仍存在，不允许静默 resolved，必须重新 validate 或人工处理。
 
 ### 6.6 Query access
 
@@ -530,7 +545,7 @@ get_daily_prices(symbols, start, end, adjusted=True)
 
 ## 7. CLI 语义
 
-命令入口建议为 `fdp`。
+命令入口建议为 `j21`。`fdp` 暂时保留为兼容 alias，避免旧笔记和脚本立刻失效。
 
 术语：
 
@@ -541,12 +556,20 @@ get_daily_prices(symbols, start, end, adjusted=True)
 示例命令：
 
 ```bash
-poetry run fdp ingest instruments --market US --source eodhd
-poetry run fdp ingest history --market US --years 20 --symbols AAPL,MSFT,SPY
-poetry run fdp ingest daily --market US --date 2026-05-20
-poetry run fdp validate daily-price --market US --from 2024-01-01 --to 2024-12-31
-poetry run fdp repair list --market US
-poetry run fdp repair run --plan-id 123
+poetry run j21 ingest instruments --market US --source eodhd
+poetry run j21 ingest history --market US --years 20 --symbols AAPL,MSFT,SPY
+poetry run j21 ingest daily --market US --date 2026-05-20
+poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --dry-run
+poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --execute --yes --parallel --workers 4
+poetry run j21 validate daily-price --market US --from 2024-01-01 --to 2024-12-31
+poetry run j21 repair plan-daily-price --market US --from 2024-01-01 --to 2024-12-31
+poetry run j21 quarantine plan-daily-price --market US --from 2024-01-01 --to 2024-12-31 --issue-types duplicate_key,invalid_ohlcv,price_on_non_trading_day
+poetry run j21 quarantine list --status pending_confirmation
+poetry run j21 quarantine confirm --plan-id 456 --yes
+poetry run j21 quarantine run --plan-id 456 --yes
+poetry run j21 repair list --market US
+poetry run j21 repair confirm --plan-id 123 --yes
+poetry run j21 repair run --plan-id 123 --yes
 ```
 
 ## 8. 错误处理原则
@@ -555,8 +578,9 @@ poetry run fdp repair run --plan-id 123
 
 允许：
 
-- 网络/API/数据库临时失败最多重试 3 次。
-- 重试间隔必须明确配置。
+- 网络/API/数据库临时失败最多重试 5 次。
+- EODHD 默认重试间隔为 61 秒，且必须明确配置。
+- EODHD retry 输出必须显示原始 status/error，并提示人工等待重试。
 - 每次失败写入日志和任务状态。
 
 禁止：
@@ -573,7 +597,7 @@ poetry run fdp repair run --plan-id 123
 
 ```text
 detect invalid row
-retry source call up to 3 times
+retry source call up to 5 times
 if still invalid:
   reject row
   write data_quality_issue

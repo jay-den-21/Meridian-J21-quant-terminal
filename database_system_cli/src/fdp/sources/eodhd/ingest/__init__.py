@@ -3,6 +3,7 @@
 from fdp.sources.eodhd.ingest.calendar import load_market_calendar
 from fdp.sources.eodhd.ingest.daily import (
     load_bulk_daily_prices,
+    load_daily_prices_for_instrument_ids,
     load_etf_daily_prices,
     load_historical_daily_prices,
     load_index_daily_prices,
@@ -31,6 +32,7 @@ __all__ = [
     "MarketCalendarLoadResult",
     "load_exchange_symbols",
     "load_bulk_daily_prices",
+    "load_daily_prices_for_instrument_ids",
     "load_etf_daily_prices",
     "load_historical_daily_prices",
     "load_index_daily_prices",

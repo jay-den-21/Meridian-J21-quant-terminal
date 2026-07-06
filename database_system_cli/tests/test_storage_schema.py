@@ -11,6 +11,8 @@ from fdp.storage import (
     instrument_identifier_history,
     market_calendar,
     metadata,
+    quarantine_plan,
+    quarantined_daily_price_row,
     stock_daily_price,
     stock_instrument,
 )
@@ -29,6 +31,8 @@ def test_initial_metadata_contains_project_tables() -> None:
     assert f"{US_SHARE_SCHEMA}.market_calendar" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.data_quality_issue" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.repair_plan" in metadata.tables
+    assert f"{SYSTEM_SCHEMA}.quarantine_plan" in metadata.tables
+    assert f"{SYSTEM_SCHEMA}.quarantined_daily_price_row" in metadata.tables
 
 
 def test_instrument_keeps_standard_and_provider_symbols() -> None:
@@ -109,3 +113,30 @@ def test_quality_issue_records_issue_identity_and_resolution_state() -> None:
         "resolved_at",
     }
     assert expected_columns.issubset(data_quality_issue.c.keys())
+
+
+def test_quarantine_tables_archive_daily_price_payloads() -> None:
+    assert {
+        "quarantine_plan_id",
+        "issue_id",
+        "action_type",
+        "target_schema",
+        "target_table",
+        "instrument_id",
+        "date_from",
+        "date_to",
+        "status",
+        "row_count",
+    }.issubset(quarantine_plan.c.keys())
+    assert {"issue_id", "action_type"} in [
+        set(constraint.columns.keys()) for constraint in quarantine_plan.constraints
+    ]
+    assert {
+        "quarantined_row_id",
+        "quarantine_plan_id",
+        "issue_id",
+        "source_primary_key",
+        "row_payload",
+        "row_hash",
+        "quarantine_reason",
+    }.issubset(quarantined_daily_price_row.c.keys())

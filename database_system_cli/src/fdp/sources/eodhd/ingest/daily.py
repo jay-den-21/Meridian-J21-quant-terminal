@@ -12,6 +12,7 @@ from fdp.sources.eodhd.ingest.common import (
     index_instrument_rows,
     load_active_instruments,
     load_active_instruments_for_market,
+    load_active_instruments_by_ids,
     load_active_instruments_by_provider_symbols,
     normalize_provider_symbols,
     normalize_symbols,
@@ -115,6 +116,59 @@ def load_etf_daily_prices(
         asset_types=["etf"],
         job_name="eodhd_etf_daily_price",
         target_table="etf_daily_price",
+    )
+
+
+def load_daily_prices_for_instrument_ids(
+    connection: Connection,
+    client: EodhdClient,
+    *,
+    instrument_ids: list[int],
+    date_from: date,
+    date_to: date,
+    market: str = "US",
+    asset_types: list[str] | None = None,
+    job_name: str = "eodhd_repair_daily_price",
+    target_table: str = "stock_daily_price,etf_daily_price,index_daily_price",
+) -> HistoricalDailyPriceLoadResult:
+    """Load historical daily prices for exact database instrument ids.
+
+    Input: immutable `instrument_id` values selected by a repair/quality workflow.
+    Output: `HistoricalDailyPriceLoadResult` with API, parse, and write counts.
+    Flow: instrument ids -> active EODHD instruments -> EOD API calls -> split-table upsert.
+    """
+    if not instrument_ids:
+        raise ValueError("instrument_ids must not be empty")
+    if date_to < date_from:
+        raise ValueError("date_to must be greater than or equal to date_from")
+
+    unique_ids = list(dict.fromkeys(int(instrument_id) for instrument_id in instrument_ids))
+    run_id = create_task_run(
+        connection,
+        market=market,
+        job_name=job_name,
+        target_table=target_table,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    instruments = load_active_instruments_by_ids(
+        connection,
+        instrument_ids=unique_ids,
+        market=market,
+        asset_types=asset_types,
+    )
+    found_ids = {int(row["instrument_id"]) for row in instruments}
+    missing_ids = [str(instrument_id) for instrument_id in unique_ids if instrument_id not in found_ids]
+
+    return _load_daily_prices_for_instruments(
+        connection,
+        client,
+        run_id=run_id,
+        instruments=instruments,
+        requested_count=len(unique_ids),
+        missing_symbols=missing_ids,
+        date_from=date_from,
+        date_to=date_to,
     )
 
 
