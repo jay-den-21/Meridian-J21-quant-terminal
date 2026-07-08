@@ -25,7 +25,9 @@ v0.5 把前端交互从“大块 endpoint 工作区”收敛为 single workspace
 
 v0.6 把 Stocks wizard 的候选加载从 EODHD API 改成 read-only MySQL pool browser。Pool browser 只读 `database_system_cli/.env` 中的 `FDP_DATABASE_URL` 或 `FDP_DB_*` 配置，并查询现有 `us_share.instrument`，不写数据库、不新增 schema、不消耗 EODHD API call。EODHD token 只用于 Execute API 和 Instrument Lookup。
 
-v1.1 加入本地 Mac 分发打包和个人网站下载页。`scripts/package_macos_app.sh` 会生成 `.app`、`.dmg`、`.pkg`，并把 DMG/PKG 复制到 `site/downloads/`，使 `site/index.html` 的下载按钮可直接下载本地构建产物。当前是 local developer distribution：可用于本机安装和个人测试，但公开分发仍需要 Apple Developer ID signing 和 notarization。
+v1.1 加入本地 Mac 分发打包和个人网站入口。`scripts/package_macos_app.sh` 会生成 `.app`、`.dmg`、`.pkg`，并把 DMG/PKG 复制到 `site/downloads/`，使 `site/index.html` 可以继续提供本地构建产物下载。当前是 local developer distribution：可用于本机安装和个人测试，但公开分发仍需要 Apple Developer ID signing 和 notarization。
+
+v1.2 将 `site/` 从单一下载页扩展为个人首页和 Meridian-J21 投研平台展示入口：访问 `site/index.html` 先进入 Jayden21 个人首页，点击 Meridian / current project 后通过 GSAP view transition 进入 Meridian landing，再点击 Enter Terminal 进入 terminal-style 投研工作台展示页。该静态站只做前端展示和本地下载链接，不调用 EODHD API，不读取 token，不写数据库。
 
 Wind 学习依据：
 
@@ -120,7 +122,7 @@ Wind 学习依据：
 - PyMySQL for MySQL connectivity
 - 原生 HTML / CSS / JavaScript
 - macOS `.app` wrapper + DMG/PKG build script
-- static personal website under `site/`
+- static personal website / Meridian showcase under `site/`
 - pytest 测试
 - ruff 静态检查
 
@@ -144,6 +146,7 @@ financial-data-platform/
     site/
       index.html
       styles.css
+      app.js
       PLAN.md
       assets/
         app-preview.svg
@@ -257,11 +260,19 @@ open "dist/EODHD-Code-Generator-1.0.0.dmg"
 - `site/downloads/EODHD-Code-Generator-1.0.0.pkg`
 - `site/downloads/SHA256SUMS.txt`
 
-个人网站下载页：
+静态个人站 / Meridian 展示入口：
 
 ```bash
 open site/index.html
 ```
+
+`site/index.html` 包含三个前端 view：
+
+- `#home`：Jayden21 个人首页和项目入口。
+- `#meridian`：Meridian-J21 投研平台 landing / launch 页面。
+- `#terminal`：terminal-style 投研工作台展示页，包含 strategy equity curve、watchlist、strategy queue、research notebook、exposure heatmap 和本地工具下载链接。
+
+`site/app.js` 通过 GSAP CDN 提供 Home -> Meridian -> Terminal 的 view transition、入场动画和轻量 ambient motion。动效只使用 `transform` / `opacity`，并尊重 `prefers-reduced-motion`；如果 GSAP 无法加载，页面会退化为即时切换，不影响内容访问。
 
 该 wrapper 会用随机本地端口绑定 `127.0.0.1` 并打开系统浏览器。生成的 `.app` 会复制 `database_app` 源码、文档和纯 Python 依赖到 bundle resources，移动 `.app` 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。目标机器需要 Python 3.11+，或用 `PYTHON_BIN` 指向兼容 Python。
 
@@ -480,4 +491,4 @@ P2:
 
 ## 15. 当前状态
 
-`database_app` 已实现 registry-driven 产品化版本，支持 14 个官方确认可用于 29.99 Extended 研究工作流的 endpoint，并保留 inventory-only 区分不在当前白名单内的 endpoint group。v0.6 已完成 read-only MySQL pool browser，Stocks wizard 的候选加载不再调用 EODHD API；Index Assets 明确为指数资产而非成分股，Sectors 在 taxonomy source 加入前禁用。v1.0 release 收口将当前本地工具作为独立子项目发布，并采用 Trellis 作为未来大任务执行层。`database_system_cli` schema 和源码未被修改，`database_app` 当前作为独立子项目存在。
+`database_app` 已实现 registry-driven 产品化版本，支持 14 个官方确认可用于 29.99 Extended 研究工作流的 endpoint，并保留 inventory-only 区分不在当前白名单内的 endpoint group。v0.6 已完成 read-only MySQL pool browser，Stocks wizard 的候选加载不再调用 EODHD API；Index Assets 明确为指数资产而非成分股，Sectors 在 taxonomy source 加入前禁用。v1.0 release 收口将当前本地工具作为独立子项目发布，并采用 Trellis 作为未来大任务执行层。v1.2 的 `site/` 静态页面已作为 Jayden21 个人首页、Meridian landing 和 terminal-style 投研平台展示入口存在，仍不调用后端 API 或读取 token。`database_system_cli` schema 和源码未被修改，`database_app` 当前作为独立子项目存在。
