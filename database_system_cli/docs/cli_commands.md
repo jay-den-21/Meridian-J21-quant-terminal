@@ -22,6 +22,9 @@ poetry run j21 ingest daily-range \
   --workers 4
 ```
 
+Large API-consuming `daily-range --execute --yes` runs default to user-operated CLI execution.
+Codex/AI should prepare the command and then verify database state after the user runs it.
+
 Relevant controls:
 
 - `--parallel/--sequential`: enable or disable bounded per-day parallel ingestion.
@@ -61,5 +64,45 @@ poetry run j21 ingest history \
   --symbols TWTR.US \
   --from 2022-10-20 \
   --to 2022-10-28 \
-  --include-inactive
+  --instrument-status inactive
 ```
+
+Compatibility note: `--include-inactive` is still accepted and means
+`--instrument-status all`. Use `inactive` when you only want delisted/inactive
+symbols and want to avoid spending API calls on active instruments.
+
+## Bulk Unmatched Workflow
+
+`j21 ingest daily` and `j21 ingest daily-range` first write matched stock/ETF
+rows into split daily price tables. Bulk EOD rows that cannot match the current
+instrument universe are stored in `system.bulk_unmatched_daily_price_observation`
+instead of being discarded.
+
+Inspect unmatched rows:
+
+```bash
+poetry run j21 research bulk-unmatched summary --from 2024-01-01 --to 2024-01-31
+poetry run j21 research bulk-unmatched list --from 2024-01-01 --to 2024-01-31 --status unresolved
+```
+
+Classify unresolved rows with strict provider-symbol matching:
+
+```bash
+poetry run j21 research bulk-unmatched classify --from 2024-01-01 --to 2024-01-31
+```
+
+Preview routeable high-confidence rows:
+
+```bash
+poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --dry-run
+```
+
+Execute only after reviewing the preview:
+
+```bash
+poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --execute --yes
+```
+
+Routing only writes rows that strictly matched an existing stock/ETF/index
+`instrument_id`. Fund, preferred, notes, and unknown rows remain in staging for
+later review or schema expansion.

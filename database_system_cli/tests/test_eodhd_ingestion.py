@@ -19,6 +19,7 @@ from fdp.sources.eodhd.ingestion import (
 from fdp.sources.eodhd.instruments import SymbolChange
 from fdp.storage.tables import (
     api_call_log,
+    bulk_unmatched_daily_price_observation,
     etf_daily_price,
     index_daily_price,
     ingestion_task_run,
@@ -658,6 +659,7 @@ def test_load_bulk_daily_prices_uses_one_api_call_and_split_table_upserts() -> N
         None,
         stock_daily_price,
         etf_daily_price,
+        bulk_unmatched_daily_price_observation,
         ingestion_task_run,
     ]
 
@@ -706,6 +708,23 @@ def test_load_historical_daily_prices_can_match_inactive_provider_symbol() -> No
     assert result.symbols_requested == 1
     assert result.rows_inserted == 1
     assert result.error_message is None
+
+
+def test_load_historical_daily_prices_can_match_only_inactive_provider_symbol() -> None:
+    connection = FakeInactiveHistoryConnection()
+
+    result = load_historical_daily_prices(
+        connection,
+        FakeInactiveHistoryClient(),
+        symbols=["OLD.US"],
+        date_from=date(2020, 1, 1),
+        date_to=date(2020, 1, 31),
+        instrument_status="inactive",
+    )
+
+    assert result.status == "success"
+    assert result.symbols_loaded == 1
+    assert result.rows_inserted == 1
 
 
 def test_load_daily_prices_for_instrument_ids_upserts_valid_rows() -> None:

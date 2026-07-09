@@ -79,6 +79,17 @@ Never commit local state or secrets:
 - `.trellis/workspace/`
 - caches, bytecode, generated build output
 
+## User-Operated Data Ingest
+
+For `database_system_cli/`, small smoke tests, diagnostics, dry-runs, and read-only
+database verification may be run by the agent. Large API-consuming ingest should
+default to user-operated CLI execution so the user keeps direct visibility and
+control over API budget. The agent should provide exact commands, date windows,
+estimated API cost, target tables, and expected output before the user runs them.
+After the user runs the command, the agent should verify database/log state and
+explain exactly what was checked. The agent may run large real ingest only after
+the user explicitly asks the agent to do so.
+
 ## Simple Workflow
 
 ```text

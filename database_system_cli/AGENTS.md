@@ -55,6 +55,14 @@ EODHD `provider_symbol` 必须保留，例如 `AAPL.US`。标准 `symbol` 也必
 - 缺失数据必须生成 repair/backfill plan。
 - repair 执行前必须通过 CLI 展示影响范围并要求人工确认。
 
+## 用户参与式数据拉取
+
+- 小规模 smoke test、诊断命令、dry-run、只读数据库验证可以由 AI agent 执行。
+- 大规模 API-consuming ingest 默认由用户亲自执行，例如长区间 `daily-range --execute --yes` 或高 API-call 预算任务。
+- AI agent 负责在用户执行前给出精确 CLI 命令、日期范围、API-call 预算、预期写入表和失败处理方式。
+- 用户执行后，AI agent 负责读取 CLI 输出、任务日志或数据库，说明具体验证了哪些表、哪些行数、哪些缺失/重复/异常。
+- 只有当用户明确说“你帮我跑”或同等授权时，AI agent 才能代跑大规模真实 ingest。
+
 ## 常用命令
 
 依赖安装：

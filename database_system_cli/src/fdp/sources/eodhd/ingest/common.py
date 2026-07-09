@@ -1,12 +1,15 @@
 """Common helpers for EODHD ingest workflows."""
 
 from datetime import UTC, date, datetime
+from typing import Literal
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.engine import Connection
 
 from fdp.sources.eodhd.ingest.models import DEFAULT_INDEX_NAMES
 from fdp.storage.tables import api_call_log, ingestion_task_run, instrument
+
+InstrumentStatus = Literal["active", "inactive", "all"]
 
 
 def create_task_run(
@@ -207,10 +210,15 @@ def load_active_instruments(
     market: str,
     asset_types: list[str] | None = None,
     include_inactive: bool = False,
+    instrument_status: InstrumentStatus = "active",
 ) -> list[dict[str, object]]:
     """Fetch EODHD instruments for current symbols, optionally including inactive rows."""
     if not symbols:
         return []
+    resolved_status = _resolve_instrument_status(
+        include_inactive=include_inactive,
+        instrument_status=instrument_status,
+    )
     conditions = [
         instrument.c.market == market,
         instrument.c.provider == "EODHD",
@@ -219,8 +227,10 @@ def load_active_instruments(
             instrument.c.provider_symbol.in_(symbols),
         ),
     ]
-    if not include_inactive:
+    if resolved_status == "active":
         conditions.append(instrument.c.is_active.is_(True))
+    elif resolved_status == "inactive":
+        conditions.append(instrument.c.is_active.is_(False))
     if asset_types:
         conditions.append(instrument.c.asset_type.in_(asset_types))
 
@@ -322,13 +332,19 @@ def load_active_instruments_for_market(
     *,
     market: str,
     asset_types: list[str] | None = None,
+    instrument_status: InstrumentStatus = "active",
 ) -> list[dict[str, object]]:
     """Fetch active EODHD instruments for one market and optional asset types."""
     conditions = [
         instrument.c.market == market,
         instrument.c.provider == "EODHD",
-        instrument.c.is_active.is_(True),
     ]
+    if instrument_status == "active":
+        conditions.append(instrument.c.is_active.is_(True))
+    elif instrument_status == "inactive":
+        conditions.append(instrument.c.is_active.is_(False))
+    elif instrument_status != "all":
+        raise ValueError("instrument_status must be active, inactive, or all")
     if asset_types:
         conditions.append(instrument.c.asset_type.in_(asset_types))
 
@@ -342,6 +358,19 @@ def load_active_instruments_for_market(
         ).where(*conditions)
     )
     return [dict(row) for row in result.mappings()]
+
+
+def _resolve_instrument_status(
+    *,
+    include_inactive: bool,
+    instrument_status: InstrumentStatus,
+) -> InstrumentStatus:
+    """Resolve the legacy include flag and the newer explicit instrument status."""
+    if instrument_status not in ("active", "inactive", "all"):
+        raise ValueError("instrument_status must be active, inactive, or all")
+    if include_inactive:
+        return "all"
+    return instrument_status
 
 
 def split_provider_symbol(provider_symbol: str) -> tuple[str, str]:

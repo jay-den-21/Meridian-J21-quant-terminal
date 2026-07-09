@@ -1,6 +1,7 @@
 from fdp.storage import (
     SYSTEM_SCHEMA,
     US_SHARE_SCHEMA,
+    bulk_unmatched_daily_price_observation,
     data_quality_issue,
     etf_daily_price,
     etf_instrument,
@@ -33,6 +34,7 @@ def test_initial_metadata_contains_project_tables() -> None:
     assert f"{SYSTEM_SCHEMA}.repair_plan" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.quarantine_plan" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.quarantined_daily_price_row" in metadata.tables
+    assert f"{SYSTEM_SCHEMA}.bulk_unmatched_daily_price_observation" in metadata.tables
 
 
 def test_instrument_keeps_standard_and_provider_symbols() -> None:
@@ -152,3 +154,27 @@ def test_quarantine_tables_archive_daily_price_payloads() -> None:
         "row_hash",
         "quarantine_reason",
     }.issubset(quarantined_daily_price_row.c.keys())
+
+
+def test_bulk_unmatched_observation_preserves_raw_rows_for_classification() -> None:
+    expected_columns = {
+        "observation_id",
+        "run_id",
+        "market",
+        "exchange",
+        "provider_symbol",
+        "symbol",
+        "trade_date",
+        "eodhd_type",
+        "raw_payload",
+        "classification_status",
+        "classified_asset_type",
+        "matched_instrument_id",
+        "reason",
+        "source",
+    }
+    assert expected_columns.issubset(bulk_unmatched_daily_price_observation.c.keys())
+    assert {"source", "provider_symbol", "trade_date"} in [
+        set(constraint.columns.keys())
+        for constraint in bulk_unmatched_daily_price_observation.constraints
+    ]
