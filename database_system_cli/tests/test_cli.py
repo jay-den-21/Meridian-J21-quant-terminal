@@ -25,6 +25,7 @@ def test_cli_registers_history_ingest_command() -> None:
     assert "--symbols" in result.output
     assert "--from" in result.output
     assert "--to" in result.output
+    assert "--instrument-status" in result.output
 
 
 def test_cli_registers_indices_ingest_command() -> None:
@@ -68,6 +69,25 @@ def test_cli_registers_daily_range_ingest_command() -> None:
     assert "--workers" in result.output
     assert "--max-requests-per-minute" in result.output
     assert "--max-api-calls" in result.output
+
+
+def test_cli_registers_bulk_unmatched_commands() -> None:
+    runner = CliRunner()
+
+    route = runner.invoke(app, ["ingest", "bulk-unmatched-route", "--help"])
+    summary = runner.invoke(app, ["research", "bulk-unmatched", "summary", "--help"])
+    list_result = runner.invoke(app, ["research", "bulk-unmatched", "list", "--help"])
+    classify = runner.invoke(app, ["research", "bulk-unmatched", "classify", "--help"])
+
+    assert route.exit_code == 0
+    assert "--execute" in route.output
+    assert "--yes" in route.output
+    assert summary.exit_code == 0
+    assert "--from" in summary.output
+    assert list_result.exit_code == 0
+    assert "--status" in list_result.output
+    assert classify.exit_code == 0
+    assert "--limit" in classify.output
 
 
 def test_cli_registers_daily_price_validate_command() -> None:
@@ -325,3 +345,25 @@ def test_cli_history_supports_include_inactive_flag() -> None:
 
     assert result.exit_code == 0
     assert "--include-inactive" in result.output
+
+
+def test_history_instrument_status_rejects_conflicting_legacy_flag() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "ingest",
+            "history",
+            "--symbols",
+            "OLD.US",
+            "--from",
+            "2020-01-01",
+            "--to",
+            "2020-01-31",
+            "--instrument-status",
+            "inactive",
+            "--include-inactive",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "do not combine" in result.output

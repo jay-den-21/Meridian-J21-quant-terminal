@@ -14,7 +14,7 @@
 - 历史深度：近 20 年
 - 数据粒度：一个标的一天一行
 - 数据库：本机 MySQL
-- schema：`us_share`、`a_share`、`system`
+- schema：`us_share`、`a_share`、`system`、`app_log`
 
 长期方向是支持策略研究和策略交易平台，但第一阶段只建设可信数据内核，不实现实盘交易、复杂前端、多数据源兜底或自动猜测式修复。
 
@@ -43,6 +43,8 @@
 - 不给缺失交易日插入空价格行。
 - 不在每日价格表物理保存 `is_active` / `delisted_date`；这些字段从 `instrument` 或读取层 join 暴露。
 - 不在本阶段全量回填所有 delisted 标的历史价格；delisted 历史价格先通过 `--include-inactive` 做小样本集成验证，后续单独扩展。
+- Bulk EOD 中无法匹配当前 instrument 的 rows 不再视为垃圾；它们先进入 `system.bulk_unmatched_daily_price_observation`，后续通过分类和严格匹配 workflow 再决定是否转入正式价格表。
+- 大规模真实拉数默认由用户亲自执行 CLI；Codex/AI 负责准备命令、说明 API 预算和风险，并在执行后做数据库验证和结果解释。
 
 ## 3. 技术栈
 
@@ -113,6 +115,7 @@ financial-data-platform/
 - `us_share`：美股业务数据
 - `a_share`：A 股业务数据，第一阶段预留，后续使用 Tushare
 - `system`：任务状态、质量报告、API 调用摘要、修复计划
+- `app_log`：API playground、search、screener、quote、live/websocket snapshot 等临时查询响应和未来 app 日志
 
 备注：旧的本地 A 股程序/数据库名叫 `qtdb_pro`。本项目的新 schema 名称仍统一使用 `a_share`，不要同时创建 `qtdb_pro` 和 `a_share` 两套 A 股 schema。
 
@@ -253,8 +256,8 @@ unique(instrument_id, trade_date)
 - ETF 数据写 `etf_daily_price`。
 - benchmark index 数据写 `index_daily_price`。
 - `j21 ingest history` 用于历史回填，按 provider symbol 逐个调用历史 EOD API。
-- `j21 ingest history --include-inactive` 可用于人工选择的小样本 delisted/inactive 标的价格验证。
-- `j21 ingest daily` 用于每日增量，调用 EODHD Bulk EOD API 后写入 stock/ETF split tables。
+- `j21 ingest history --instrument-status active|inactive|all` 控制历史回填匹配 active、inactive 或全部 instrument；旧 `--include-inactive` 保留为兼容入口，等价于 `--instrument-status all`。
+- `j21 ingest daily` 用于每日增量，调用 EODHD Bulk EOD API 后写入 stock/ETF split tables；无法匹配当前 instrument 的 rows 写入 unmatched staging 表。
 
 读取层提供价格口径开关：
 
@@ -293,6 +296,71 @@ updated_at
 - `event_key` 必须唯一，确保 delisted universe 重跑不会重复写事件。
 - delisted workflow 更新 `instrument.is_active = false`；只有当数据源提供可靠日期时才更新 `instrument.delisted_date`。当前 EODHD `exchange-symbol-list?delisted=1` 返回字段不含 delisting date，因此该列可能保持 `NULL`。
 - 每日价格表不加 `is_active` / `delisted_date` 物理列；读取层通过 join 暴露。
+
+### 5.5b `system.bulk_unmatched_daily_price_observation`
+
+`bulk_unmatched_daily_price_observation` 保存 EODHD Bulk EOD 返回、但在快速 ingest 阶段无法匹配当前 instrument universe 的原始日频观测。它是 staging/audit 表，不是正式价格表。
+
+建议字段：
+
+```text
+observation_id
+run_id
+market
+exchange
+provider_symbol
+symbol
+trade_date
+name
+eodhd_type
+open/high/low/close/adjusted_close/volume
+currency
+raw_payload
+classification_status
+classified_asset_type
+matched_instrument_id
+reason
+source
+first_seen_at
+last_seen_at
+created_at
+updated_at
+```
+
+规则：
+
+- 唯一键是 `source + provider_symbol + trade_date`。
+- Bulk 重跑时只能刷新 raw payload、价格字段、`run_id` 和 `last_seen_at`，不能把已分类状态重置成 `unresolved`。
+- `classification_status = unresolved` 表示尚未处理。
+- `classification_status = matched` 表示严格 provider_symbol 匹配到已入库 stock/ETF/index instrument，可由人工确认的 route 命令转入正式价格表。
+- `classification_status = needs_instrument` 表示 EODHD type 看起来像 stock/ETF/index，但本库还没有可严格匹配的 instrument。
+- `classification_status = non_price_asset` 表示 fund、preferred、notes、bond、warrant 等 P0 不写入正式价格表的资产。
+- `classification_status = routed` 表示已转入对应 split daily price table。
+- `classification_status = route_failed` 表示转写时 OHLCV 校验失败或字段不足。
+
+### 5.5c `app_log` snapshot tables
+
+`app_log` 是 app/API 查询响应日志层，不是 canonical market data schema。`us_share` 只保留 `instrument`、identifier history、market calendar、lifecycle event 和正式价格表；API playground、instrument search、screener、quote、live OHLCV、websocket event 这类临时查询产物不继续放在 `us_share`。
+
+当前 `app_log` 通过 Alembic 管理以下表：
+
+```text
+app_request_run
+instrument_search_snapshot
+instrument_search_result
+screener_snapshot
+screener_snapshot_member
+quote_snapshot
+live_ohlcv_snapshot
+websocket_event
+```
+
+规则：
+
+- `app_log` 与 `us_share` / `system` 在同一个 MySQL instance 下，用独立 schema 隔离。
+- 从旧 `us_share` snapshot 表迁出的少量 legacy rows 先复制进 `app_log`，验证 count 一致后再删除旧表。
+- `quote_snapshot`、`live_ohlcv_snapshot`、`websocket_event` 可以保留 `instrument_id` 作为 denormalized reference，但不再对 `us_share.instrument` 建硬 FK。
+- `database_app` 当前仍只读 `us_share.instrument` 作为 pool browser，不写 `app_log`；未来如果需要 app-side logging，应单独增加 `APP_LOG_DATABASE_URL` 或同等明确配置，不得 silent fallback 写回 `us_share`。
 
 ### 5.6 `us_share.market_calendar`
 
@@ -524,8 +592,9 @@ delisted/inactive 标的历史价格只在显式传入 `--include-inactive` 时�
 ```text
 call EODHD bulk endpoint for US/date
 match rows to us_share.instrument
-validate OHLCV
-upsert into stock_daily_price / etf_daily_price by asset_type
+matched rows validate OHLCV
+matched rows upsert into stock_daily_price / etf_daily_price by asset_type
+unmatched rows upsert into system.bulk_unmatched_daily_price_observation
 write task state and api call summary
 ```
 
@@ -538,6 +607,24 @@ EODHD 限额规则：
 - 本项目默认限速为 600 requests/minute，低于官方上限。
 - Bulk EOD 全 exchange 一次请求按 100 API calls 估算。
 - 超过 `--max-api-calls` 或 `--max-estimated-gb` 时，命令必须在读取 API key 和调用 EODHD 之前拒绝执行。
+
+Bulk unmatched 后处理流程：
+
+```text
+j21 research bulk-unmatched summary/list
+j21 research bulk-unmatched classify
+j21 ingest bulk-unmatched-route --dry-run
+j21 ingest bulk-unmatched-route --execute --yes
+j21 validate daily-price
+```
+
+原则：
+
+- daily ingest 主路径必须快，只做精确匹配、正式表 upsert、unmatched staging，不做复杂猜测。
+- classifier 只允许严格 provider_symbol 匹配到已入库 `instrument_id`。
+- 只有 high-confidence stock/ETF/index rows 才能 route 到正式 price table。
+- fund、preferred、notes、unknown 暂不建新 price table，先保留在 staging 表里。
+- 不确定的 rows 保持 unresolved/needs_instrument/non_price_asset，等待 instrument 补全或人工确认。
 
 ### 6.5 Validate quality
 
@@ -607,12 +694,18 @@ get_daily_prices(symbols, start, end, adjusted=True)
 
 ```bash
 poetry run j21 ingest instruments --market US --source eodhd
-poetry run j21 ingest history --market US --years 20 --symbols AAPL,MSFT,SPY
+poetry run j21 ingest history --market US --symbols AAPL,MSFT,SPY --from 2006-01-01 --to 2026-01-01
 poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --include-inactive
+poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --instrument-status inactive
 poetry run j21 ingest delisted-instruments --market US
 poetry run j21 ingest daily --market US --date 2026-05-20
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --dry-run
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --execute --yes --parallel --workers 4
+poetry run j21 research bulk-unmatched summary --from 2024-01-01 --to 2024-01-31
+poetry run j21 research bulk-unmatched list --from 2024-01-01 --to 2024-01-31 --status unresolved
+poetry run j21 research bulk-unmatched classify --from 2024-01-01 --to 2024-01-31
+poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --dry-run
+poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --execute --yes
 poetry run j21 validate daily-price --market US --from 2024-01-01 --to 2024-12-31
 poetry run j21 repair plan-daily-price --market US --from 2024-01-01 --to 2024-12-31
 poetry run j21 quarantine plan-daily-price --market US --from 2024-01-01 --to 2024-12-31 --issue-types duplicate_key,invalid_ohlcv,price_on_non_trading_day
@@ -672,7 +765,10 @@ if still invalid:
 - repair CLI 列出 plan 后要求人工确认。
 - `get_daily_prices(..., adjusted=True/False)` 返回不同价格口径。
 - `j21 ingest delisted-instruments` 幂等写入 inactive instruments 和 lifecycle events。
-- `j21 ingest history --include-inactive` 能按人工指定的小样本 inactive symbol 写入对应 split daily table。
+- `j21 ingest history --instrument-status inactive` 能只按 inactive symbol 写入对应 split daily table，避免重复请求 active instrument。
+- Bulk EOD unmatched rows 能写入 staging 表，重跑不覆盖已分类状态。
+- Bulk unmatched classifier 只做严格 provider_symbol 匹配，preferred/fund/unknown 不自动写入正式 price table。
+- Bulk unmatched route 必须先 dry-run；只有 `--execute --yes` 才能把 matched stock/ETF/index rows 写入正式 price table。
 
 测试数据库必须使用独立 schema，例如 `test_us_share`、`test_system`。
 

@@ -6,6 +6,12 @@ from typing import Any
 import typer
 from sqlalchemy import create_engine, func, select
 
+from fdp.bulk_unmatched import (
+    classify_bulk_unmatched_observations,
+    list_bulk_unmatched_observations,
+    route_bulk_unmatched_observations,
+    summarize_bulk_unmatched_observations,
+)
 from fdp.config import (
     EODHD_OFFICIAL_MAX_REQUESTS_PER_MINUTE,
     database_url_from_env,
@@ -51,11 +57,13 @@ validate_app = typer.Typer(help="Validate stored market data quality.")
 repair_app = typer.Typer(help="Create and manage human-confirmed repair plans.")
 quarantine_app = typer.Typer(help="Create and manage human-confirmed quarantine plans.")
 research_app = typer.Typer(help="Read stored database data for research code.")
+bulk_unmatched_app = typer.Typer(help="Inspect and classify Bulk EOD unmatched rows.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(validate_app, name="validate")
 app.add_typer(repair_app, name="repair")
 app.add_typer(quarantine_app, name="quarantine")
 app.add_typer(research_app, name="research")
+research_app.add_typer(bulk_unmatched_app, name="bulk-unmatched")
 
 EODHD_BULK_FULL_EXCHANGE_API_CALL_COST = 100
 DAILY_PRICE_ASSET_TYPES = {"stock", "etf", "index"}
@@ -111,10 +119,15 @@ def ingest_history(
     date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
     date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
     market: str = typer.Option("US", "--market", help="Market code to ingest."),
-    include_inactive: bool = typer.Option(
-        False,
+    instrument_status: str = typer.Option(
+        "active",
+        "--instrument-status",
+        help="Instrument status to match: active, inactive, or all.",
+    ),
+    include_inactive: bool | None = typer.Option(
+        None,
         "--include-inactive/--active-only",
-        help="Allow inactive/delisted stock/ETF instruments to be matched.",
+        help="Deprecated compatibility flag. Use --instrument-status all/active instead.",
     ),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
 ) -> None:
@@ -132,6 +145,10 @@ def ingest_history(
         raise typer.BadParameter("from/to must be YYYY-MM-DD") from exc
     if parsed_to < parsed_from:
         raise typer.BadParameter("to must be greater than or equal to from")
+    resolved_instrument_status = _resolve_history_instrument_status(
+        instrument_status=instrument_status,
+        include_inactive=include_inactive,
+    )
 
     api_key = eodhd_api_key_from_env()
     engine = create_engine(database_url_from_env())
@@ -146,13 +163,14 @@ def ingest_history(
             date_from=parsed_from,
             date_to=parsed_to,
             market=market,
-            include_inactive=include_inactive,
+            instrument_status=resolved_instrument_status,
         )
 
     typer.echo(
         "history ingest "
         f"run_id={result.run_id} status={result.status} "
         f"symbols={result.symbols_loaded}/{result.symbols_requested} "
+        f"instrument_status={resolved_instrument_status} "
         f"fetched={result.rows_fetched} inserted={result.rows_inserted} "
         f"rejected={result.rows_rejected}"
     )
@@ -493,6 +511,57 @@ def ingest_daily_range(
         f"http_requests={totals['api_calls']} api_call_cost_estimate={estimated_api_calls} "
         f"success_days={totals['success']} "
         f"partial_failed_days={totals['partial_failed']} failed_days={totals['failed']}"
+    )
+
+
+@ingest_app.command("bulk-unmatched-route")
+def ingest_bulk_unmatched_route(
+    date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
+    asset_types: str = typer.Option(
+        "stock,etf,index",
+        "--asset-types",
+        help="Comma-separated asset types to route: stock,etf,index.",
+    ),
+    market: str = typer.Option("US", "--market", help="Market code to route."),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--execute",
+        help="Preview by default; use --execute --yes to write price tables.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Required with --execute."),
+    limit: int | None = typer.Option(None, "--limit", help="Optional max rows to route."),
+) -> None:
+    """Route classified Bulk EOD unmatched observations into split daily price tables."""
+    if limit is not None and limit <= 0:
+        raise typer.BadParameter("limit must be positive")
+    if not dry_run and not yes:
+        raise typer.BadParameter("bulk-unmatched-route execution requires --yes")
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    parsed_asset_types = _parse_asset_types(asset_types, supported=DAILY_PRICE_ASSET_TYPES)
+
+    engine = create_engine(database_url_from_env())
+    with engine.begin() as connection:
+        ensure_runtime_schemas(connection)
+        try:
+            result = route_bulk_unmatched_observations(
+                connection,
+                date_from=parsed_from,
+                date_to=parsed_to,
+                market=market,
+                asset_types=parsed_asset_types,
+                dry_run=dry_run,
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
+    mode = "dry_run" if result.dry_run else "executed"
+    typer.echo(
+        "bulk-unmatched-route "
+        f"mode={mode} date_from={parsed_from} date_to={parsed_to} "
+        f"routeable={result.routeable} rows_inserted={result.rows_inserted} "
+        f"rows_rejected={result.rows_rejected} routed={result.routed}"
     )
 
 
@@ -863,6 +932,103 @@ def quarantine_run(
         raise typer.Exit(code=1)
 
 
+@bulk_unmatched_app.command("summary")
+def research_bulk_unmatched_summary(
+    date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
+    market: str = typer.Option("US", "--market", help="Market code to inspect."),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text."),
+) -> None:
+    """Summarize Bulk EOD unmatched staging rows by status and asset type."""
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    engine = create_engine(database_url_from_env())
+    with engine.begin() as connection:
+        ensure_runtime_schemas(connection)
+        rows = summarize_bulk_unmatched_observations(
+            connection,
+            date_from=parsed_from,
+            date_to=parsed_to,
+            market=market,
+        )
+
+    if as_json:
+        typer.echo(json.dumps([row.to_dict() for row in rows], default=_json_cli_default, indent=2))
+        return
+    typer.echo(f"bulk-unmatched summary rows={len(rows)}")
+    for row in rows:
+        typer.echo(
+            "  "
+            f"status={row.classification_status} "
+            f"asset_type={row.classified_asset_type or '-'} count={row.row_count}"
+        )
+
+
+@bulk_unmatched_app.command("list")
+def research_bulk_unmatched_list(
+    date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
+    status: str | None = typer.Option(None, "--status", help="Optional classification status."),
+    market: str = typer.Option("US", "--market", help="Market code to inspect."),
+    limit: int = typer.Option(50, "--limit", help="Maximum rows to print."),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text."),
+) -> None:
+    """List bounded Bulk EOD unmatched staging rows for operator review."""
+    if limit <= 0:
+        raise typer.BadParameter("limit must be positive")
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    engine = create_engine(database_url_from_env())
+    with engine.begin() as connection:
+        ensure_runtime_schemas(connection)
+        rows = list_bulk_unmatched_observations(
+            connection,
+            date_from=parsed_from,
+            date_to=parsed_to,
+            market=market,
+            status=status,
+            limit=limit,
+        )
+
+    if as_json:
+        typer.echo(json.dumps(rows, default=_json_cli_default, indent=2))
+        return
+    typer.echo(f"bulk-unmatched list rows={len(rows)}")
+    _print_bulk_unmatched_rows(rows, limit=limit)
+
+
+@bulk_unmatched_app.command("classify")
+def research_bulk_unmatched_classify(
+    date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
+    market: str = typer.Option("US", "--market", help="Market code to classify."),
+    limit: int | None = typer.Option(None, "--limit", help="Optional max rows to classify."),
+    as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text."),
+) -> None:
+    """Classify unresolved unmatched rows using strict provider-symbol matches."""
+    if limit is not None and limit <= 0:
+        raise typer.BadParameter("limit must be positive")
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    engine = create_engine(database_url_from_env())
+    with engine.begin() as connection:
+        ensure_runtime_schemas(connection)
+        result = classify_bulk_unmatched_observations(
+            connection,
+            date_from=parsed_from,
+            date_to=parsed_to,
+            market=market,
+            limit=limit,
+        )
+
+    if as_json:
+        typer.echo(json.dumps(result.to_dict(), default=_json_cli_default, indent=2))
+        return
+    typer.echo(
+        "bulk-unmatched classify "
+        f"scanned={result.scanned} matched={result.matched} "
+        f"needs_instrument={result.needs_instrument} "
+        f"non_price_asset={result.non_price_asset} unknown={result.unknown}"
+    )
+
+
 @research_app.command("daily-prices")
 def research_daily_prices(
     symbols: str = typer.Option(..., "--symbols", help="Comma-separated symbols to read."),
@@ -1147,6 +1313,24 @@ def _parse_asset_types(asset_types: str, *, supported: set[str] | None = None) -
     return parsed
 
 
+def _resolve_history_instrument_status(
+    *,
+    instrument_status: str,
+    include_inactive: bool | None,
+) -> str:
+    """Resolve new history status semantics and the legacy include-inactive flag."""
+    normalized = instrument_status.strip().lower()
+    if normalized not in {"active", "inactive", "all"}:
+        raise typer.BadParameter("instrument-status must be active, inactive, or all")
+    if include_inactive is not None:
+        if normalized != "active":
+            raise typer.BadParameter(
+                "do not combine --include-inactive/--active-only with --instrument-status"
+            )
+        return "all" if include_inactive else "active"
+    return normalized
+
+
 def _parse_optional_date(value: str | None, *, field_name: str) -> date | None:
     """Parse an optional CLI date value."""
     if value is None:
@@ -1181,6 +1365,23 @@ def _print_daily_price_rows(rows: list[dict[str, object]], *, limit: int) -> Non
         typer.echo("\t".join(_format_cli_value(row.get(column)) for column in columns))
     if limit > 0 and len(rows) > limit:
         typer.echo(f"... output truncated at {limit} rows; use --limit 0 to print all rows")
+
+
+def _print_bulk_unmatched_rows(rows: list[dict[str, object]], *, limit: int) -> None:
+    """Print a compact preview of Bulk EOD unmatched staging rows."""
+    for row in rows[:limit]:
+        typer.echo(
+            "  "
+            f"observation_id={row['observation_id']} "
+            f"date={row['trade_date']} "
+            f"provider_symbol={row['provider_symbol']} "
+            f"status={row['classification_status']} "
+            f"asset_type={row['classified_asset_type'] or '-'} "
+            f"eodhd_type={row['eodhd_type'] or '-'} "
+            f"matched_instrument_id={row['matched_instrument_id'] or '-'}"
+        )
+    if len(rows) > limit:
+        typer.echo(f"  ... {len(rows) - limit} more row(s)")
 
 
 def _format_cli_value(value: object) -> str:

@@ -4,6 +4,7 @@ from decimal import Decimal
 from sqlalchemy.dialects import mysql
 
 from fdp.storage.upsert import (
+    build_bulk_unmatched_daily_price_observation_upsert,
     build_etf_daily_price_upsert,
     build_identifier_history_upsert,
     build_index_daily_price_upsert,
@@ -124,3 +125,27 @@ def test_market_calendar_upsert_updates_calendar_flags() -> None:
     assert "ON DUPLICATE KEY UPDATE" in sql
     assert "is_trading_day = VALUES(is_trading_day)" in sql
     assert "source = VALUES(source)" in sql
+
+
+def test_bulk_unmatched_upsert_preserves_classification_state() -> None:
+    statement = build_bulk_unmatched_daily_price_observation_upsert(
+        {
+            "run_id": 1,
+            "market": "US",
+            "exchange": "US",
+            "provider_symbol": "OLD.US",
+            "symbol": "OLD",
+            "trade_date": date(2024, 1, 2),
+            "raw_payload": "{}",
+            "classification_status": "unresolved",
+            "source": "EODHD",
+        }
+    )
+
+    sql = str(statement.compile(dialect=mysql.dialect()))
+    update_clause = sql.split("ON DUPLICATE KEY UPDATE", maxsplit=1)[1]
+
+    assert "ON DUPLICATE KEY UPDATE" in sql
+    assert "raw_payload = VALUES(raw_payload)" in update_clause
+    assert "classification_status = VALUES(classification_status)" not in update_clause
+    assert "matched_instrument_id = VALUES(matched_instrument_id)" not in update_clause

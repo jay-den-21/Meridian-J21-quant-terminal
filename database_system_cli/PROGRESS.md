@@ -65,10 +65,18 @@ Completed:
 - Real EODHD delisted-symbol-list payload does not include a delisting date field, so the workflow can reliably set `instrument.is_active = false` and write lifecycle events, but `instrument.delisted_date` remains `NULL` unless a later source supplies a date
 - Inactive history smoke test passed: `j21 ingest history --symbols TWTR.US --from 2022-10-20 --to 2022-10-28 --include-inactive` fetched and inserted 6 `stock_daily_price` rows with `instrument.is_active = false`
 - Legacy `us_share.daily_price` was removed after verification: it had 5,265 rows and only one row not already represented in split tables, the known bad holiday row `DJI.INDX` on `2024-12-25`
-- Code migration head is `0008_delisted_lifecycle`; live DB `alembic current` currently fails because the database is stamped at an older dirty-workflow revision `0022_quarantine` that is not part of the clean v0.2 migration chain. This was not auto-stamped or force-fixed to avoid importing unrelated endpoint/news/intraday schema work into this scoped branch.
+- Live DB Alembic version was reconciled from the older dirty-workflow revision `0022_quarantine` back onto the clean migration chain, then upgraded through `0009_bulk_unmatched`.
 - EODHD runtime knobs added to `config/default.yaml` / `.env.example`: max retries, retry delay, request rate, daily API-call budget, daily-range parallel flag, and worker count
 - Documentation workflow rule added to `AGENTS.md`: when human-facing Markdown docs are updated, matching HTML docs and the `PROGRESS.md` board must be kept in sync when applicable
 - `PROJECT.md` / `PROJECT.html` audience rule documented: Markdown is the Codex/AI-facing specification source, while HTML is the shared readable board for user and Codex/AI
+- User-operated ingest workflow rule added to root and subproject `AGENTS.md`: small smoke tests and read-only validation can be run by Codex/AI, while large API-consuming ingest defaults to user-operated CLI execution unless explicitly delegated
+- `j21 ingest history` now supports `--instrument-status active|inactive|all`; legacy `--include-inactive` remains compatible as `all`, and conflicting new/old flags are rejected
+- Bulk EOD unmatched staging added through Alembic `0009_bulk_unmatched`: unmatched rows are stored in `system.bulk_unmatched_daily_price_observation` with raw payload, OHLCV fields, classification status, and exact-match routing metadata
+- `j21 ingest daily` now writes unmatched Bulk EOD rows into the system staging table instead of only counting them as rejected
+- Bulk unmatched review/classification CLI added: `j21 research bulk-unmatched summary/list/classify`
+- Bulk unmatched routing CLI added: `j21 ingest bulk-unmatched-route --dry-run` previews matched rows, while `--execute --yes` writes high-confidence stock/ETF/index rows to split daily price tables
+- Focused verification for the bulk unmatched workflow passed: storage schema/upsert, CLI registration/conflict behavior, EODHD ingest, and classifier/route tests passed with 54 targeted tests; focused ruff checks passed
+- `app_log` snapshot schema cleanup added through Alembic `0010_app_log_snapshots` and `0011_drop_us_share_snapshots`: API playground/search/screener/quote/live/websocket snapshots are copied out of `us_share`, verified by count, and legacy `us_share` snapshot tables are dropped so `us_share` stays focused on canonical market data and instrument master data
 - Real post-split 3-year ingest smoke test: `AAPL,MSFT,SPY` from `2023-01-01` to `2025-12-31` wrote 2256 rows into split stock/ETF tables with 0 rejected rows
 - Real post-split 3-year index ingest smoke test: `GSPC.INDX,DJI.INDX,IXIC.INDX,NDX.INDX` from `2023-01-01` to `2025-12-31` wrote 3009 rows into `index_daily_price` with 0 rejected rows
 - Post-split DB verification found 0 duplicate `instrument_id + trade_date` groups in stock, ETF, and index price tables
@@ -85,6 +93,7 @@ Not started:
 
 - add an explicit operator-controlled skip/manual-review path for future rename-history API outages
 - decide the next delisted-date source: EODHD Fundamentals/Corporate Actions, Nasdaq/FINRA lists, or manual enrichment, because the EODHD delisted symbol list does not expose delist dates
-- reconcile live DB Alembic version history before the next schema-changing release, either by adopting the later endpoint migration chain intentionally or by creating a documented bridge/stamp plan
 - plan point-in-time universe membership so active-only backtests can be clearly separated from survivorship-bias-aware research
 - extend delisted historical backfill in small, budgeted batches after date-source and universe policy are settled
+- run a small real-date smoke after applying migration `0009_bulk_unmatched`: one-day `j21 ingest daily --date ...`, then `bulk-unmatched summary/list/classify`, dry-run route, and `validate daily-price`
+- after small smoke passes, user can run larger `daily-range`; Codex/AI should verify row counts, duplicate `(instrument_id, trade_date)`, unmatched status distribution, and route candidates after the user-run ingest

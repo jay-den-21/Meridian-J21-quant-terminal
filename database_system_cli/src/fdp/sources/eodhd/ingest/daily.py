@@ -1,11 +1,14 @@
 """EODHD historical daily price ingest workflows."""
 
+import json
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.engine import Connection
 
 from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.ingest.common import (
+    InstrumentStatus,
     create_task_run,
     finish_task_run,
     historical_price_status,
@@ -16,11 +19,13 @@ from fdp.sources.eodhd.ingest.common import (
     load_active_instruments_by_provider_symbols,
     normalize_provider_symbols,
     normalize_symbols,
+    now_utc,
     record_api_call,
 )
 from fdp.sources.eodhd.ingest.models import BulkDailyPriceLoadResult, HistoricalDailyPriceLoadResult
 from fdp.sources.eodhd.prices import RejectedDailyPriceRow, parse_daily_price_rows
 from fdp.storage.upsert import (
+    build_bulk_unmatched_daily_price_observation_upsert,
     build_etf_daily_price_upsert,
     build_index_daily_price_upsert,
     build_instrument_upsert,
@@ -44,6 +49,7 @@ def load_historical_daily_prices(
     date_to: date,
     market: str = "US",
     include_inactive: bool = False,
+    instrument_status: InstrumentStatus = "active",
 ) -> HistoricalDailyPriceLoadResult:
     """Load historical daily EOD prices for an explicit stock/ETF symbol list.
 
@@ -60,6 +66,7 @@ def load_historical_daily_prices(
         market=market,
         asset_types=["stock", "etf"],
         include_inactive=include_inactive,
+        instrument_status=instrument_status,
         job_name="eodhd_historical_daily_price",
         target_table="stock_daily_price,etf_daily_price",
     )
@@ -74,6 +81,7 @@ def load_stock_daily_prices(
     date_to: date,
     market: str = "US",
     include_inactive: bool = False,
+    instrument_status: InstrumentStatus = "active",
 ) -> HistoricalDailyPriceLoadResult:
     """Load historical daily EOD prices for stock symbols only.
 
@@ -90,6 +98,7 @@ def load_stock_daily_prices(
         market=market,
         asset_types=["stock"],
         include_inactive=include_inactive,
+        instrument_status=instrument_status,
         job_name="eodhd_stock_daily_price",
         target_table="stock_daily_price",
     )
@@ -104,6 +113,7 @@ def load_etf_daily_prices(
     date_to: date,
     market: str = "US",
     include_inactive: bool = False,
+    instrument_status: InstrumentStatus = "active",
 ) -> HistoricalDailyPriceLoadResult:
     """Load historical daily EOD prices for ETF symbols only.
 
@@ -120,6 +130,7 @@ def load_etf_daily_prices(
         market=market,
         asset_types=["etf"],
         include_inactive=include_inactive,
+        instrument_status=instrument_status,
         job_name="eodhd_etf_daily_price",
         target_table="etf_daily_price",
     )
@@ -257,6 +268,7 @@ def load_bulk_daily_prices(
     rows_by_symbol = {str(row["symbol"]).upper(): row for row in instruments}
 
     accepted_by_asset_type: dict[str, list[dict[str, object]]] = {}
+    unmatched_observations: list[dict[str, object]] = []
     rejected_rows: list[RejectedDailyPriceRow] = []
     unmatched_rows = 0
     rows_matched = 0
@@ -278,6 +290,28 @@ def load_bulk_daily_prices(
         provider_symbol = _bulk_row_provider_symbol(symbol, exchange=normalized_exchange)
         instrument_row = rows_by_provider_symbol.get(provider_symbol) or rows_by_symbol.get(symbol)
         if instrument_row is None:
+            try:
+                unmatched_observations.append(
+                    _bulk_unmatched_observation_row(
+                        row,
+                        run_id=run_id,
+                        market=market,
+                        exchange=normalized_exchange,
+                        symbol=symbol,
+                        provider_symbol=provider_symbol,
+                        fallback_trade_date=trade_date,
+                    )
+                )
+            except ValueError as exc:
+                rejected_rows.append(
+                    RejectedDailyPriceRow(
+                        index=index,
+                        provider_symbol=provider_symbol,
+                        reason=str(exc),
+                        row=row,
+                    )
+                )
+                continue
             unmatched_rows += 1
             continue
 
@@ -295,6 +329,8 @@ def load_bulk_daily_prices(
             accepted_by_asset_type.setdefault(asset_type, []).extend(parsed_rows.accepted)
 
     rows_inserted = _upsert_daily_price_chunks(connection, accepted_by_asset_type)
+    if unmatched_observations:
+        connection.execute(build_bulk_unmatched_daily_price_observation_upsert(unmatched_observations))
     rows_rejected = len(rejected_rows) + unmatched_rows
     status, error_message = _bulk_daily_price_status(
         rows_inserted=rows_inserted,
@@ -339,6 +375,7 @@ def _load_symbol_daily_prices(
     market: str,
     asset_types: list[str],
     include_inactive: bool,
+    instrument_status: InstrumentStatus,
     job_name: str,
     target_table: str,
 ) -> HistoricalDailyPriceLoadResult:
@@ -362,6 +399,7 @@ def _load_symbol_daily_prices(
         market=market,
         asset_types=asset_types,
         include_inactive=include_inactive,
+        instrument_status=instrument_status,
     )
     found_identifiers: set[str] = set()
     for row in instruments:
@@ -538,6 +576,99 @@ def _bulk_row_provider_symbol(symbol: str, *, exchange: str) -> str:
     if "." in symbol:
         return symbol
     return f"{symbol}.{exchange.strip().upper()}"
+
+
+def _bulk_unmatched_observation_row(
+    row: dict[str, object],
+    *,
+    run_id: int,
+    market: str,
+    exchange: str,
+    symbol: str,
+    provider_symbol: str,
+    fallback_trade_date: date | None,
+) -> dict[str, object]:
+    """Build one raw unmatched observation row for later classification."""
+    observed_at = now_utc()
+    return {
+        "run_id": run_id,
+        "market": market,
+        "exchange": exchange,
+        "provider_symbol": provider_symbol,
+        "symbol": symbol,
+        "trade_date": _bulk_row_trade_date(row, fallback_trade_date=fallback_trade_date),
+        "name": _optional_str(row, "name", "Name"),
+        "eodhd_type": _optional_str(row, "type", "Type"),
+        "open": _optional_decimal(row, "open", "Open"),
+        "high": _optional_decimal(row, "high", "High"),
+        "low": _optional_decimal(row, "low", "Low"),
+        "close": _optional_decimal(row, "close", "Close"),
+        "adjusted_close": _optional_decimal(row, "adjusted_close", "adjustedClose", "Adjusted_close"),
+        "volume": _optional_int(row, "volume", "Volume"),
+        "currency": _optional_str(row, "currency", "Currency"),
+        "raw_payload": json.dumps(row, sort_keys=True, default=str),
+        "classification_status": "unresolved",
+        "classified_asset_type": None,
+        "matched_instrument_id": None,
+        "reason": "unmatched_active_instrument",
+        "source": "EODHD",
+        "first_seen_at": observed_at,
+        "last_seen_at": observed_at,
+    }
+
+
+def _bulk_row_trade_date(
+    row: dict[str, object],
+    *,
+    fallback_trade_date: date | None,
+) -> date:
+    value = row.get("date") or row.get("Date")
+    if value in (None, ""):
+        if fallback_trade_date is not None:
+            return fallback_trade_date
+        raise ValueError("missing required EODHD bulk field: date")
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError as exc:
+        raise ValueError("invalid date EODHD bulk field: date") from exc
+
+
+def _optional_str(row: dict[str, object], *keys: str) -> str | None:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _optional_decimal(row: dict[str, object], *keys: str) -> Decimal | None:
+    value = _first_present(row, *keys)
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"invalid decimal EODHD bulk field: {keys[0]}") from exc
+
+
+def _optional_int(row: dict[str, object], *keys: str) -> int | None:
+    value = _first_present(row, *keys)
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid integer EODHD bulk field: {keys[0]}") from exc
+
+
+def _first_present(row: dict[str, object], *keys: str) -> object | None:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return None
 
 
 def _upsert_daily_price_chunks(

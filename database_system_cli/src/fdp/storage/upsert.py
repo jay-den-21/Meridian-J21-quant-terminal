@@ -9,6 +9,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.sql.dml import Insert
 
 from fdp.storage.tables import (
+    bulk_unmatched_daily_price_observation,
     etf_daily_price,
     index_daily_price,
     instrument,
@@ -188,6 +189,37 @@ def build_market_calendar_upsert(rows: Row | Sequence[Row]) -> Insert:
         update_columns=[
             "is_trading_day",
             "source",
+            "updated_at",
+        ],
+    )
+
+
+def build_bulk_unmatched_daily_price_observation_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `system.bulk_unmatched_daily_price_observation`.
+
+    Input: unmatched EODHD Bulk EOD rows keyed by source/provider_symbol/trade_date.
+    Output: MySQL upsert that refreshes raw observation fields without resetting classification.
+    Flow: unmatched rows -> raw staging table -> later classifier/route workflow.
+    """
+    return build_mysql_upsert(
+        bulk_unmatched_daily_price_observation,
+        rows,
+        update_columns=[
+            "run_id",
+            "market",
+            "exchange",
+            "symbol",
+            "name",
+            "eodhd_type",
+            "open",
+            "high",
+            "low",
+            "close",
+            "adjusted_close",
+            "volume",
+            "currency",
+            "raw_payload",
+            "last_seen_at",
             "updated_at",
         ],
     )
