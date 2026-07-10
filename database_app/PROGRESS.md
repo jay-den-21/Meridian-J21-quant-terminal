@@ -145,14 +145,15 @@ Completed:
   - `scripts/package_macos_app.sh` now builds `dist/EODHD Code Generator.app`, `dist/EODHD-Code-Generator-1.0.0.dmg`, `dist/EODHD-Code-Generator-1.0.0.pkg`, and `dist/SHA256SUMS.txt`.
   - The `.app` bundle now includes app source/docs plus pure Python dependencies used by the DB pool browser.
   - The launcher still unsets `EODHD_API_KEY`, requires Python 3.11+, and uses the Login / Config token path for normal desktop startup.
-  - Added `site/index.html`, `site/styles.css`, `site/assets/app-preview.svg`, and `site/PLAN.md` as the personal website download page and rollout plan.
+  - Added `site/index.html`, `site/styles.css`, `site/assets/app-preview.svg`, and `site/PLAN.md` as the CodeGen product/download page and rollout plan.
   - Packaging copies DMG/PKG/checksums into `site/downloads/` so the static download buttons point at real local artifacts after a build.
-- Added v1.2 Jayden21 / Meridian static showcase:
-  - Replaced the single download landing page with a three-view personal homepage under `site/index.html`.
-  - Added `site/app.js` for GSAP-backed Home -> Meridian -> Terminal transitions, with reduced-motion and no-GSAP fallback.
-  - Kept the static site frontend-only: no EODHD API execution, no token reads, no database writes, and no `database_system_cli` source changes.
-  - Terminal showcase includes strategy equity curve, focus watchlist, strategy queue, research notebook, exposure heatmap, pipeline modules, and existing local tool download links.
-  - Saved visual QA screenshots under `output/personal-site-designs/site-home-preview.png`, `site-meridian-preview.png`, and `site-terminal-preview.png`.
+- Added the v1.2 Jayden21 / Meridian static showcase as a three-view prototype; v1.3 supersedes its mixed-directory ownership.
+- Added v1.3 static-site boundary split:
+  - Restored `database_app/site/` as the CodeGen-only product/download page and kept packaging output under `site/downloads/`.
+  - Moved the personal homepage, profile, custom cursors, project links, and homepage motion into the top-level `personal_site/` root.
+  - Moved the Meridian landing, exchange duel, terminal dashboard, and internal transitions into the top-level `j21_terminal/` root.
+  - Replaced same-document cross-product views with relative sibling links while preserving GSAP/no-GSAP and reduced-motion behavior.
+  - Added root-level boundary tests so personal, terminal, and CodeGen page code/assets cannot silently mix again.
 - Added Wind study notes from the user-provided 2025 PDF and Kancloud link into `PROJECT.md`.
 - Added P1 plan for a WindPy-like Python client: `from eodhd_client import w`, `w.start()`, `w.isconnected()`, and `w.wsd`/`w.wss`/`w.wset` mappings.
 - Added tests for token store, universe normalization, and API cost estimation.
@@ -199,15 +200,22 @@ status Ready; no task tabs or old Stocks workspace; function toolbar shows five 
 Isolated no-token execute smoke on http://127.0.0.1:8011/
 with HOME=/private/tmp/fdp_no_token and no EODHD_API_KEY, POST /api/execute returns 502 {"error": "EODHD_API_KEY is not set"}.
 
-Static site v1.2 validation
-node --check database_app/site/app.js
+Static site v1.3 boundary validation
+PYTHONPATH=database_app/src python -m pytest -q database_app/tests tests/test_site_boundaries.py
+85 passed
+
+ruff check --no-cache database_app/src database_app/tests tests/test_site_boundaries.py
+All checks passed
+
+node --check personal_site/app.js
+node --check j21_terminal/app.js
 passed
 
-python3 -m http.server 8765 --directory database_app/site
-served site/index.html, site/app.js, and site/styles.css over localhost.
+python3 -m http.server 8766 --directory .
+served `/personal_site/`, `/j21_terminal/`, and `/database_app/site/` as independent roots.
 
-Chrome headless screenshots
-rendered #home, #meridian, and #terminal to output/personal-site-designs/site-*-preview.png.
+Chrome headless navigation and responsive screenshots
+verified both personal project links, Meridian -> Terminal routing, 12 required local assets with HTTP 200, desktop layouts, 390px mobile layouts, and no horizontal overflow.
 ```
 
 Not started:

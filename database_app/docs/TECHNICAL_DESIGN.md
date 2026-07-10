@@ -191,7 +191,7 @@ This blocks simple `text/plain` cross-site POSTs from arbitrary web pages. It is
 
 The bundle copies `database_app` source/docs and pure Python dependencies into app resources. The launcher prepends those resource paths to `PYTHONPATH`, sets `PYTHONDONTWRITEBYTECODE=1` so Python does not mutate signed bundle resources, unsets `EODHD_API_KEY`, and starts the local server on `127.0.0.1` with a random port. It still expects Python 3.11+ on the Mac or a `PYTHON_BIN` override.
 
-The script also copies DMG/PKG/checksum artifacts into `site/downloads/`, so `site/index.html` can serve as a local personal website download page after packaging. Public distribution requires a separate signing and notarization release process.
+The script also copies DMG/PKG/checksum artifacts into `site/downloads/`, so `site/index.html` can serve as the CodeGen product/download page after packaging. The personal homepage and J21 Terminal are independent sibling roots and are not bundled into `database_app`. Public distribution requires a separate signing and notarization release process.
 
 ### Stock Workflow
 

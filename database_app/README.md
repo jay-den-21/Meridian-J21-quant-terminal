@@ -46,7 +46,7 @@ The script builds:
 - `dist/EODHD-Code-Generator-1.0.0.pkg`
 - `dist/SHA256SUMS.txt`
 
-It also copies the DMG/PKG and checksums to `site/downloads/`, so the static personal website download buttons work after packaging:
+It also copies the DMG/PKG and checksums to `site/downloads/`, so the CodeGen product/download page works after packaging:
 
 ```bash
 open site/index.html

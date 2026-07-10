@@ -39,8 +39,8 @@
         <p>v0.4 把产品形态从普通 web form 推向本地桌面工具：主窗口使用 Wind 风格 ribbon，WSD/WSS/WST/WSET/TDays 作为快捷入口；页面内部用 task tab 和 MDI-like child window 承载不同工作区；代码区和输出结果保持像 Wind 代码生成器一样的上下文并列关系。当前仍由本地 HTTP server 驱动，但用户入口以 <code>.app</code> wrapper / 本地桌面 review 为主。</p>
         <p>v0.5 把前端交互从“大块 endpoint 工作区”收敛为 single workspace：主屏只保留中英双语 function toolbar、已确认请求摘要、code generation 区域和 Execute API result 区域。所有 endpoint-specific 配置、股票池、ticker import、日期和输出格式都进入 3-step floating wizard。Wizard 内的 draft request 不会影响主屏；只有 Confirm 后才更新 codegen 和 Execute 使用的 confirmed request。</p>
         <p>v0.6 把 Stocks wizard 的候选加载从 EODHD API 改成 read-only MySQL pool browser。Pool browser 只读 <code>database_system_cli/.env</code> 中的 <code>FDP_DATABASE_URL</code> 或 <code>FDP_DB_*</code> 配置，并查询现有 <code>us_share.instrument</code>，不写数据库、不新增 schema、不消耗 EODHD API call。EODHD token 只用于 Execute API 和 Instrument Lookup。</p>
-        <p>v1.1 加入本地 Mac 分发打包和个人网站入口。<code>scripts/package_macos_app.sh</code> 会生成 <code>.app</code>、<code>.dmg</code>、<code>.pkg</code>，并把 DMG/PKG 复制到 <code>site/downloads/</code>，使 <code>site/index.html</code> 可以继续提供本地构建产物下载。当前是 local developer distribution：可用于本机安装和个人测试，但公开分发仍需要 Apple Developer ID signing 和 notarization。</p>
-        <p>v1.2 将 <code>site/</code> 从单一下载页扩展为个人首页和 Meridian-J21 投研平台展示入口：访问 <code>site/index.html</code> 先进入 Jayden21 个人首页，点击 Meridian / current project 后通过 GSAP view transition 进入 Meridian landing，再点击 Enter Terminal 进入 terminal-style 投研工作台展示页。该静态站只做前端展示和本地下载链接，不调用 EODHD API，不读取 token，不写数据库。</p>
+        <p>v1.1 加入本地 Mac 分发打包和 CodeGen 下载入口。<code>scripts/package_macos_app.sh</code> 会生成 <code>.app</code>、<code>.dmg</code>、<code>.pkg</code>，并把 DMG/PKG 复制到 <code>site/downloads/</code>，使 <code>site/index.html</code> 可以继续提供本地构建产物下载。当前是 local developer distribution：可用于本机安装和个人测试，但公开分发仍需要 Apple Developer ID signing 和 notarization。</p>
+        <p>v1.2 曾将个人首页、Meridian landing 和 terminal prototype 合并到 <code>database_app/site/</code>。v1.3 已完成边界拆分：<code>database_app/site/</code> 恢复为 CodeGen-only 产品/下载页；个人首页和 J21 Terminal 分别迁移到仓库顶层 sibling <code>personal_site/</code> 与 <code>j21_terminal/</code>，通过相对 URL 跳转，不再共享页面路由、CSS、JavaScript 或产品资源。</p>
         <p>Wind 学习依据：</p>
         <ul>
           <li>用户提供的 <code>Wind_API接口说明_2025_.pdf</code>，文档日期 2025-04-10。</li>
@@ -135,7 +135,7 @@
           <li>PyMySQL for MySQL connectivity</li>
           <li>原生 HTML / CSS / JavaScript</li>
           <li>macOS <code>.app</code> wrapper + DMG/PKG build script</li>
-          <li>static personal website / Meridian showcase under <code>site/</code></li>
+          <li>static CodeGen product/download page under <code>site/</code></li>
           <li>pytest 测试</li>
           <li>ruff 静态检查</li>
         </ul>
@@ -146,6 +146,8 @@
         <pre><code>
 financial-data-platform/
   database_system_cli/
+  personal_site/
+  j21_terminal/
   database_app/
     .gitignore
     pyproject.toml
@@ -159,7 +161,6 @@ financial-data-platform/
     site/
       index.html
       styles.css
-      app.js
       PLAN.md
       assets/
         app-preview.svg
@@ -257,24 +258,27 @@ open &quot;dist/EODHD-Code-Generator-1.0.0.dmg&quot;
           <li><code>site/downloads/EODHD-Code-Generator-1.0.0.pkg</code></li>
           <li><code>site/downloads/SHA256SUMS.txt</code></li>
         </ul>
-        <p>静态个人站 / Meridian 展示入口：</p>
+        <p>CodeGen 静态产品 / 下载入口：</p>
         <pre><code>
 open site/index.html
           </code></pre>
-        <p><code>site/index.html</code> 包含三个前端 view：</p>
+        <p><code>site/index.html</code> 只展示 EODHD Code Generator、安装说明、本地安全边界和由打包脚本生成的下载链接。该目录不包含个人主页、Meridian 或 terminal view，也不加载 GSAP。</p>
+        <p>个人站和 J21 Terminal 位于仓库 sibling 根目录。需要同时检查跨产品跳转时，从仓库根目录启动静态服务器：</p>
+        <pre><code>
+python3 -m http.server 8765 --directory .
+          </code></pre>
         <ul>
-          <li><code>#home</code>：Jayden21 个人首页和项目入口。</li>
-          <li><code>#meridian</code>：Meridian-J21 投研平台 landing / launch 页面。</li>
-          <li><code>#terminal</code>：terminal-style 投研工作台展示页，包含 strategy equity curve、watchlist、strategy queue、research notebook、exposure heatmap 和本地工具下载链接。</li>
+          <li><code>http://localhost:8765/personal_site/</code>：Jayden21 个人首页及项目外链。</li>
+          <li><code>http://localhost:8765/j21_terminal/</code>：Meridian landing 与 terminal prototype。</li>
+          <li><code>http://localhost:8765/database_app/site/</code>：CodeGen 产品 / 下载页。</li>
         </ul>
-        <p><code>site/app.js</code> 通过 GSAP CDN 提供 Home -&gt; Meridian -&gt; Terminal 的 view transition、入场动画和轻量 ambient motion。动效只使用 <code>transform</code> / <code>opacity</code>，并尊重 <code>prefers-reduced-motion</code>；如果 GSAP 无法加载，页面会退化为即时切换，不影响内容访问。</p>
         <p>该 wrapper 会用随机本地端口绑定 <code>127.0.0.1</code> 并打开系统浏览器。生成的 <code>.app</code> 会复制 <code>database_app</code> 源码、文档和纯 Python 依赖到 bundle resources，移动 <code>.app</code> 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。目标机器需要 Python 3.11+，或用 <code>PYTHON_BIN</code> 指向兼容 Python。</p>
         <p>直接启动脚本会在启动 server 前 <code>unset EODHD_API_KEY</code>，因此桌面式启动路径只使用 <code>Login / Config</code> 中保存的 token。</p>
         <p>公开下载边界：</p>
         <ul>
           <li>当前 DMG/PKG 是 unsigned/not notarized developer artifacts。</li>
           <li>对外发布前需要 Developer ID certificate、notarization、stapling 和 checksum。</li>
-          <li><code>site/PLAN.md</code> 记录个人网站上线计划、发布存储选项和 production checklist。</li>
+          <li><code>site/PLAN.md</code> 记录 CodeGen 下载页上线计划、发布存储选项和 production checklist。</li>
         </ul>
       </section>
       <section>
@@ -484,6 +488,6 @@ PYTHONPATH=src ../database_system_cli/.venv/bin/python -m pytest
       </section>
       <section>
         <h2>15. 当前状态</h2>
-        <p><code>database_app</code> 已实现 registry-driven 产品化版本，支持 14 个官方确认可用于 29.99 Extended 研究工作流的 endpoint，并保留 inventory-only 区分不在当前白名单内的 endpoint group。v0.6 已完成 read-only MySQL pool browser，Stocks wizard 的候选加载不再调用 EODHD API；Index Assets 明确为指数资产而非成分股，Sectors 在 taxonomy source 加入前禁用。v1.0 release 收口将当前本地工具作为独立子项目发布，并采用 Trellis 作为未来大任务执行层。v1.2 的 <code>site/</code> 静态页面已作为 Jayden21 个人首页、Meridian landing 和 terminal-style 投研平台展示入口存在，仍不调用后端 API 或读取 token。<code>database_system_cli</code> schema 和源码未被修改，<code>database_app</code> 当前作为独立子项目存在。</p>
+        <p><code>database_app</code> 已实现 registry-driven 产品化版本，支持 14 个官方确认可用于 29.99 Extended 研究工作流的 endpoint，并保留 inventory-only 区分不在当前白名单内的 endpoint group。v0.6 已完成 read-only MySQL pool browser，Stocks wizard 的候选加载不再调用 EODHD API；Index Assets 明确为指数资产而非成分股，Sectors 在 taxonomy source 加入前禁用。v1.0 release 收口将当前本地工具作为独立子项目发布，并采用 Trellis 作为未来大任务执行层。v1.3 已把个人首页和 J21 Terminal 从 <code>database_app/site/</code> 拆到仓库 sibling 根目录，<code>database_app/site/</code> 当前只负责 CodeGen 产品说明与安装产物下载。<code>database_system_cli</code> schema 和源码未被修改。</p>
       </section>
 </main></body></html>

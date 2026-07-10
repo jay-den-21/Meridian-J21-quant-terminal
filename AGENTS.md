@@ -22,12 +22,15 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 # Repository Governance
 
-This repository has two sibling subprojects:
+This repository has four sibling components with independent ownership:
 
 - `database_system_cli/`: database ingestion, validation, repair, and research read layer.
 - `database_app/`: local EODHD API code generator and API playground.
+- `personal_site/`: Jayden21 personal homepage only.
+- `j21_terminal/`: Meridian landing page and J21 terminal prototype only.
 
 Do not put new app work into `database_system_cli/` unless the user explicitly asks to extend the database CLI. Do not let `database_app/` write database schemas, migrations, or ingestion data.
+Do not place personal-profile or terminal frontend code under `database_app/`. Cross-product navigation must use links between the sibling roots rather than embedding one product's views or assets inside another.
 
 ## Source Of Truth
 
