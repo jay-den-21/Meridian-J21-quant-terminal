@@ -63,6 +63,17 @@ EODHD `provider_symbol` 必须保留，例如 `AAPL.US`。标准 `symbol` 也必
 - 用户执行后，AI agent 负责读取 CLI 输出、任务日志或数据库，说明具体验证了哪些表、哪些行数、哪些缺失/重复/异常。
 - 只有当用户明确说“你帮我跑”或同等授权时，AI agent 才能代跑大规模真实 ingest。
 
+## 数据拉取双入口
+
+- `poetry run j21 ingest ...` 是确定性的 CLI 入口，面向 AI、自动化和熟悉命令行的用户。
+- `poetry run j21 menu` 是中英文交互式入口，面向希望用方向键选择参数并查看进度条的用户。
+- 两个入口必须调用同一个 `fdp.get_data` Job；菜单禁止通过 shell 再调用 CLI，CLI 也不得复制 Job 的业务流程。
+- Job 负责参数解析、只读 preflight、API/存储预算、执行、失败策略和结构化结果；Typer 与 terminal menu 只负责输入输出。
+- 参数优先级固定为：CLI/menu 显式值 > Python Job 模块中的可编辑默认值 > 缺失时报 `ValueError`。不得猜 symbol、日期或 asset type。
+- 新增可拉取 workflow 时，必须同步检查 Job registry、Typer 命令、菜单 wizard、tests 和 CLI/menu 文档。
+- `--output json` 的 stdout 只能包含一个稳定 JSON 结果；进度事件写 stderr，且任何输出都不得包含 API key。
+- 菜单不会改变“大规模拉数由用户操作”的规则；确认页必须先显示目标表、参数来源和预算，默认选择取消。
+
 ## 常用命令
 
 依赖安装：

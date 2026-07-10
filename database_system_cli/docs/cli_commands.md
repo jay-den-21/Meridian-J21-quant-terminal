@@ -2,6 +2,91 @@
 
 This file is the quick command reference for `database_system_cli`.
 
+## Two Equivalent Ingest Entry Points
+
+For a human-operated, bilingual arrow-key workflow:
+
+```bash
+poetry run j21 menu
+```
+
+For scripts, AI tools, reproducible notes, and automation:
+
+```bash
+poetry run j21 ingest --help
+```
+
+Both routes call the same `fdp.get_data` Jobs. The menu does not start a shell
+subprocess. Before execution it shows the resolved parameters, their sources,
+target tables, API/storage estimate, Job module, and an equivalent CLI command.
+Confirmation defaults to **No**.
+
+All migrated ingest commands support `--output text|json`. JSON mode emits one
+versioned `JobResult` on stdout and sends progress events to stderr:
+
+```bash
+poetry run j21 ingest daily --market US --date 2026-07-07 --output json
+```
+
+## Instrument Master
+
+Refresh active instruments and identifier history:
+
+```bash
+poetry run j21 ingest instruments --market US
+```
+
+The command uses EODHD symbol-change history before the current exchange list.
+It writes canonical instruments and identifier history; it does not guess rename
+relationships.
+
+## Historical Stock And ETF EOD
+
+Load a small explicit symbol set:
+
+```bash
+poetry run j21 ingest history \
+  --symbols AAPL,MSFT,SPY \
+  --asset-types stock,etf \
+  --from 2024-01-01 \
+  --to 2024-01-31 \
+  --instrument-status active
+```
+
+`--symbols` accepts canonical symbols such as `AAPL` and provider symbols such
+as `AAPL.US`; lookup is performed through the instrument master. Use
+`--instrument-status inactive` to fetch only inactive/delisted symbols, or
+`all` for both. Empty symbols are rejected because full-universe history should
+use Bulk EOD.
+
+Each symbol is committed independently under one aggregate task run. An isolated
+404/no-data symbol is recorded and the batch continues. Authentication,
+entitlement, database, or repeated global transient failures stop later symbols.
+
+## Index And Calendar
+
+```bash
+poetry run j21 ingest indices \
+  --provider-symbols GSPC.INDX,DJI.INDX,IXIC.INDX,NDX.INDX \
+  --from 2024-01-01 \
+  --to 2024-12-31
+
+poetry run j21 ingest calendar --market US --from 2024-01-01 --to 2024-12-31
+```
+
+## One-Day Bulk EOD
+
+```bash
+poetry run j21 ingest daily \
+  --market US \
+  --date 2026-07-07 \
+  --asset-types stock,etf
+```
+
+Matched rows enter the canonical split price tables. Unmatched provider rows are
+retained in `system.bulk_unmatched_daily_price_observation` for later
+classification and routing.
+
 ## Daily Range Bulk EOD
 
 Estimate a date range before writing:

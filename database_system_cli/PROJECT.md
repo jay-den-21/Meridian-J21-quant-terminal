@@ -56,6 +56,8 @@
 - SQLAlchemy Core
 - Alembic
 - Typer
+- Questionary
+- tqdm
 - pytest
 - YAML + `.env`
 
@@ -87,6 +89,12 @@ financial-data-platform/
       fdp/
         cli.py
         config.py
+        get_data/
+          historical/
+          bulk/
+          instruments/
+          reconcile/
+        menu/
         sources/
           eodhd/
         storage/
@@ -103,8 +111,10 @@ financial-data-platform/
 - `quality/` 负责重复、缺失、OHLCV 合法性、空值等检查。
 - `repair/` 负责生成和执行人工确认后的 backfill plan。
 - `research/` 负责 Python/notebook/backtest 读取接口，例如 `DailyPriceReader.get_daily_prices(...)`。
+- `get_data/` 是 CLI、terminal menu 和 Python 调用共用的 Job 层，负责参数解析、preflight、执行和结构化结果。
+- `menu/` 只负责中英文 prompts、确认页和 `tqdm` 展示，不复制 provider/storage 业务逻辑，也不 shell out 到 CLI。
 - `docs/architecture.md` 记录 Data Core / future Terminal 的边界，以及 MySQL daily 与 intraday Parquet bar store 的取舍。
-- `cli.py` 暴露 `j21 ingest`、`j21 validate`、`j21 repair`、`j21 research`；`fdp` 暂时保留为兼容 alias。
+- `cli.py` 暴露 `j21 menu`、`j21 ingest`、`j21 validate`、`j21 repair`、`j21 research`；`fdp` 暂时保留为兼容 alias。
 
 ## 5. 数据模型
 
@@ -531,6 +541,32 @@ backfill_missing_daily_price
 
 ## 6. 数据流
 
+### 6.0 Shared ingest orchestration
+
+人类菜单和确定性 CLI 是两个输入界面，不是两套 ingestion 实现。
+
+```text
+Typer CLI -----\
+                -> fdp.get_data Job -> EODHD source -> validation -> storage
+Terminal menu -/
+```
+
+每个 Job 必须提供同一组稳定能力：
+
+- 解析参数，记录参数来自 CLI/menu 还是 Python Job default。
+- 在 API 调用和数据库写入前执行只读 preflight。
+- 返回目标表、work units、API-call/storage 估算和 warning。
+- 通过 UI-neutral progress event 报告进度；CLI 显示稳定文本，菜单使用 `tqdm`。
+- 返回带 `schema_version` 的 `JobResult`；`--output json` 供未来 AI skill/automation 使用。
+
+参数优先级固定为：
+
+```text
+CLI/menu explicit value > Python Job module default > ValueError
+```
+
+历史 stock/ETF pull 通过 instrument master 同时解析 `AAPL` 和 `AAPL.US`，不能盲目拼接 `.US`。每个 symbol 使用独立 transaction，共用一个 aggregate `ingestion_task_run`；单个无数据/404 可以继续，401/402/403、数据库错误或连续全局 transient failure 必须停止后续 work units。
+
 ### 6.1 Load instrument list
 
 从 EODHD Exchange Symbols 获取 US 市场 symbol 列表。
@@ -684,6 +720,13 @@ get_daily_prices(symbols, start, end, adjusted=True)
 
 命令入口建议为 `j21`。`fdp` 暂时保留为兼容 alias，避免旧笔记和脚本立刻失效。
 
+数据拉取有两个等价入口：
+
+- `poetry run j21 ingest ...`：参数稳定、适合 AI/自动化，可用 `--output json` 获取机器可读结果。
+- `poetry run j21 menu`：中英文方向键菜单，显示 Job module、参数来源、目标表、预算和等价 CLI，人工确认后才执行并显示进度条。
+
+`j21 menu` 直接调用 `fdp.get_data` Job，不会通过 subprocess 调用 CLI。菜单当前只覆盖 ingest workflows；validate、repair、quarantine 和 research 仍使用确定性 CLI。
+
 术语：
 
 - `ingest`：拉取并入库。
@@ -693,8 +736,9 @@ get_daily_prices(symbols, start, end, adjusted=True)
 示例命令：
 
 ```bash
+poetry run j21 menu
 poetry run j21 ingest instruments --market US --source eodhd
-poetry run j21 ingest history --market US --symbols AAPL,MSFT,SPY --from 2006-01-01 --to 2026-01-01
+poetry run j21 ingest history --market US --symbols AAPL,MSFT,SPY --asset-types stock,etf --from 2006-01-01 --to 2026-01-01
 poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --include-inactive
 poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --instrument-status inactive
 poetry run j21 ingest delisted-instruments --market US
@@ -715,6 +759,7 @@ poetry run j21 quarantine run --plan-id 456 --yes
 poetry run j21 repair list --market US
 poetry run j21 repair confirm --plan-id 123 --yes
 poetry run j21 repair run --plan-id 123 --yes
+poetry run j21 ingest daily --market US --date 2026-05-20 --output json
 ```
 
 ## 8. 错误处理原则

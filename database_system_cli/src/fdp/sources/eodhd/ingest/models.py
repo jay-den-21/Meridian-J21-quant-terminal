@@ -78,6 +78,21 @@ class HistoricalDailyPriceLoadResult:
 
 
 @dataclass(frozen=True)
+class HistoricalDailyPriceUnitResult:
+    """Outcome for one instrument inside a parent historical ingest run."""
+
+    provider_symbol: str
+    status: str
+    status_code: int | None
+    rows_fetched: int
+    rows_inserted: int
+    rows_rejected: int
+    api_calls: int
+    rejected_rows: list[RejectedDailyPriceRow]
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
 class BulkDailyPriceLoadResult:
     """Summary returned by the EODHD bulk daily price loader.
 
@@ -98,6 +113,7 @@ class BulkDailyPriceLoadResult:
     rejected_rows: list[RejectedDailyPriceRow]
     unmatched_rows: int
     error_message: str | None = None
+    status_code: int | None = None
 
 
 @dataclass(frozen=True)

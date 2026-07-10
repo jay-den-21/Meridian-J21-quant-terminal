@@ -6,6 +6,7 @@ from fdp.sources.eodhd.ingest.daily import (
     load_daily_prices_for_instrument_ids,
     load_etf_daily_prices,
     load_historical_daily_prices,
+    load_historical_daily_price_unit,
     load_index_daily_prices,
     load_stock_daily_prices,
 )
@@ -19,6 +20,7 @@ from fdp.sources.eodhd.ingest.models import (
     BulkDailyPriceLoadResult,
     DelistedInstrumentLoadResult,
     HistoricalDailyPriceLoadResult,
+    HistoricalDailyPriceUnitResult,
     InstrumentLoadResult,
     MarketCalendarLoadResult,
 )
@@ -31,6 +33,7 @@ __all__ = [
     "BulkDailyPriceLoadResult",
     "DelistedInstrumentLoadResult",
     "HistoricalDailyPriceLoadResult",
+    "HistoricalDailyPriceUnitResult",
     "InstrumentLoadResult",
     "MarketCalendarLoadResult",
     "load_exchange_symbols",
@@ -39,6 +42,7 @@ __all__ = [
     "load_delisted_instruments",
     "load_etf_daily_prices",
     "load_historical_daily_prices",
+    "load_historical_daily_price_unit",
     "load_index_daily_prices",
     "load_market_calendar",
     "load_stock_daily_prices",

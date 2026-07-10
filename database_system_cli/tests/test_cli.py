@@ -1,12 +1,8 @@
-from datetime import date
-
 import pytest
 from typer.testing import CliRunner
 
 import fdp.cli as cli_module
 from fdp.cli import app
-from fdp.config import EodhdRuntimeConfig
-from fdp.sources.eodhd.ingest import BulkDailyPriceLoadResult
 
 
 def test_cli_registers_instrument_ingest_command() -> None:
@@ -192,57 +188,13 @@ def test_retry_progress_message_includes_eodhd_error_and_operator_guidance(
     assert "wait=61s" in message
 
 
-def test_bulk_daily_range_api_call_estimate_uses_eodhd_bulk_cost() -> None:
-    assert cli_module._estimated_bulk_daily_api_calls(trading_days=3, symbols=None) == 300
-    assert (
-        cli_module._estimated_bulk_daily_api_calls(
-            trading_days=3,
-            symbols=["AAPL", "MSFT"],
-        )
-        == 306
-    )
-
-
 def test_daily_range_refuses_api_budget_before_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeEngine:
-        def begin(self) -> "FakeEngine":
-            return self
+    def fail_over_budget(self, **kwargs):
+        raise ValueError("estimated EODHD API calls 100 exceed max-api-calls 99")
 
-        def __enter__(self) -> "FakeEngine":
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            return None
-
-    def fail_api_key() -> str:
-        raise AssertionError("api key must not be read when estimate is over budget")
-
-    monkeypatch.setattr(cli_module, "database_url_from_env", lambda: "sqlite://")
-    monkeypatch.setattr(cli_module, "create_engine", lambda url: FakeEngine())
-    monkeypatch.setattr(cli_module, "ensure_runtime_schemas", lambda connection: None)
-    monkeypatch.setattr(
-        cli_module,
-        "_ensure_calendar_coverage",
-        lambda connection, *, date_from, date_to: None,
-    )
-    monkeypatch.setattr(
-        cli_module,
-        "_load_trading_dates",
-        lambda connection, *, date_from, date_to: [date(2023, 1, 3)],
-    )
-    monkeypatch.setattr(
-        cli_module,
-        "_count_active_instruments",
-        lambda connection, *, market, asset_types: 10,
-    )
-    monkeypatch.setattr(
-        cli_module,
-        "eodhd_runtime_config_from_env",
-        lambda: EodhdRuntimeConfig(daily_call_budget=100_000),
-    )
-    monkeypatch.setattr(cli_module, "eodhd_api_key_from_env", fail_api_key)
+    monkeypatch.setattr(cli_module.DailyRangeJob, "run", fail_over_budget)
 
     result = CliRunner().invoke(
         app,
@@ -262,74 +214,6 @@ def test_daily_range_refuses_api_budget_before_api_key(
 
     assert result.exit_code != 0
     assert "estimated EODHD API calls 100 exceed max-api-calls 99" in result.output
-
-
-def test_ensure_calendar_coverage_refuses_incomplete_range() -> None:
-    class FakeScalar:
-        def scalar_one(self) -> int:
-            return 2
-
-    class FakeConnection:
-        def execute(self, statement) -> FakeScalar:
-            return FakeScalar()
-
-    with pytest.raises(cli_module.typer.BadParameter, match="market_calendar coverage is incomplete"):
-        cli_module._ensure_calendar_coverage(
-            FakeConnection(),
-            date_from=date(2023, 1, 1),
-            date_to=date(2023, 1, 3),
-        )
-
-
-def test_run_daily_range_ingest_aggregates_parallel_success_and_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    results = {
-        date(2023, 1, 3): BulkDailyPriceLoadResult(
-            run_id=1,
-            status="success",
-            exchange="US",
-            trade_date=date(2023, 1, 3),
-            rows_fetched=10,
-            rows_matched=9,
-            rows_inserted=8,
-            rows_rejected=1,
-            api_calls=1,
-            rejected_rows=[],
-            unmatched_rows=1,
-        ),
-        date(2023, 1, 4): RuntimeError("boom from worker"),
-    }
-
-    def fake_run_one_day(engine, client, *, trade_date, exchange, market, asset_types):
-        result = results[trade_date]
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    monkeypatch.setattr(cli_module, "_run_one_daily_range_day", fake_run_one_day)
-
-    totals = cli_module._run_daily_range_ingest(
-        object(),
-        object(),
-        trade_dates=[date(2023, 1, 3), date(2023, 1, 4)],
-        exchange="US",
-        market="US",
-        asset_types=["stock"],
-        parallel=True,
-        workers=2,
-    )
-
-    assert totals == {
-        "rows_fetched": 10,
-        "rows_matched": 9,
-        "rows_inserted": 8,
-        "rows_rejected": 1,
-        "api_calls": 1,
-        "success": 1,
-        "partial_failed": 0,
-        "failed": 1,
-    }
 
 
 def test_cli_registers_delisted_instruments_ingest_command() -> None:

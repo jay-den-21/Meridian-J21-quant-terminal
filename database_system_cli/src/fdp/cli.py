@@ -1,15 +1,25 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from datetime import date
-from typing import Any
 
 import typer
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine
 
+from fdp.get_data import (
+    ActiveInstrumentsJob,
+    BulkDailyJob,
+    BulkUnmatchedReconcileJob,
+    DailyRangeJob,
+    DelistedInstrumentsJob,
+    EtfDailyJob,
+    HistoricalDailyJob,
+    IndexDailyJob,
+    MarketCalendarJob,
+    StockDailyJob,
+)
+from fdp.get_data.contracts import JobResult, ProgressEvent
+from fdp.get_data.reporting import format_eodhd_event
 from fdp.bulk_unmatched import (
-    classify_bulk_unmatched_observations,
     list_bulk_unmatched_observations,
-    route_bulk_unmatched_observations,
     summarize_bulk_unmatched_observations,
 )
 from fdp.config import (
@@ -36,20 +46,12 @@ from fdp.quarantine import (
 from fdp.research import DailyPriceReader
 from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.ingest import (
-    BulkDailyPriceLoadResult,
     DEFAULT_INDEX_PROVIDER_SYMBOLS,
     SYMBOL_CHANGE_HISTORY_START,
-    load_bulk_daily_prices,
-    load_delisted_instruments,
-    load_index_daily_prices,
-    load_exchange_symbols,
-    load_historical_daily_prices,
-    load_market_calendar,
 )
 from fdp.sources.eodhd.retry import EodhdApiEvent, EodhdRequestRateLimiter
 from fdp.quality.validation import validate_daily_prices
 from fdp.storage.schema import ensure_runtime_schemas
-from fdp.storage.tables import instrument, market_calendar
 
 app = typer.Typer(help="Financial data platform command line interface.")
 ingest_app = typer.Typer(help="Ingest source data into the database.")
@@ -65,7 +67,6 @@ app.add_typer(quarantine_app, name="quarantine")
 app.add_typer(research_app, name="research")
 research_app.add_typer(bulk_unmatched_app, name="bulk-unmatched")
 
-EODHD_BULK_FULL_EXCHANGE_API_CALL_COST = 100
 DAILY_PRICE_ASSET_TYPES = {"stock", "etf", "index"}
 QUARANTINE_DAILY_PRICE_ISSUE_TYPES = {
     "duplicate_key",
@@ -74,9 +75,42 @@ QUARANTINE_DAILY_PRICE_ISSUE_TYPES = {
 }
 
 
+class CliProgressReporter:
+    """Stable line-oriented reporter; JSON mode sends events to stderr."""
+
+    def __init__(self, *, stderr: bool = False) -> None:
+        self.stderr = stderr
+
+    def on_event(self, event: ProgressEvent) -> None:
+        if event.kind not in {"unit_completed", "unit_failed", "finish"}:
+            return
+        counters = " ".join(f"{key}={value}" for key, value in event.counters.items())
+        message = (
+            f"{event.job} progress completed={event.completed}/{event.total} "
+            f"unit={event.unit or '-'} status={event.message or event.kind}"
+        )
+        if counters:
+            message = f"{message} {counters}"
+        typer.echo(message, err=self.stderr)
+
+    def on_api_event(self, event: EodhdApiEvent) -> None:
+        typer.echo(format_eodhd_event(event), err=self.stderr)
+
+
 @app.callback()
 def main() -> None:
     """Project CLI entrypoint."""
+
+
+@app.command("menu")
+def terminal_menu() -> None:
+    """Open the bilingual human-oriented terminal ingest menu."""
+    from fdp.menu import run_terminal_menu
+
+    try:
+        run_terminal_menu()
+    except RuntimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @ingest_app.command("instruments")
@@ -88,6 +122,7 @@ def ingest_instruments(
         "--rename-from",
         help="Earliest EODHD symbol-change-history date to reconcile.",
     ),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
@@ -97,28 +132,48 @@ def ingest_instruments(
     except ValueError as exc:
         raise typer.BadParameter("rename-from must be YYYY-MM-DD") from exc
 
-    api_key = eodhd_api_key_from_env()
-    engine = create_engine(database_url_from_env())
-    client = _eodhd_client(api_key)
-
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        result = load_exchange_symbols(connection, client, market=market, rename_from=rename_from_date)
+    output_mode = _parse_output_format(output)
+    result = ActiveInstrumentsJob().run(
+        market=market,
+        rename_from=rename_from_date,
+        reporter=CliProgressReporter(stderr=output_mode == "json"),
+        override_source="cli",
+    )
+    if _emit_job_json(result, output_mode):
+        return
 
     typer.echo(
         "instrument ingest "
         f"run_id={result.run_id} status={result.status} "
-        f"fetched={result.rows_fetched} accepted={result.rows_accepted} "
-        f"rejected={result.rows_rejected}"
+        f"fetched={result.rows_fetched} accepted={result.rows_matched} "
+        f"rejected={result.rows_rejected} "
+        f"lifecycle_events={result.metrics['lifecycle_events_inserted']}"
     )
 
 
 @ingest_app.command("history")
 def ingest_history(
-    symbols: str = typer.Option(..., "--symbols", help="Comma-separated current symbols to ingest."),
-    date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
-    date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
+    symbols: str | None = typer.Option(
+        None,
+        "--symbols",
+        help="Comma-separated canonical or provider symbols; falls back to job defaults.",
+    ),
+    date_from: str | None = typer.Option(
+        None,
+        "--from",
+        help="Start trade date; falls back to the selected job default.",
+    ),
+    date_to: str | None = typer.Option(
+        None,
+        "--to",
+        help="End trade date; falls back to the selected job default.",
+    ),
     market: str = typer.Option("US", "--market", help="Market code to ingest."),
+    asset_types: str = typer.Option(
+        "stock,etf",
+        "--asset-types",
+        help="Comma-separated historical asset types: stock,etf.",
+    ),
     instrument_status: str = typer.Option(
         "active",
         "--instrument-status",
@@ -130,74 +185,84 @@ def ingest_history(
         help="Deprecated compatibility flag. Use --instrument-status all/active instead.",
     ),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
 
-    parsed_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
-    if not parsed_symbols:
-        raise typer.BadParameter("symbols must contain at least one symbol")
-
-    try:
-        parsed_from = date.fromisoformat(date_from)
-        parsed_to = date.fromisoformat(date_to)
-    except ValueError as exc:
-        raise typer.BadParameter("from/to must be YYYY-MM-DD") from exc
-    if parsed_to < parsed_from:
+    parsed_symbols = None
+    if symbols is not None:
+        parsed_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
+        if not parsed_symbols:
+            raise typer.BadParameter("symbols must contain at least one symbol")
+    parsed_from = _parse_optional_date(date_from, field_name="from")
+    parsed_to = _parse_optional_date(date_to, field_name="to")
+    if parsed_from is not None and parsed_to is not None and parsed_to < parsed_from:
         raise typer.BadParameter("to must be greater than or equal to from")
+    parsed_asset_types = _parse_asset_types(asset_types, supported={"stock", "etf"})
     resolved_instrument_status = _resolve_history_instrument_status(
         instrument_status=instrument_status,
         include_inactive=include_inactive,
     )
-
-    api_key = eodhd_api_key_from_env()
-    engine = create_engine(database_url_from_env())
-    client = _eodhd_client(api_key)
-
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        result = load_historical_daily_prices(
-            connection,
-            client,
+    if parsed_asset_types == ["stock"]:
+        job = StockDailyJob()
+    elif parsed_asset_types == ["etf"]:
+        job = EtfDailyJob()
+    else:
+        job = HistoricalDailyJob(asset_types=tuple(parsed_asset_types))
+    output_mode = _parse_output_format(output)
+    try:
+        result = job.run(
             symbols=parsed_symbols,
             date_from=parsed_from,
             date_to=parsed_to,
             market=market,
             instrument_status=resolved_instrument_status,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
+            override_source="cli",
         )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
 
     typer.echo(
         "history ingest "
         f"run_id={result.run_id} status={result.status} "
-        f"symbols={result.symbols_loaded}/{result.symbols_requested} "
+        f"symbols={result.work_units_completed - result.work_units_failed}/"
+        f"{result.work_units_total} "
         f"instrument_status={resolved_instrument_status} "
         f"fetched={result.rows_fetched} inserted={result.rows_inserted} "
         f"rejected={result.rows_rejected}"
     )
+    if result.missing_symbols:
+        typer.echo(f"missing_symbols={','.join(result.missing_symbols)}")
 
 
 @ingest_app.command("delisted-instruments")
 def ingest_delisted_instruments(
     market: str = typer.Option("US", "--market", help="Market code to ingest."),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     """Load inactive/delisted stock and ETF instruments from EODHD."""
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
 
-    api_key = eodhd_api_key_from_env()
-    engine = create_engine(database_url_from_env())
-    client = _eodhd_client(api_key)
-
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        result = load_delisted_instruments(connection, client, market=market)
+    output_mode = _parse_output_format(output)
+    result = DelistedInstrumentsJob().run(
+        market=market,
+        reporter=CliProgressReporter(stderr=output_mode == "json"),
+        override_source="cli",
+    )
+    if _emit_job_json(result, output_mode):
+        return
 
     typer.echo(
         "delisted-instruments ingest "
         f"run_id={result.run_id} status={result.status} "
-        f"fetched={result.rows_fetched} accepted={result.rows_accepted} "
-        f"rejected={result.rows_rejected} lifecycle_events={result.lifecycle_events_inserted}"
+        f"fetched={result.rows_fetched} accepted={result.rows_matched} "
+        f"rejected={result.rows_rejected}"
     )
 
 
@@ -213,6 +278,7 @@ def ingest_indices(
     market: str = typer.Option("US", "--market", help="Market code to attach to index instruments."),
     currency: str = typer.Option("USD", "--currency", help="Currency to attach to index instruments."),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
@@ -227,26 +293,26 @@ def ingest_indices(
 
     parsed_from, parsed_to = _parse_date_range(date_from, date_to)
 
-    api_key = eodhd_api_key_from_env()
-    engine = create_engine(database_url_from_env())
-    client = _eodhd_client(api_key)
-
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        result = load_index_daily_prices(
-            connection,
-            client,
-            provider_symbols=parsed_provider_symbols,
+    output_mode = _parse_output_format(output)
+    try:
+        result = IndexDailyJob(currency=currency, currency_source="cli").run(
+            symbols=parsed_provider_symbols,
             date_from=parsed_from,
             date_to=parsed_to,
             market=market,
-            currency=currency,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
+            override_source="cli",
         )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
 
     typer.echo(
         "index history ingest "
         f"run_id={result.run_id} status={result.status} "
-        f"symbols={result.symbols_loaded}/{result.symbols_requested} "
+        f"symbols={result.work_units_completed - result.work_units_failed}/"
+        f"{result.work_units_total} "
         f"fetched={result.rows_fetched} inserted={result.rows_inserted} "
         f"rejected={result.rows_rejected}"
     )
@@ -258,25 +324,26 @@ def ingest_calendar(
     date_to: str = typer.Option(..., "--to", help="End calendar date in YYYY-MM-DD format."),
     market: str = typer.Option("US", "--market", help="Market/exchange code to ingest."),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
 
     parsed_from, parsed_to = _parse_date_range(date_from, date_to)
 
-    api_key = eodhd_api_key_from_env()
-    engine = create_engine(database_url_from_env())
-    client = _eodhd_client(api_key)
-
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        result = load_market_calendar(
-            connection,
-            client,
+    output_mode = _parse_output_format(output)
+    try:
+        result = MarketCalendarJob().run(
             date_from=parsed_from,
             date_to=parsed_to,
             market=market,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
+            override_source="cli",
         )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
 
     typer.echo(
         "calendar ingest "
@@ -310,6 +377,7 @@ def ingest_daily(
     ),
     market: str = typer.Option("US", "--market", help="Internal market code to match instruments."),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
@@ -322,26 +390,27 @@ def ingest_daily(
             raise typer.BadParameter("symbols must contain at least one symbol when provided")
     parsed_asset_types = _parse_asset_types(asset_types, supported={"stock", "etf"})
 
-    api_key = eodhd_api_key_from_env()
-    engine = create_engine(database_url_from_env())
-    client = _eodhd_client(api_key)
-
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        result = load_bulk_daily_prices(
-            connection,
-            client,
+    output_mode = _parse_output_format(output)
+    try:
+        result = BulkDailyJob().run(
             exchange=exchange,
             trade_date=parsed_date,
             symbols=parsed_symbols,
             market=market,
             asset_types=parsed_asset_types,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
+            override_source="cli",
         )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
 
     typer.echo(
         "daily bulk ingest "
-        f"run_id={result.run_id} status={result.status} exchange={result.exchange} "
-        f"date={result.trade_date or 'last-trading-day'} fetched={result.rows_fetched} "
+        f"run_id={result.run_id} status={result.status} exchange={result.parameters['exchange']} "
+        f"date={result.parameters['trade_date'] or 'last-trading-day'} "
+        f"fetched={result.rows_fetched} "
         f"matched={result.rows_matched} inserted={result.rows_inserted} "
         f"rejected={result.rows_rejected}"
     )
@@ -399,6 +468,7 @@ def ingest_daily_range(
         help="Refuse execution when estimated EODHD API-call cost exceeds this budget.",
     ),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     """Run guarded multi-day EODHD bulk daily ingestion over trading calendar days."""
     if source.lower() != "eodhd":
@@ -424,93 +494,60 @@ def ingest_daily_range(
 
     parsed_from, parsed_to = _parse_date_range(date_from, date_to)
     parsed_asset_types = _parse_asset_types(asset_types, supported={"stock", "etf"})
-    runtime_config = eodhd_runtime_config_from_env()
-    resolved_parallel = runtime_config.daily_range_parallel_enabled if parallel is None else parallel
-    resolved_workers = workers or runtime_config.daily_range_max_workers
-    if not resolved_parallel:
-        resolved_workers = 1
-    resolved_max_requests_per_minute = (
-        max_requests_per_minute or runtime_config.max_requests_per_minute
-    )
-    resolved_max_api_calls = max_api_calls or runtime_config.daily_call_budget
+    if not yes:
+        if not dry_run:
+            raise typer.BadParameter("--execute requires --yes")
 
-    engine = create_engine(database_url_from_env())
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        _ensure_calendar_coverage(
-            connection,
+    output_mode = _parse_output_format(output)
+    try:
+        result = DailyRangeJob().run(
+            execute=not dry_run,
             date_from=parsed_from,
             date_to=parsed_to,
-        )
-        trade_dates = _load_trading_dates(
-            connection,
-            date_from=parsed_from,
-            date_to=parsed_to,
-        )
-        active_instruments = _count_active_instruments(
-            connection,
-            market=market,
+            exchange=exchange,
             asset_types=parsed_asset_types,
+            market=market,
+            bytes_per_row=bytes_per_row,
+            max_estimated_gb=max_estimated_gb,
+            parallel=parallel,
+            workers=workers,
+            max_requests_per_minute=max_requests_per_minute,
+            max_api_calls=max_api_calls,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
+            override_source="cli",
         )
-        estimated_rows = len(trade_dates) * active_instruments
-        estimated_gb = _estimated_storage_gb(estimated_rows, bytes_per_row=bytes_per_row)
-        estimated_api_calls = _estimated_bulk_daily_api_calls(
-            trading_days=len(trade_dates),
-            symbols=None,
-        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
 
+    preflight = result.preflight
+    if preflight is None:
+        raise RuntimeError("daily-range result is missing preflight details")
+    parameters = preflight.parameters
     typer.echo(
         "daily-range estimate "
-        f"date_from={parsed_from} date_to={parsed_to} trading_days={len(trade_dates)} "
-        f"active_instruments={active_instruments} estimated_rows={estimated_rows} "
-        f"estimated_gb={estimated_gb:.2f} max_estimated_gb={max_estimated_gb:.2f} "
-        f"estimated_api_calls={estimated_api_calls} max_api_calls={resolved_max_api_calls} "
-        f"parallel={str(resolved_parallel).lower()} workers={resolved_workers} "
-        f"max_requests_per_minute={resolved_max_requests_per_minute}"
+        f"date_from={parameters['date_from']} date_to={parameters['date_to']} "
+        f"trading_days={preflight.work_units} estimated_rows={preflight.estimated_rows} "
+        f"estimated_gb={preflight.estimated_gb:.2f} "
+        f"max_estimated_gb={parameters['max_estimated_gb']:.2f} "
+        f"estimated_api_calls={preflight.estimated_api_calls} "
+        f"max_api_calls={parameters['max_api_calls']} "
+        f"parallel={str(parameters['parallel']).lower()} workers={parameters['workers']} "
+        f"max_requests_per_minute={parameters['max_requests_per_minute']}"
     )
-    if not trade_dates:
-        raise typer.BadParameter("no trading days found in market_calendar for this range")
-    if estimated_gb > max_estimated_gb:
-        raise typer.BadParameter(
-            f"estimated storage {estimated_gb:.2f}GB exceeds max-estimated-gb {max_estimated_gb:.2f}GB"
-        )
-    if estimated_api_calls > resolved_max_api_calls:
-        raise typer.BadParameter(
-            f"estimated EODHD API calls {estimated_api_calls} exceed max-api-calls "
-            f"{resolved_max_api_calls}; split the date range or raise the budget explicitly"
-        )
-    if dry_run:
+    if result.status == "dry_run":
         typer.echo("dry-run only; rerun with --execute --yes to ingest this range")
         return
-    if not yes:
-        raise typer.BadParameter("--execute requires --yes")
-
-    api_key = eodhd_api_key_from_env()
-    client = _eodhd_client(
-        api_key,
-        max_retries=runtime_config.max_retries,
-        retry_delay_seconds=runtime_config.retry_delay_seconds,
-        max_requests_per_minute=resolved_max_requests_per_minute,
-    )
-    totals = _run_daily_range_ingest(
-        engine,
-        client,
-        trade_dates=trade_dates,
-        exchange=exchange,
-        market=market,
-        asset_types=parsed_asset_types,
-        parallel=resolved_parallel,
-        workers=resolved_workers,
-    )
 
     typer.echo(
         "daily-range ingest "
-        f"status=completed trading_days={len(trade_dates)} "
-        f"rows_fetched={totals['rows_fetched']} rows_matched={totals['rows_matched']} "
-        f"rows_inserted={totals['rows_inserted']} rows_rejected={totals['rows_rejected']} "
-        f"http_requests={totals['api_calls']} api_call_cost_estimate={estimated_api_calls} "
-        f"success_days={totals['success']} "
-        f"partial_failed_days={totals['partial_failed']} failed_days={totals['failed']}"
+        f"status={result.status} trading_days={result.work_units_total} "
+        f"rows_fetched={result.rows_fetched} rows_matched={result.rows_matched} "
+        f"rows_inserted={result.rows_inserted} rows_rejected={result.rows_rejected} "
+        f"unmatched={result.rows_unmatched} http_requests={result.api_calls} "
+        f"api_call_cost_estimate={preflight.estimated_api_calls} "
+        f"completed_days={result.work_units_completed} failed_days={result.work_units_failed}"
     )
 
 
@@ -531,6 +568,7 @@ def ingest_bulk_unmatched_route(
     ),
     yes: bool = typer.Option(False, "--yes", help="Required with --execute."),
     limit: int | None = typer.Option(None, "--limit", help="Optional max rows to route."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     """Route classified Bulk EOD unmatched observations into split daily price tables."""
     if limit is not None and limit <= 0:
@@ -540,28 +578,28 @@ def ingest_bulk_unmatched_route(
     parsed_from, parsed_to = _parse_date_range(date_from, date_to)
     parsed_asset_types = _parse_asset_types(asset_types, supported=DAILY_PRICE_ASSET_TYPES)
 
-    engine = create_engine(database_url_from_env())
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        try:
-            result = route_bulk_unmatched_observations(
-                connection,
-                date_from=parsed_from,
-                date_to=parsed_to,
-                market=market,
-                asset_types=parsed_asset_types,
-                dry_run=dry_run,
-                limit=limit,
-            )
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
+    output_mode = _parse_output_format(output)
+    try:
+        result = BulkUnmatchedReconcileJob().route(
+            date_from=parsed_from,
+            date_to=parsed_to,
+            market=market,
+            asset_types=parsed_asset_types,
+            limit=limit,
+            execute=not dry_run,
+            override_source="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
 
-    mode = "dry_run" if result.dry_run else "executed"
+    mode = "dry_run" if result.status == "dry_run" else "executed"
     typer.echo(
         "bulk-unmatched-route "
         f"mode={mode} date_from={parsed_from} date_to={parsed_to} "
-        f"routeable={result.routeable} rows_inserted={result.rows_inserted} "
-        f"rows_rejected={result.rows_rejected} routed={result.routed}"
+        f"routeable={result.rows_matched} rows_inserted={result.rows_inserted} "
+        f"rows_rejected={result.rows_rejected}"
     )
 
 
@@ -1007,25 +1045,23 @@ def research_bulk_unmatched_classify(
     if limit is not None and limit <= 0:
         raise typer.BadParameter("limit must be positive")
     parsed_from, parsed_to = _parse_date_range(date_from, date_to)
-    engine = create_engine(database_url_from_env())
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        result = classify_bulk_unmatched_observations(
-            connection,
+    result = BulkUnmatchedReconcileJob().classify(
             date_from=parsed_from,
             date_to=parsed_to,
             market=market,
             limit=limit,
-        )
+            override_source="cli",
+    )
 
     if as_json:
-        typer.echo(json.dumps(result.to_dict(), default=_json_cli_default, indent=2))
+        typer.echo(json.dumps(result.metrics, default=_json_cli_default, indent=2))
         return
+    metrics = result.metrics
     typer.echo(
         "bulk-unmatched classify "
-        f"scanned={result.scanned} matched={result.matched} "
-        f"needs_instrument={result.needs_instrument} "
-        f"non_price_asset={result.non_price_asset} unknown={result.unknown}"
+        f"scanned={metrics['scanned']} matched={metrics['matched']} "
+        f"needs_instrument={metrics['needs_instrument']} "
+        f"non_price_asset={metrics['non_price_asset']} unknown={metrics['unknown']}"
     )
 
 
@@ -1098,192 +1134,6 @@ def _parse_date_range(date_from: str, date_to: str) -> tuple[date, date]:
     if parsed_to < parsed_from:
         raise typer.BadParameter("to must be greater than or equal to from")
     return parsed_from, parsed_to
-
-
-def _load_trading_dates(
-    connection: Any,
-    *,
-    date_from: date,
-    date_to: date,
-) -> list[date]:
-    """Read trading calendar dates already loaded into `us_share.market_calendar`."""
-    rows = connection.execute(
-        select(market_calendar.c.calendar_date)
-        .where(
-            market_calendar.c.calendar_date >= date_from,
-            market_calendar.c.calendar_date <= date_to,
-            market_calendar.c.is_trading_day.is_(True),
-        )
-        .order_by(market_calendar.c.calendar_date)
-    ).scalars()
-    return list(rows)
-
-
-def _ensure_calendar_coverage(
-    connection: Any,
-    *,
-    date_from: date,
-    date_to: date,
-) -> None:
-    """Require one market-calendar row per calendar day before large-run estimates."""
-    expected_days = (date_to - date_from).days + 1
-    loaded_days = int(
-        connection.execute(
-            select(func.count())
-            .select_from(market_calendar)
-            .where(
-                market_calendar.c.calendar_date >= date_from,
-                market_calendar.c.calendar_date <= date_to,
-            )
-        ).scalar_one()
-    )
-    if loaded_days < expected_days:
-        raise typer.BadParameter(
-            "market_calendar coverage is incomplete for this range: "
-            f"loaded_days={loaded_days} expected_days={expected_days}; "
-            "run calendar ingest before estimating or executing a large backfill"
-        )
-
-
-def _count_active_instruments(
-    connection: Any,
-    *,
-    market: str,
-    asset_types: list[str],
-) -> int:
-    """Count active instruments in the requested market/asset scope for planning."""
-    return int(
-        connection.execute(
-            select(func.count())
-            .select_from(instrument)
-            .where(
-                instrument.c.provider == "EODHD",
-                instrument.c.market == market,
-                instrument.c.asset_type.in_(asset_types),
-                instrument.c.is_active.is_(True),
-            )
-        ).scalar_one()
-    )
-
-
-def _estimated_storage_gb(rows: int, *, bytes_per_row: int) -> float:
-    return rows * bytes_per_row / (1024 ** 3)
-
-
-def _estimated_bulk_daily_api_calls(*, trading_days: int, symbols: list[str] | None) -> int:
-    """Estimate EODHD Bulk EOD API-call currency for a daily-range request."""
-    per_request_cost = EODHD_BULK_FULL_EXCHANGE_API_CALL_COST + (len(symbols) if symbols else 0)
-    return trading_days * per_request_cost
-
-
-def _run_daily_range_ingest(
-    engine: Any,
-    client: EodhdClient,
-    *,
-    trade_dates: list[date],
-    exchange: str,
-    market: str,
-    asset_types: list[str],
-    parallel: bool,
-    workers: int,
-) -> dict[str, int]:
-    """Run daily-range ingest sequentially or with bounded per-day parallelism."""
-    totals = _empty_daily_range_totals()
-    if parallel and workers > 1:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(
-                    _run_one_daily_range_day,
-                    engine,
-                    client,
-                    trade_date=trade_date,
-                    exchange=exchange,
-                    market=market,
-                    asset_types=asset_types,
-                ): trade_date
-                for trade_date in trade_dates
-            }
-            for future in as_completed(futures):
-                trade_date = futures[future]
-                try:
-                    _record_daily_range_result(totals, future.result())
-                except Exception as exc:
-                    _record_daily_range_failure(totals, trade_date=trade_date, error=exc)
-        return totals
-
-    for trade_date in trade_dates:
-        try:
-            result = _run_one_daily_range_day(
-                engine,
-                client,
-                trade_date=trade_date,
-                exchange=exchange,
-                market=market,
-                asset_types=asset_types,
-            )
-            _record_daily_range_result(totals, result)
-        except Exception as exc:
-            _record_daily_range_failure(totals, trade_date=trade_date, error=exc)
-    return totals
-
-
-def _run_one_daily_range_day(
-    engine: Any,
-    client: EodhdClient,
-    *,
-    trade_date: date,
-    exchange: str,
-    market: str,
-    asset_types: list[str],
-) -> BulkDailyPriceLoadResult:
-    """Load one daily-range trading date inside its own transaction."""
-    with engine.begin() as connection:
-        return load_bulk_daily_prices(
-            connection,
-            client,
-            exchange=exchange,
-            trade_date=trade_date,
-            market=market,
-            asset_types=asset_types,
-        )
-
-
-def _empty_daily_range_totals() -> dict[str, int]:
-    return {
-        "rows_fetched": 0,
-        "rows_matched": 0,
-        "rows_inserted": 0,
-        "rows_rejected": 0,
-        "api_calls": 0,
-        "success": 0,
-        "partial_failed": 0,
-        "failed": 0,
-    }
-
-
-def _record_daily_range_result(totals: dict[str, int], result: BulkDailyPriceLoadResult) -> None:
-    totals["rows_fetched"] += result.rows_fetched
-    totals["rows_matched"] += result.rows_matched
-    totals["rows_inserted"] += result.rows_inserted
-    totals["rows_rejected"] += result.rows_rejected
-    totals["api_calls"] += result.api_calls
-    totals[result.status] = totals.get(result.status, 0) + 1
-    typer.echo(
-        "daily-range day "
-        f"date={result.trade_date} run_id={result.run_id} status={result.status} "
-        f"fetched={result.rows_fetched} matched={result.rows_matched} "
-        f"inserted={result.rows_inserted} rejected={result.rows_rejected}"
-    )
-
-
-def _record_daily_range_failure(
-    totals: dict[str, int],
-    *,
-    trade_date: date,
-    error: Exception,
-) -> None:
-    totals["failed"] += 1
-    typer.echo(f"daily-range day date={trade_date} status=failed error={error}")
 
 
 def _parse_optional_date_range(
@@ -1425,6 +1275,20 @@ def _json_cli_default(value: object) -> str:
     return str(value)
 
 
+def _parse_output_format(output: str) -> str:
+    normalized = output.strip().lower()
+    if normalized not in {"text", "json"}:
+        raise typer.BadParameter("output must be text or json")
+    return normalized
+
+
+def _emit_job_json(result: JobResult, output: str) -> bool:
+    if output != "json":
+        return False
+    typer.echo(json.dumps(result.to_dict(), default=_json_cli_default, indent=2))
+    return True
+
+
 def _print_repair_plan_records(rows: list[object], *, limit: int) -> None:
     """Print a compact CLI preview of repair plans."""
     if not rows:
@@ -1526,30 +1390,9 @@ def _eodhd_client(
 
 def _echo_eodhd_event(event: EodhdApiEvent) -> None:
     """Print EODHD request progress without exposing API keys."""
-    if event.kind == "request":
-        typer.echo(
-            "EODHD request "
-            f"endpoint={event.endpoint} attempt={event.attempt}/{event.max_attempts}"
-        )
-        return
-    if event.kind == "retry":
-        typer.echo(
-            "EODHD retrying "
-            f"endpoint={event.endpoint} attempt={event.attempt}/{event.max_attempts} "
-            f"status={event.status_code} error={event.error_message}. "
-            f"请稍等1分钟，马上重试～ (≧∇≦) wait={event.retry_delay_seconds}s"
-        )
-        return
-    if event.kind == "success":
-        typer.echo(
-            "EODHD success "
-            f"endpoint={event.endpoint} status={event.status_code} "
-            f"rows={event.rows_returned} duration_ms={event.duration_ms}"
-        )
-        return
-    if event.kind == "failed":
-        typer.echo(
-            "EODHD failed "
-            f"endpoint={event.endpoint} status={event.status_code} "
-            f"error={event.error_message}"
-        )
+    typer.echo(_format_eodhd_event(event))
+
+
+def _format_eodhd_event(event: EodhdApiEvent) -> str:
+    """Format one EODHD request lifecycle event without including credentials."""
+    return format_eodhd_event(event)

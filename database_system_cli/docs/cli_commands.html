@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI Commands</title><style>
+:root { --bg:#f6f7f9; --paper:#fff; --text:#20242a; --muted:#667085;
+  --border:#d9dee7; --accent:#1769aa; --code:#f1f4f8; --nav:#15191e; }
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body { margin:0; background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+  "Microsoft YaHei",sans-serif; line-height:1.7; }
+.layout { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:100vh; }
+nav { position:sticky; top:0; height:100vh; overflow:auto; padding:28px 20px;
+  background:var(--nav); color:#d9e2ec; border-right:1px solid #0b1118; }
+nav h2 { margin:0 0 16px; color:#fff; font-size:15px; }
+nav a { display:block; padding:6px 0; color:#c9d2dc; text-decoration:none;
+  border-bottom:1px solid rgba(255,255,255,.06); font-size:13px; line-height:1.35; }
+nav a:hover { color:#fff; }
+.toc-1 { font-weight:700; } .toc-2 { padding-left:10px; }
+.toc-3 { padding-left:22px; color:#aebccc; }
+main { padding:42px 24px 64px; }
+article { max-width:980px; margin:0 auto; padding:44px 54px; background:var(--paper);
+  border:1px solid var(--border); border-radius:8px; box-shadow:0 12px 30px rgba(16,24,32,.06); }
+h1,h2,h3 { line-height:1.3; letter-spacing:0; }
+h1 { margin:0 0 24px; font-size:34px; }
+h2 { margin:42px 0 14px; padding-top:8px; font-size:25px; border-top:1px solid var(--border); }
+h3 { margin:28px 0 10px; font-size:20px; }
+p { margin:12px 0; } ul,ol { margin:10px 0 16px 22px; padding:0; }
+li { margin:6px 0; }
+code { padding:1px 5px; background:var(--code); border:1px solid #e1e6ef;
+  border-radius:5px; font-family:"SFMono-Regular",Consolas,monospace; font-size:.92em; }
+pre { overflow:auto; margin:16px 0 20px; padding:16px 18px; background:#101820;
+  color:#e6edf3; border-radius:8px; line-height:1.5; }
+pre code { padding:0; background:transparent; color:inherit; border:0; font-size:13px; }
+a { color:var(--accent); } .meta { margin-bottom:26px; padding-bottom:18px;
+  color:var(--muted); border-bottom:1px solid var(--border); font-size:13px; }
+@media (max-width:900px) { .layout { display:block; } nav { position:relative; height:auto;
+  max-height:42vh; } main { padding:18px 12px 40px; } article { padding:28px 22px; }
+  h1 { font-size:28px; } h2 { font-size:22px; } }
+@media print { body { background:#fff; } .layout { display:block; } nav { display:none; }
+  main { padding:0; } article { max-width:none; padding:0; border:0; box-shadow:none; } }
+</style></head>
+<body><div class="layout"><nav><h2>目录 / Contents</h2><a class="toc-1" href="#cli-commands">CLI Commands</a><a class="toc-2" href="#two-equivalent-ingest-entry-points">Two Equivalent Ingest Entry Points</a><a class="toc-2" href="#instrument-master">Instrument Master</a><a class="toc-2" href="#historical-stock-and-etf-eod">Historical Stock And ETF EOD</a><a class="toc-2" href="#index-and-calendar">Index And Calendar</a><a class="toc-2" href="#one-day-bulk-eod">One-Day Bulk EOD</a><a class="toc-2" href="#daily-range-bulk-eod">Daily Range Bulk EOD</a><a class="toc-2" href="#delisted-instruments">Delisted Instruments</a><a class="toc-2" href="#bulk-unmatched-workflow">Bulk Unmatched Workflow</a></nav>
+<main><article><div class="meta">Generated from cli_commands.md. Markdown remains the source of truth.</div>
+<h1 id="cli-commands">CLI Commands</h1><p>This file is the quick command reference for <code>database_system_cli</code>.</p><h2 id="two-equivalent-ingest-entry-points">Two Equivalent Ingest Entry Points</h2><p>For a human-operated, bilingual arrow-key workflow:</p><pre><code class="language-bash">poetry run j21 menu</code></pre><p>For scripts, AI tools, reproducible notes, and automation:</p><pre><code class="language-bash">poetry run j21 ingest --help</code></pre><p>Both routes call the same <code>fdp.get_data</code> Jobs. The menu does not start a shell subprocess. Before execution it shows the resolved parameters, their sources, target tables, API/storage estimate, Job module, and an equivalent CLI command. Confirmation defaults to <strong>No</strong>.</p><p>All migrated ingest commands support <code>--output text|json</code>. JSON mode emits one versioned <code>JobResult</code> on stdout and sends progress events to stderr:</p><pre><code class="language-bash">poetry run j21 ingest daily --market US --date 2026-07-07 --output json</code></pre><h2 id="instrument-master">Instrument Master</h2><p>Refresh active instruments and identifier history:</p><pre><code class="language-bash">poetry run j21 ingest instruments --market US</code></pre><p>The command uses EODHD symbol-change history before the current exchange list. It writes canonical instruments and identifier history; it does not guess rename relationships.</p><h2 id="historical-stock-and-etf-eod">Historical Stock And ETF EOD</h2><p>Load a small explicit symbol set:</p><pre><code class="language-bash">poetry run j21 ingest history \
+  --symbols AAPL,MSFT,SPY \
+  --asset-types stock,etf \
+  --from 2024-01-01 \
+  --to 2024-01-31 \
+  --instrument-status active</code></pre><p><code>--symbols</code> accepts canonical symbols such as <code>AAPL</code> and provider symbols such as <code>AAPL.US</code>; lookup is performed through the instrument master. Use <code>--instrument-status inactive</code> to fetch only inactive/delisted symbols, or <code>all</code> for both. Empty symbols are rejected because full-universe history should use Bulk EOD.</p><p>Each symbol is committed independently under one aggregate task run. An isolated 404/no-data symbol is recorded and the batch continues. Authentication, entitlement, database, or repeated global transient failures stop later symbols.</p><h2 id="index-and-calendar">Index And Calendar</h2><pre><code class="language-bash">poetry run j21 ingest indices \
+  --provider-symbols GSPC.INDX,DJI.INDX,IXIC.INDX,NDX.INDX \
+  --from 2024-01-01 \
+  --to 2024-12-31
+
+poetry run j21 ingest calendar --market US --from 2024-01-01 --to 2024-12-31</code></pre><h2 id="one-day-bulk-eod">One-Day Bulk EOD</h2><pre><code class="language-bash">poetry run j21 ingest daily \
+  --market US \
+  --date 2026-07-07 \
+  --asset-types stock,etf</code></pre><p>Matched rows enter the canonical split price tables. Unmatched provider rows are retained in <code>system.bulk_unmatched_daily_price_observation</code> for later classification and routing.</p><h2 id="daily-range-bulk-eod">Daily Range Bulk EOD</h2><p>Estimate a date range before writing:</p><pre><code class="language-bash">poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --dry-run</code></pre><p>Execute after reviewing the estimate:</p><pre><code class="language-bash">poetry run j21 ingest daily-range \
+  --from 2024-01-01 \
+  --to 2024-01-31 \
+  --execute \
+  --yes \
+  --parallel \
+  --workers 4</code></pre><p>Large API-consuming <code>daily-range --execute --yes</code> runs default to user-operated CLI execution. Codex/AI should prepare the command and then verify database state after the user runs it.</p><p>Relevant controls:</p><ul><li><code>--parallel/--sequential</code>: enable or disable bounded per-day parallel ingestion.</li><li><code>--workers</code>: worker count when parallel mode is enabled.</li><li><code>--max-requests-per-minute</code>: request-rate throttle; must be at or below EODHD&#x27;s 1000 requests/minute ceiling.</li><li><code>--max-api-calls</code>: daily-range API-call budget guard.</li><li><code>--max-estimated-gb</code>: storage estimate guard.</li></ul><p>Runtime defaults live in <code>config/default.yaml</code> and can be overridden with:</p><ul><li><code>EODHD_MAX_RETRIES</code></li><li><code>EODHD_RETRY_DELAY_SECONDS</code></li><li><code>EODHD_MAX_REQUESTS_PER_MINUTE</code></li><li><code>EODHD_DAILY_CALL_BUDGET</code></li><li><code>EODHD_DAILY_RANGE_PARALLEL</code></li><li><code>EODHD_DAILY_RANGE_MAX_WORKERS</code></li></ul><h2 id="delisted-instruments">Delisted Instruments</h2><p>Load EODHD inactive/delisted stock+ETF universe:</p><pre><code class="language-bash">poetry run j21 ingest delisted-instruments --market US</code></pre><p>This writes inactive instruments to <code>us_share.instrument</code> and records delisting facts in <code>us_share.instrument_lifecycle_event</code>. It is idempotent and does not backfill all delisted historical prices by default. The current EODHD delisted symbol list does not return a delisting date, so <code>instrument.delisted_date</code> can remain <code>NULL</code> until another source supplies that date.</p><p>Run a small inactive-symbol historical price smoke test only when explicitly needed:</p><pre><code class="language-bash">poetry run j21 ingest history \
+  --market US \
+  --symbols TWTR.US \
+  --from 2022-10-20 \
+  --to 2022-10-28 \
+  --instrument-status inactive</code></pre><p>Compatibility note: <code>--include-inactive</code> is still accepted and means <code>--instrument-status all</code>. Use <code>inactive</code> when you only want delisted/inactive symbols and want to avoid spending API calls on active instruments.</p><h2 id="bulk-unmatched-workflow">Bulk Unmatched Workflow</h2><p><code>j21 ingest daily</code> and <code>j21 ingest daily-range</code> first write matched stock/ETF rows into split daily price tables. Bulk EOD rows that cannot match the current instrument universe are stored in <code>system.bulk_unmatched_daily_price_observation</code> instead of being discarded.</p><p>Inspect unmatched rows:</p><pre><code class="language-bash">poetry run j21 research bulk-unmatched summary --from 2024-01-01 --to 2024-01-31
+poetry run j21 research bulk-unmatched list --from 2024-01-01 --to 2024-01-31 --status unresolved</code></pre><p>Classify unresolved rows with strict provider-symbol matching:</p><pre><code class="language-bash">poetry run j21 research bulk-unmatched classify --from 2024-01-01 --to 2024-01-31</code></pre><p>Preview routeable high-confidence rows:</p><pre><code class="language-bash">poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --dry-run</code></pre><p>Execute only after reviewing the preview:</p><pre><code class="language-bash">poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --execute --yes</code></pre><p>Routing only writes rows that strictly matched an existing stock/ETF/index <code>instrument_id</code>. Fund, preferred, notes, and unknown rows remain in staging for later review or schema expansion.</p></article></main></div></body></html>

@@ -22,7 +22,11 @@ from fdp.sources.eodhd.ingest.common import (
     now_utc,
     record_api_call,
 )
-from fdp.sources.eodhd.ingest.models import BulkDailyPriceLoadResult, HistoricalDailyPriceLoadResult
+from fdp.sources.eodhd.ingest.models import (
+    BulkDailyPriceLoadResult,
+    HistoricalDailyPriceLoadResult,
+    HistoricalDailyPriceUnitResult,
+)
 from fdp.sources.eodhd.prices import RejectedDailyPriceRow, parse_daily_price_rows
 from fdp.storage.upsert import (
     build_bulk_unmatched_daily_price_observation_upsert,
@@ -254,6 +258,7 @@ def load_bulk_daily_prices(
             rejected_rows=[],
             unmatched_rows=0,
             error_message=response.error_message,
+            status_code=response.status_code,
         )
 
     instruments = load_active_instruments_for_market(
@@ -362,6 +367,7 @@ def load_bulk_daily_prices(
         rejected_rows=rejected_rows,
         unmatched_rows=unmatched_rows,
         error_message=error_message,
+        status_code=response.status_code,
     )
 
 
@@ -560,6 +566,79 @@ def _load_daily_prices_for_instruments(
         api_calls=api_calls,
         rejected_rows=rejected_rows,
         error_message=error_message,
+    )
+
+
+def load_historical_daily_price_unit(
+    connection: Connection,
+    client: EodhdClient,
+    *,
+    run_id: int,
+    instrument_row: dict[str, object],
+    date_from: date,
+    date_to: date,
+) -> HistoricalDailyPriceUnitResult:
+    """Load one instrument without creating or finalizing its parent task run.
+
+    Input: committed parent run id, one resolved instrument, and inclusive dates.
+    Output: one unit result with API, parse, and write counts.
+    Flow: provider symbol -> EODHD EOD -> API audit -> validation -> split-table upsert.
+    """
+    provider_symbol = str(instrument_row["provider_symbol"])
+    response = client.get_historical_eod(
+        provider_symbol,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    record_api_call(
+        connection,
+        run_id=run_id,
+        response=response,
+        provider_symbol=provider_symbol,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    if not response.success:
+        return HistoricalDailyPriceUnitResult(
+            provider_symbol=provider_symbol,
+            status="failed",
+            status_code=response.status_code,
+            rows_fetched=0,
+            rows_inserted=0,
+            rows_rejected=0,
+            api_calls=1,
+            rejected_rows=[],
+            error_message=response.error_message,
+        )
+
+    parsed_rows = parse_daily_price_rows(
+        response.payload,
+        instrument_id=instrument_row["instrument_id"],
+        symbol=instrument_row["symbol"],
+        provider_symbol=provider_symbol,
+        currency=instrument_row["currency"],
+    )
+    rows_inserted = 0
+    if parsed_rows.accepted:
+        asset_type = str(instrument_row["asset_type"])
+        connection.execute(PRICE_UPSERT_BUILDERS[asset_type](parsed_rows.accepted))
+        rows_inserted = len(parsed_rows.accepted)
+
+    rows_rejected = len(parsed_rows.rejected)
+    return HistoricalDailyPriceUnitResult(
+        provider_symbol=provider_symbol,
+        status="partial_failed" if rows_rejected else "success",
+        status_code=response.status_code,
+        rows_fetched=response.rows_returned,
+        rows_inserted=rows_inserted,
+        rows_rejected=rows_rejected,
+        api_calls=1,
+        rejected_rows=parsed_rows.rejected,
+        error_message=(
+            f"{rows_rejected} invalid EODHD price row(s) rejected"
+            if rows_rejected
+            else None
+        ),
     )
 
 

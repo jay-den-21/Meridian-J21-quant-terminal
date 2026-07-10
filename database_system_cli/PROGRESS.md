@@ -84,6 +84,12 @@ Completed:
 - Real validate smoke test: `j21 validate daily-price --from 2023-01-01 --to 2025-12-31 --asset-types stock,etf,index` completed with 0 issues and wrote check runs for stock, ETF, and index price tables
 - Repository layout migrated so the database CLI system now lives under `financial-data-platform/database_system_cli/`; project docs, source, tests, Alembic migrations, and config moved together, while the repository root is reserved for the future app
 - `docs/architecture.md` added to record the Data Core / Terminal boundary, MySQL daily-data decision, Parquet recommendation for high-volume intraday bars, and large-run guardrails for 15-year daily / 1-year 5m loads
+- Shared `fdp.get_data` Job layer added for instrument, historical stock/ETF/index, calendar, Bulk EOD, daily-range, and Bulk unmatched workflows; CLI, terminal menu, and direct Python callers now share parameter resolution, preflight, runtime, progress, and structured result contracts
+- `j21 menu` added as a bilingual Chinese/English arrow-key terminal workflow with basic/advanced prompts, target-table/API/storage preflight, equivalent CLI preview, default-cancel confirmation, and `tqdm` progress
+- Typer ingest commands now invoke the shared Jobs and support `--output text|json`; JSON stdout is a single versioned result object while operational progress is routed to stderr
+- Historical stock/ETF Job execution now resolves canonical/provider symbols through the instrument master, commits each symbol independently under one aggregate task run, preserves completed work on cancellation/failure, and stops on fatal auth/entitlement, DB, or repeated global transient failures
+- Terminal menu and shared Job verification covers non-TTY rejection, default-cancel behavior, JSON output, parameter precedence, API-budget preflight, isolated symbol failure, fatal stop, and parent-run finalization
+- Shared Job/menu quality gate passes 136 tests plus Ruff/compileall; a real-DB `daily-range --dry-run` for `2024-01-02` resolved 1 trading day, 45,848 estimated rows, 0.03 GB, and 100 estimated API-call cost without calling EODHD or writing data
 
 Not started:
 
@@ -97,3 +103,4 @@ Not started:
 - extend delisted historical backfill in small, budgeted batches after date-source and universe policy are settled
 - run a small real-date smoke after applying migration `0009_bulk_unmatched`: one-day `j21 ingest daily --date ...`, then `bulk-unmatched summary/list/classify`, dry-run route, and `validate daily-price`
 - after small smoke passes, user can run larger `daily-range`; Codex/AI should verify row counts, duplicate `(instrument_id, trade_date)`, unmatched status distribution, and route candidates after the user-run ingest
+- use `poetry run j21 menu` for the next user-operated small ingest smoke, review its preflight/equivalent command, then compare the resulting `ingestion_task_run` with the same deterministic CLI workflow
