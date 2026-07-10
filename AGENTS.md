@@ -29,6 +29,23 @@ This repository has two sibling subprojects:
 
 Do not put new app work into `database_system_cli/` unless the user explicitly asks to extend the database CLI. Do not let `database_app/` write database schemas, migrations, or ingestion data.
 
+## Scoped Context Routing
+
+Instructions are cumulative. Before editing a path, read this file, the subproject
+`AGENTS.md`, and the nearest deeper `AGENTS.md`. A deeper file adds local ownership
+rules; it never overrides repository boundaries or secret-handling rules.
+
+| Working path | Required context |
+| --- | --- |
+| `database_system_cli/**` | `database_system_cli/AGENTS.md` and its scoped routing table |
+| `database_app/**` | `database_app/AGENTS.md` |
+| `.trellis/**`, `.agents/**`, `.codex/**` | this file and `.trellis/workflow.md` |
+
+The current CLI code-flow and path ownership map live in
+`database_system_cli/docs/architecture.md` with a paired human-readable HTML file.
+Do not infer cross-layer behavior from directory names alone; trace the implementation
+from that map and verify changed call sites in code.
+
 ## Source Of Truth
 
 Long-term project truth lives in Markdown governance:

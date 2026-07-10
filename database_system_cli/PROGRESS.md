@@ -90,6 +90,7 @@ Completed:
 - Historical stock/ETF Job execution now resolves canonical/provider symbols through the instrument master, commits each symbol independently under one aggregate task run, preserves completed work on cancellation/failure, and stops on fatal auth/entitlement, DB, or repeated global transient failures
 - Terminal menu and shared Job verification covers non-TTY rejection, default-cancel behavior, JSON output, parameter precedence, API-budget preflight, isolated symbol failure, fatal stop, and parent-run finalization
 - Shared Job/menu quality gate passes 136 tests plus Ruff/compileall; a real-DB `daily-range --dry-run` for `2024-01-02` resolved 1 trading day, 45,848 estimated rows, 0.03 GB, and 100 estimated API-call cost without calling EODHD or writing data
+- Scoped maintainer/agent context is now defined at the docs, shared Job, terminal menu, EODHD provider, storage, Alembic, quality, repair, quarantine, and research boundaries; parent `AGENTS.md` files provide deterministic routing, and `docs/architecture.md/.html` trace the current executable flows with Mermaid diagrams and exact code paths
 
 Not started:
 

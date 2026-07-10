@@ -82,25 +82,37 @@ financial-data-platform/
     config/
       default.yaml
     alembic/
+      AGENTS.md
       versions/
     docs/
+      AGENTS.md
       architecture.md
     src/
       fdp/
         cli.py
+        bulk_unmatched.py
         config.py
         get_data/
+          AGENTS.md
           historical/
           bulk/
           instruments/
           reconcile/
         menu/
+          AGENTS.md
         sources/
           eodhd/
+            AGENTS.md
         storage/
+          AGENTS.md
         quality/
+          AGENTS.md
         repair/
+          AGENTS.md
+        quarantine/
+          AGENTS.md
         research/
+          AGENTS.md
     tests/
 ```
 
@@ -113,8 +125,10 @@ financial-data-platform/
 - `research/` 负责 Python/notebook/backtest 读取接口，例如 `DailyPriceReader.get_daily_prices(...)`。
 - `get_data/` 是 CLI、terminal menu 和 Python 调用共用的 Job 层，负责参数解析、preflight、执行和结构化结果。
 - `menu/` 只负责中英文 prompts、确认页和 `tqdm` 展示，不复制 provider/storage 业务逻辑，也不 shell out 到 CLI。
-- `docs/architecture.md` 记录 Data Core / future Terminal 的边界，以及 MySQL daily 与 intraday Parquet bar store 的取舍。
+- `bulk_unmatched.py` 是 staging row 的严格分类和 route domain service，由 `get_data/reconcile/` 和 CLI adapter 调用。
+- `docs/architecture.md` 是当前可执行代码的总入口：它逐层追踪 CLI/menu/Python Job、EODHD provider、storage、quality、repair/quarantine 和 research，同时保留 Data Core / future Terminal 与 intraday storage 边界。
 - `cli.py` 暴露 `j21 menu`、`j21 ingest`、`j21 validate`、`j21 repair`、`j21 research`；`fdp` 暂时保留为兼容 alias。
+- 局部 `AGENTS.md` 只放在真实职责边界。规则从 repo root 到子项目再到最近局部文件累积；修改跨层功能时必须读取所有相关局部文件，并按 `docs/architecture.md` 检查上下游。
 
 ## 5. 数据模型
 

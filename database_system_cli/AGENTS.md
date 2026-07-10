@@ -109,6 +109,32 @@ poetry run j21 repair ...
 - `AGENTS.md` 是执行约束。
 - 修改面向人阅读的 `.md` 文档时，如果存在对应 `.html` 文件，必须同步更新 HTML 版本。
 - 修改规格、架构、流程、CLI 或进度相关文档时，必须同步更新 `PROGRESS.md` 看板；如果只是错别字/格式且不影响进度，应在最终说明中明确。
-- `database_system_cli/` 先保留一个 `AGENTS.md`。
-- 不要预创建空的模块级 `AGENTS.md`。
-- 等 `src/sources/eodhd/`、`src/storage/`、`src/quality/` 等模块真实出现后，再按模块添加局部约束。
+- 不要为每个叶子目录机械创建 `AGENTS.md`；只在职责、风险或验证方法确实不同的边界创建。
+- 当前代码路径和完整调用关系以 `docs/architecture.md` 为入口。
+
+## 局部上下文路由
+
+规则按目录向下累积。修改下列路径前，除本文件外还必须读取对应的局部
+`AGENTS.md`：
+
+| 修改路径 | 最近的局部上下文 | 主要职责 |
+| --- | --- | --- |
+| `docs/**` | `docs/AGENTS.md` | 文档事实、Markdown/HTML 同步 |
+| `src/fdp/get_data/**` | `src/fdp/get_data/AGENTS.md` | 共享 Job 契约与编排 |
+| `src/fdp/menu/**` | `src/fdp/menu/AGENTS.md` | 人类终端输入和进度展示 |
+| `src/fdp/sources/eodhd/**` | `src/fdp/sources/eodhd/AGENTS.md` | EODHD transport、parser、ingest |
+| `src/fdp/storage/**` | `src/fdp/storage/AGENTS.md` | SQLAlchemy metadata、upsert、schema guard |
+| `alembic/**` | `alembic/AGENTS.md` | 物理 schema 迁移历史 |
+| `src/fdp/quality/**` | `src/fdp/quality/AGENTS.md` | 质量检测和 issue 记录 |
+| `src/fdp/repair/**` | `src/fdp/repair/AGENTS.md` | 缺失数据的确认式修复 |
+| `src/fdp/quarantine/**` | `src/fdp/quarantine/AGENTS.md` | 坏行归档和确认式移除 |
+| `src/fdp/research/**` | `src/fdp/research/AGENTS.md` | 数据库只读研究接口 |
+
+`src/fdp/cli.py` 是薄 Typer adapter，直接受本文件和
+`src/fdp/get_data/AGENTS.md` 的共享 Job 约束。若一项修改跨越多个路径，必须读取所有
+相关局部文件，并按 `docs/architecture.md` 检查上下游。
+
+`src/fdp/bulk_unmatched.py` 是 unmatched classification/routing 的 domain service；它直接
+继承本文件，并在修改时额外读取 `src/fdp/get_data/AGENTS.md`、
+`src/fdp/storage/AGENTS.md` 和 `docs/architecture.md`。`src/fdp/config.py` 等未列出的顶层
+模块直接继承本文件，不需要空的局部 `AGENTS.md`。

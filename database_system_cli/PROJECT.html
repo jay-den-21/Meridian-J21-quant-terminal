@@ -54,26 +54,38 @@ a { color:var(--accent); } .meta { margin-bottom:26px; padding-bottom:18px;
     config/
       default.yaml
     alembic/
+      AGENTS.md
       versions/
     docs/
+      AGENTS.md
       architecture.md
     src/
       fdp/
         cli.py
+        bulk_unmatched.py
         config.py
         get_data/
+          AGENTS.md
           historical/
           bulk/
           instruments/
           reconcile/
         menu/
+          AGENTS.md
         sources/
           eodhd/
+            AGENTS.md
         storage/
+          AGENTS.md
         quality/
+          AGENTS.md
         repair/
+          AGENTS.md
+        quarantine/
+          AGENTS.md
         research/
-    tests/</code></pre><p>说明：</p><ul><li><code>sources/eodhd/</code> 只负责 EODHD API client、字段解析、数据源语义。</li><li><code>storage/</code> 负责 MySQL 连接、SQLAlchemy Core table definitions、upsert。</li><li><code>quality/</code> 负责重复、缺失、OHLCV 合法性、空值等检查。</li><li><code>repair/</code> 负责生成和执行人工确认后的 backfill plan。</li><li><code>research/</code> 负责 Python/notebook/backtest 读取接口，例如 <code>DailyPriceReader.get_daily_prices(...)</code>。</li><li><code>get_data/</code> 是 CLI、terminal menu 和 Python 调用共用的 Job 层，负责参数解析、preflight、执行和结构化结果。</li><li><code>menu/</code> 只负责中英文 prompts、确认页和 <code>tqdm</code> 展示，不复制 provider/storage 业务逻辑，也不 shell out 到 CLI。</li><li><code>docs/architecture.md</code> 记录 Data Core / future Terminal 的边界，以及 MySQL daily 与 intraday Parquet bar store 的取舍。</li><li><code>cli.py</code> 暴露 <code>j21 menu</code>、<code>j21 ingest</code>、<code>j21 validate</code>、<code>j21 repair</code>、<code>j21 research</code>；<code>fdp</code> 暂时保留为兼容 alias。</li></ul><h2 id="5-数据模型">5. 数据模型</h2><h3 id="5-1-schema">5.1 Schema</h3><p>第一版使用同一个 MySQL server 下的多个 schema：</p><ul><li><code>us_share</code>：美股业务数据</li><li><code>a_share</code>：A 股业务数据，第一阶段预留，后续使用 Tushare</li><li><code>system</code>：任务状态、质量报告、API 调用摘要、修复计划</li><li><code>app_log</code>：API playground、search、screener、quote、live/websocket snapshot 等临时查询响应和未来 app 日志</li></ul><p>备注：旧的本地 A 股程序/数据库名叫 <code>qtdb_pro</code>。本项目的新 schema 名称仍统一使用 <code>a_share</code>，不要同时创建 <code>qtdb_pro</code> 和 <code>a_share</code> 两套 A 股 schema。</p><p>测试必须使用独立 schema，例如：</p><ul><li><code>test_us_share</code></li><li><code>test_a_share</code></li><li><code>test_system</code></li></ul><p>测试不得污染真实数据。</p><h3 id="5-2-us_share-instrument">5.2 <code>us_share.instrument</code></h3><p><code>instrument</code> 是标的主表，不是字段名称表。</p><p>一行代表一个金融标的，例如 Apple、Microsoft、SPY ETF。它回答“这个东西是谁”。</p><p>建议字段：</p><pre><code class="language-text">instrument_id
+          AGENTS.md
+    tests/</code></pre><p>说明：</p><ul><li><code>sources/eodhd/</code> 只负责 EODHD API client、字段解析、数据源语义。</li><li><code>storage/</code> 负责 MySQL 连接、SQLAlchemy Core table definitions、upsert。</li><li><code>quality/</code> 负责重复、缺失、OHLCV 合法性、空值等检查。</li><li><code>repair/</code> 负责生成和执行人工确认后的 backfill plan。</li><li><code>research/</code> 负责 Python/notebook/backtest 读取接口，例如 <code>DailyPriceReader.get_daily_prices(...)</code>。</li><li><code>get_data/</code> 是 CLI、terminal menu 和 Python 调用共用的 Job 层，负责参数解析、preflight、执行和结构化结果。</li><li><code>menu/</code> 只负责中英文 prompts、确认页和 <code>tqdm</code> 展示，不复制 provider/storage 业务逻辑，也不 shell out 到 CLI。</li><li><code>bulk_unmatched.py</code> 是 staging row 的严格分类和 route domain service，由 <code>get_data/reconcile/</code> 和 CLI adapter 调用。</li><li><code>docs/architecture.md</code> 是当前可执行代码的总入口：它逐层追踪 CLI/menu/Python Job、EODHD provider、storage、quality、repair/quarantine 和 research，同时保留 Data Core / future Terminal 与 intraday storage 边界。</li><li><code>cli.py</code> 暴露 <code>j21 menu</code>、<code>j21 ingest</code>、<code>j21 validate</code>、<code>j21 repair</code>、<code>j21 research</code>；<code>fdp</code> 暂时保留为兼容 alias。</li><li>局部 <code>AGENTS.md</code> 只放在真实职责边界。规则从 repo root 到子项目再到最近局部文件累积；修改跨层功能时必须读取所有相关局部文件，并按 <code>docs/architecture.md</code> 检查上下游。</li></ul><h2 id="5-数据模型">5. 数据模型</h2><h3 id="5-1-schema">5.1 Schema</h3><p>第一版使用同一个 MySQL server 下的多个 schema：</p><ul><li><code>us_share</code>：美股业务数据</li><li><code>a_share</code>：A 股业务数据，第一阶段预留，后续使用 Tushare</li><li><code>system</code>：任务状态、质量报告、API 调用摘要、修复计划</li><li><code>app_log</code>：API playground、search、screener、quote、live/websocket snapshot 等临时查询响应和未来 app 日志</li></ul><p>备注：旧的本地 A 股程序/数据库名叫 <code>qtdb_pro</code>。本项目的新 schema 名称仍统一使用 <code>a_share</code>，不要同时创建 <code>qtdb_pro</code> 和 <code>a_share</code> 两套 A 股 schema。</p><p>测试必须使用独立 schema，例如：</p><ul><li><code>test_us_share</code></li><li><code>test_a_share</code></li><li><code>test_system</code></li></ul><p>测试不得污染真实数据。</p><h3 id="5-2-us_share-instrument">5.2 <code>us_share.instrument</code></h3><p><code>instrument</code> 是标的主表，不是字段名称表。</p><p>一行代表一个金融标的，例如 Apple、Microsoft、SPY ETF。它回答“这个东西是谁”。</p><p>建议字段：</p><pre><code class="language-text">instrument_id
 market
 symbol
 provider
