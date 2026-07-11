@@ -52,12 +52,14 @@ All implemented endpoints are listed in `src/eodhd_codegen_app/endpoints.py` and
 | `symbol_change_history` | https://eodhd.com/financial-apis/us-stock-symbol-rename-history-api | `/api/symbol-change-history` | Docs list `EOD+Intraday - All World Extended`. | 5 API calls per request. |
 | `id_mapping` | https://eodhd.com/financial-apis/id-mapping-api-cusip-isin-figi-lei-cik-%E2%86%94-symbol | `/api/id-mapping` | Docs list `EOD+Intraday - All World Extended`. | 1 API call per request. |
 
+Intraday `from` and `to` are UNIX timestamps in UTC according to the official Intraday documentation. The app's helper accepts U.S. Eastern `America/New_York` wall time only as a user-facing convenience, then converts it to the documented UTC-based UNIX seconds before generation or execution.
+
 ## App-Level Guardrails
 
 These constraints are intentionally stricter than the EODHD protocol because the app is an interactive research tool, not a bulk downloader:
 
 - Historical EOD: max 2000 symbols for code generation; max 3660 days.
-- Intraday: max 2000 symbols for code generation; interval choices `1m`, `5m`, `1h`; timestamp ranges capped according to official depth notes.
+- Intraday: max 2000 symbols for code generation; interval choices `1m`, `5m`, `1h`; timestamp ranges capped according to official depth notes; helper input is `America/New_York` with explicit DST-gap/overlap rejection.
 - Live OHLCV: max 2000 symbols for code generation, grouped into 20-symbol requests because EODHD recommends 15-20 tickers per request.
 - Bulk EOD: max 2000 symbols unless `Allow full exchange request` is checked.
 - Technical indicators: max 2000 symbols for code generation.

@@ -181,6 +181,38 @@
             </div>
             <button type="button" id="apply_date_offset" class="secondary-button">Apply T offsets</button>
           </div>
+          <div class="intraday-time-panel hidden" id="intraday_time_panel">
+            <div class="offset-title">
+              <strong>Intraday time helper / 分钟线时间转换</strong>
+              <span>America/New_York (U.S. Eastern Time)</span>
+            </div>
+            <div class="notice warning-notice timezone-notice">
+              <strong>Timezone / 时区提示</strong>
+              <span>
+                Enter U.S. Eastern market time. EST/EDT is selected automatically for the date;
+                EODHD receives UTC-based UNIX timestamp seconds.
+              </span>
+            </div>
+            <div class="grid two">
+              <div class="field">
+                <label for="intraday_from_local">From - U.S. Eastern time</label>
+                <input id="intraday_from_local" type="datetime-local" step="1">
+                <output id="intraday_from_result" class="time-conversion-output">
+                  Enter through seconds, then apply.
+                </output>
+              </div>
+              <div class="field">
+                <label for="intraday_to_local">To - U.S. Eastern time</label>
+                <input id="intraday_to_local" type="datetime-local" step="1">
+                <output id="intraday_to_result" class="time-conversion-output">
+                  Enter through seconds, then apply.
+                </output>
+              </div>
+            </div>
+            <button type="button" id="apply_intraday_time" class="secondary-button">
+              Apply UNIX timestamps
+            </button>
+          </div>
           <div class="dynamic-grid" id="wizard_params"></div>
         </section>
 
@@ -224,6 +256,7 @@
       </div>
     </div>
 
+    <script src="/static/timezone.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

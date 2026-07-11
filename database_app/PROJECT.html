@@ -97,6 +97,7 @@
           <li>Previous Execute result is retained and marked as previous/stale after a new Confirm。</li>
           <li>Imported ticker validation resolves against active DB <code>symbol</code> or <code>provider_symbol</code> exact matches, case-insensitively; unknown or guessed aliases are rejected。</li>
           <li><code>Date helper: T+n</code> for business-day or calendar-day offsets into date fields。</li>
+          <li>Intraday second-precision time helper: interpret input as U.S. Eastern <code>America/New_York</code>, apply EST/EDT automatically, and write UTC-based UNIX timestamp seconds。</li>
           <li>Program language selector that switches generated code tabs。</li>
           <li>Login / Config token dialog backed by server-side token store。</li>
           <li>Request validation and normalization。</li>
@@ -182,6 +183,7 @@ financial-data-platform/
         static/
           index.html
           styles.css
+          timezone.js
           app.js
     tests/
       test_client.py
@@ -194,6 +196,7 @@ financial-data-platform/
       test_universe.py
       test_universe_db.py
       test_static_app.py
+      test_timezone_tools.js
     scripts/
       run_local.command
       package_macos_app.sh
@@ -209,7 +212,7 @@ financial-data-platform/
           <li><code>universe.py</code>：DB-backed pool menu/load contract、preset pool 和 disabled taxonomy/index-constituent 边界。</li>
           <li><code>universe_db.py</code>：读取 DB env、建立 SQLAlchemy engine、只读查询 <code>us_share.instrument</code>。</li>
           <li><code>server.py</code>：HTTP route、静态文件、API response、本机请求 guard。</li>
-          <li><code>static/</code>：single workspace、function toolbar、3-step request wizard、T+n date helper、代码区、结果区、样式和浏览器端交互。</li>
+          <li><code>static/</code>：single workspace、function toolbar、3-step request wizard、T+n date helper、Intraday timezone/UNIX converter、代码区、结果区、样式和浏览器端交互。</li>
           <li><code>tests/</code>：验证参数边界、代码生成、执行解析、token redaction、registry 完整性、DB pool 查询边界和前端 pool state 回归点。</li>
         </ul>
       </section>
@@ -272,7 +275,7 @@ python3 -m http.server 8765 --directory .
           <li><code>http://localhost:8765/j21_terminal/</code>：Meridian landing 与 terminal prototype。</li>
           <li><code>http://localhost:8765/database_app/site/</code>：CodeGen 产品 / 下载页。</li>
         </ul>
-        <p>该 wrapper 会用随机本地端口绑定 <code>127.0.0.1</code> 并打开系统浏览器。生成的 <code>.app</code> 会复制 <code>database_app</code> 源码、文档和纯 Python 依赖到 bundle resources，移动 <code>.app</code> 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。目标机器需要 Python 3.11+，或用 <code>PYTHON_BIN</code> 指向兼容 Python。</p>
+        <p>该 wrapper 会用随机本地端口绑定 <code>127.0.0.1</code> 并打开系统浏览器。生成的 <code>.app</code> 会复制 <code>database_app</code> 源码、文档和纯 Python 依赖到 bundle resources，移动 <code>.app</code> 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。启动时会先检查 <code>PYTHON_BIN</code>，再检查常见 Homebrew 和 python.org Python 3.11+ 安装路径，最后才 fallback 到 <code>python3</code>。</p>
         <p>直接启动脚本会在启动 server 前 <code>unset EODHD_API_KEY</code>，因此桌面式启动路径只使用 <code>Login / Config</code> 中保存的 token。</p>
         <p>公开下载边界：</p>
         <ul>
@@ -288,7 +291,7 @@ python3 -m http.server 8765 --directory .
           <tbody>
             <tr><th>Endpoint id</th><th>EODHD path</th><th>用途</th><th>格式</th><th>状态</th></tr>
             <tr><td><code>historical_eod</code></td><td><code>/api/eod/{provider_symbol}</code></td><td>一个或少量 symbol 的历史 EOD OHLCV</td><td>JSON / CSV</td><td>implemented</td></tr>
-            <tr><td><code>intraday</code></td><td><code>/api/intraday/{provider_symbol}</code></td><td>1m/5m/1h intraday bars</td><td>JSON / CSV</td><td>implemented</td></tr>
+            <tr><td><code>intraday</code></td><td><code>/api/intraday/{provider_symbol}</code></td><td>1m/5m/1h bars；U.S. Eastern time helper 转 UTC UNIX seconds</td><td>JSON / CSV</td><td>implemented</td></tr>
             <tr><td><code>live_ohlcv</code></td><td><code>/api/real-time/{provider_symbol}</code></td><td>最新 delayed OHLCV snapshot</td><td>JSON / CSV</td><td>implemented</td></tr>
             <tr><td><code>bulk_last_day_eod</code></td><td><code>/api/eod-bulk-last-day/{exchange}</code></td><td>小规模手动 bulk last-day 查询</td><td>JSON / CSV</td><td>implemented</td></tr>
             <tr><td><code>dividends</code></td><td><code>/api/div/{provider_symbol}</code></td><td>历史分红</td><td>JSON / CSV</td><td>implemented</td></tr>
@@ -329,7 +332,7 @@ python3 -m http.server 8765 --directory .
           <li>前端 selected rows、codegen payload、Execute API 使用同一批 confirmed DB provider symbols，避免 UI 显示一个 symbol 但生成 URL 使用另一个 symbol。</li>
           <li>Historical EOD 日期范围最多 3660 天。</li>
           <li>T+n helper 只做 UI 日期填充，不绕过后端日期范围校验；business-day 模式当前按周一到周五计算，不含交易所节假日。</li>
-          <li>Intraday 支持 <code>1m</code>、<code>5m</code>、<code>1h</code>；如果提供 timestamp range，会按官方区间上限校验。</li>
+          <li>Intraday 支持 <code>1m</code>、<code>5m</code>、<code>1h</code>；如果提供 timestamp range，会按官方区间上限校验。前端秒级 helper 始终把输入解释为 U.S. Eastern <code>America/New_York</code>，按日期自动处理 EST/EDT，再写入 EODHD 所需的 UTC-based UNIX seconds；DST 不存在/重复时刻会明确拒绝，不静默猜测。</li>
           <li>Bulk EOD 默认必须提供 symbols；除非用户显式勾选 full exchange。</li>
           <li>Bulk EOD 默认最多 2000 个 symbols。</li>
           <li>Bulk EOD 支持 <code>trade_date</code> 或 <code>date_from</code>/<code>date_to</code>，日期范围最多 31 个 calendar days，会生成每个日期一个 bulk URL。</li>
@@ -437,6 +440,7 @@ PYTHONPATH=src ../database_system_cli/.venv/bin/python -m pytest
           <li>preset/exchange/asset_type/index asset pool query semantics。</li>
           <li>API cost estimation and bulk confirmation guard。</li>
           <li>frontend static smoke for single workspace, wizard import/confirm, stale-result boundary, and no-key execute error path。</li>
+          <li>Intraday timezone conversion for winter/summer EST/EDT, second precision, UNIX round-trip, and DST gap/overlap rejection。</li>
         </ul>
         <p><code>database_system_cli</code> 主线测试可单独在其目录运行，不依赖 <code>database_app</code>。</p>
       </section>

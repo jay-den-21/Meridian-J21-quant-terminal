@@ -4,6 +4,8 @@ from pathlib import Path
 
 
 APP_JS = Path(__file__).resolve().parents[1] / "src" / "eodhd_codegen_app" / "static" / "app.js"
+INDEX_HTML = APP_JS.with_name("index.html")
+SERVER_PY = APP_JS.parents[1] / "server.py"
 
 
 def _app_js() -> str:
@@ -59,3 +61,16 @@ def test_result_preview_prioritizes_request_symbol_column() -> None:
     assert 'const priority = ["_provider_symbol", "provider_symbol", "code", "symbol", "datetime", "date"];' in script
     assert 'return column === "_provider_symbol" ? "request_symbol" : column;' in script
     assert "chips.push(`symbols: ${compactSymbolList(selected)}`);" in script
+
+
+def test_intraday_time_helper_is_loaded_and_applies_to_request_params() -> None:
+    script = _app_js()
+    index = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert index.index('/static/timezone.js') < index.index('/static/app.js')
+    assert 'id="intraday_from_local" type="datetime-local" step="1"' in index
+    assert 'id="intraday_to_local" type="datetime-local" step="1"' in index
+    assert 'America/New_York (U.S. Eastern Time)' in index
+    assert 'state.draft.params[paramName] = value;' in script
+    assert 'convertLocalDateTimeToUnix(localValues[side], US_EASTERN_TIME_ZONE)' in script
+    assert 'self.path == "/static/timezone.js"' in SERVER_PY.read_text(encoding="utf-8")

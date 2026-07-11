@@ -35,6 +35,9 @@ class CodegenRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/static/app.js":
             self._send_static("app.js", "application/javascript; charset=utf-8")
             return
+        if self.path == "/static/timezone.js":
+            self._send_static("timezone.js", "application/javascript; charset=utf-8")
+            return
         if self.path == "/api/endpoints":
             self._send_json({"endpoints": endpoint_payload(), "inventory_only": inventory_payload()})
             return

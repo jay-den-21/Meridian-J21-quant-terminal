@@ -15,6 +15,11 @@ const state = {
 
 const MAX_SELECTED_SYMBOLS = 2000;
 const STRONG_WARNING_SYMBOLS = 100;
+const {
+  US_EASTERN_TIME_ZONE,
+  convertLocalDateTimeToUnix,
+  formatUnixSecondsInZone,
+} = window.TimeZoneTools;
 const US_CLASS_SUFFIXES = new Set(["A", "B", "C", "K"]);
 const US_LISTING_SUFFIXES = new Set([
   "AMEX",
@@ -175,6 +180,7 @@ function createDraft(endpointId) {
     focusedSymbol: "",
     importText: "",
     importSummary: "",
+    intradayTime: endpointId === "intraday" ? createIntradayTimeDraft(params) : null,
     review: null,
   };
 }
@@ -1189,6 +1195,7 @@ function renderParameterStep(spec) {
   });
   bindParamInputs(spec);
   updateDateOffsetPanel();
+  updateIntradayTimePanel();
 }
 
 function renderParamField(param) {
@@ -1266,12 +1273,14 @@ function bindParamInputs(spec) {
     if (!element) {
       return;
     }
+    const updateDraftValue = () => {
+      state.draft.params[param.name] = readParamValue(param);
+    };
     element.addEventListener("change", () => {
-      state.draft.params[param.name] = readParamValue(param);
+      updateDraftValue();
+      syncIntradayTimeFromTimestamp(param.name, state.draft.params[param.name]);
     });
-    element.addEventListener("input", () => {
-      state.draft.params[param.name] = readParamValue(param);
-    });
+    element.addEventListener("input", updateDraftValue);
   });
 }
 
@@ -1335,6 +1344,19 @@ function renderReviewContent() {
     ["Format", state.draft.fmt.toUpperCase()],
     ["Preview rows", String(state.draft.previewLimit)],
   ];
+  if (state.draft.endpoint === "intraday") {
+    rows.splice(
+      2,
+      0,
+      ["Time input", "America/New_York (EST/EDT automatic) -> UTC UNIX seconds"],
+      [
+        "Timestamp range",
+        `${timestampDisplayValue(state.draft.params.from_timestamp)} to ${timestampDisplayValue(
+          state.draft.params.to_timestamp
+        )}`,
+      ]
+    );
+  }
   if (validation?.cost) {
     rows.push(["Estimated API calls", `${validation.cost.estimated_api_calls} (${validation.cost.message})`]);
   } else {
@@ -1397,6 +1419,11 @@ function draftWarnings() {
   if (state.draft.endpoint === "bulk_last_day_eod") {
     warnings.push("Bulk EOD can consume 100 API calls per exchange/date, plus one extra call per ticker.");
   }
+  if (state.draft.endpoint === "intraday") {
+    warnings.push(
+      "Intraday helper input is U.S. Eastern Time (America/New_York); generated from/to values are UTC-based UNIX seconds."
+    );
+  }
   return warnings;
 }
 
@@ -1450,6 +1477,16 @@ function renderConfirmedSummary() {
   }
   if (params.trade_date) {
     chips.push(`date: ${params.trade_date}`);
+  }
+  if (state.confirmedRequest.endpoint === "intraday") {
+    chips.push("time input: America/New_York (EST/EDT) -> UTC UNIX seconds");
+    if (hasTimestampValue(params.from_timestamp) || hasTimestampValue(params.to_timestamp)) {
+      chips.push(
+        `UNIX range: ${timestampDisplayValue(params.from_timestamp)} to ${timestampDisplayValue(
+          params.to_timestamp
+        )}`
+      );
+    }
   }
   if (state.currentCost) {
     chips.push(`${state.currentCost.estimated_api_calls} estimated call(s)`);
@@ -1707,6 +1744,157 @@ function closeConfig() {
   document.getElementById("token_input").value = "";
 }
 
+function createIntradayTimeDraft(params) {
+  return {
+    fromLocal: localInputFromUnixTimestamp(params.from_timestamp),
+    toLocal: localInputFromUnixTimestamp(params.to_timestamp),
+  };
+}
+
+function localInputFromUnixTimestamp(value) {
+  if (value === "" || value === null || value === undefined) {
+    return "";
+  }
+  try {
+    return formatUnixSecondsInZone(value, US_EASTERN_TIME_ZONE).localInput;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function updateIntradayTimePanel() {
+  const panel = document.getElementById("intraday_time_panel");
+  const isIntraday = state.draft?.endpoint === "intraday";
+  panel.classList.toggle("hidden", !isIntraday);
+  if (!isIntraday) {
+    return;
+  }
+
+  if (!state.draft.intradayTime) {
+    state.draft.intradayTime = createIntradayTimeDraft(state.draft.params);
+  }
+  document.getElementById("intraday_from_local").value = state.draft.intradayTime.fromLocal;
+  document.getElementById("intraday_to_local").value = state.draft.intradayTime.toLocal;
+  renderIntradayConversion("from", state.draft.intradayTime.fromLocal);
+  renderIntradayConversion("to", state.draft.intradayTime.toLocal);
+}
+
+function previewIntradayTime(side) {
+  if (state.draft?.endpoint !== "intraday" || !state.draft.intradayTime) {
+    return;
+  }
+  const input = document.getElementById(`intraday_${side}_local`);
+  state.draft.intradayTime[`${side}Local`] = input.value;
+  renderIntradayConversion(side, input.value);
+}
+
+function renderIntradayConversion(side, localValue) {
+  const output = document.getElementById(`intraday_${side}_result`);
+  output.classList.remove("error");
+  if (!localValue) {
+    output.textContent = "Enter through seconds, then apply.";
+    return null;
+  }
+  try {
+    const converted = convertLocalDateTimeToUnix(localValue, US_EASTERN_TIME_ZONE);
+    output.textContent = conversionSummary(converted);
+    return converted;
+  } catch (error) {
+    output.classList.add("error");
+    output.textContent = error.message;
+    return null;
+  }
+}
+
+function applyIntradayTimestamps() {
+  if (state.draft?.endpoint !== "intraday" || !state.draft.intradayTime) {
+    setStatus("Open the Intraday Parameters step first", true);
+    return;
+  }
+
+  const localValues = {
+    from: state.draft.intradayTime.fromLocal,
+    to: state.draft.intradayTime.toLocal,
+  };
+  if (!localValues.from && !localValues.to) {
+    setStatus("Enter at least one U.S. Eastern date/time", true);
+    return;
+  }
+
+  const converted = {};
+  for (const side of ["from", "to"]) {
+    if (!localValues[side]) {
+      converted[side] = null;
+      continue;
+    }
+    try {
+      converted[side] = convertLocalDateTimeToUnix(localValues[side], US_EASTERN_TIME_ZONE);
+    } catch (error) {
+      renderIntradayConversion(side, localValues[side]);
+      setStatus(error.message, true);
+      return;
+    }
+  }
+
+  if (converted.from && converted.to && converted.from.unixSeconds > converted.to.unixSeconds) {
+    setStatus("Intraday From time must be earlier than or equal to To time", true);
+    return;
+  }
+
+  for (const side of ["from", "to"]) {
+    const paramName = `${side}_timestamp`;
+    const value = converted[side]?.unixSeconds ?? "";
+    state.draft.params[paramName] = value;
+    const timestampField = document.getElementById(paramId(paramName));
+    if (timestampField) {
+      timestampField.value = value === "" ? "" : String(value);
+    }
+    renderIntradayConversion(side, localValues[side]);
+  }
+  setStatus("U.S. Eastern time converted to UTC-based UNIX seconds");
+}
+
+function syncIntradayTimeFromTimestamp(paramName, value) {
+  if (
+    state.draft?.endpoint !== "intraday" ||
+    !state.draft.intradayTime ||
+    !["from_timestamp", "to_timestamp"].includes(paramName)
+  ) {
+    return;
+  }
+  const side = paramName.startsWith("from_") ? "from" : "to";
+  const key = `${side}Local`;
+  const input = document.getElementById(`intraday_${side}_local`);
+  if (value === "" || value === null || value === undefined) {
+    state.draft.intradayTime[key] = "";
+    input.value = "";
+    renderIntradayConversion(side, "");
+    return;
+  }
+  try {
+    const converted = formatUnixSecondsInZone(value, US_EASTERN_TIME_ZONE);
+    state.draft.intradayTime[key] = converted.localInput;
+    input.value = converted.localInput;
+    renderIntradayConversion(side, converted.localInput);
+  } catch (error) {
+    const output = document.getElementById(`intraday_${side}_result`);
+    output.classList.add("error");
+    output.textContent = error.message;
+  }
+}
+
+function conversionSummary(converted) {
+  return `${converted.localLabel} -> ${converted.unixSeconds} -> ${converted.utcIso}`;
+}
+
+function hasTimestampValue(value) {
+  return value !== "" && value !== null && value !== undefined;
+}
+
+function timestampDisplayValue(value) {
+  return hasTimestampValue(value) ? String(value) : "...";
+}
+
 function updateDateOffsetPanel() {
   const panel = document.getElementById("date_offset_panel");
   const hasDateField = Boolean(
@@ -1937,6 +2125,9 @@ function bindEvents() {
   });
   document.getElementById("wizard_confirm").addEventListener("click", confirmDraft);
   document.getElementById("apply_date_offset").addEventListener("click", applyDateOffset);
+  document.getElementById("apply_intraday_time").addEventListener("click", applyIntradayTimestamps);
+  document.getElementById("intraday_from_local").addEventListener("input", () => previewIntradayTime("from"));
+  document.getElementById("intraday_to_local").addEventListener("input", () => previewIntradayTime("to"));
   document.getElementById("ribbon_tdays").addEventListener("click", focusDateHelper);
   document.getElementById("program_language").addEventListener("change", applyProgramLanguageChoice);
   document.querySelectorAll(".function-card").forEach((button) => {

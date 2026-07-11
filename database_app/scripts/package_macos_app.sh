@@ -128,12 +128,36 @@ RESOURCES_DIR="$(cd "$SCRIPT_DIR/../Resources" && pwd)"
 DB_APP="$RESOURCES_DIR/database_app"
 cd "$DB_APP"
 
-PYTHON_BIN="${PYTHON_BIN:-python3}"
 export PYTHONPATH="$DB_APP/src:$DB_APP/python_lib${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONDONTWRITEBYTECODE=1
 unset EODHD_API_KEY
 
-if ! "$PYTHON_BIN" - <<'PY'
+PYTHON_CANDIDATES=()
+if [[ -n "${PYTHON_BIN:-}" ]]; then
+  PYTHON_CANDIDATES+=("$PYTHON_BIN")
+fi
+PYTHON_CANDIDATES+=(
+  "$DB_APP/python_runtime/bin/python3"
+  /opt/homebrew/opt/python@3.14/bin/python3.14
+  /opt/homebrew/opt/python@3.13/bin/python3.13
+  /opt/homebrew/opt/python@3.12/bin/python3.12
+  /opt/homebrew/opt/python@3.11/bin/python3.11
+  /opt/homebrew/bin/python3
+  /usr/local/opt/python@3.14/bin/python3.14
+  /usr/local/opt/python@3.13/bin/python3.13
+  /usr/local/opt/python@3.12/bin/python3.12
+  /usr/local/opt/python@3.11/bin/python3.11
+  /usr/local/bin/python3
+  /Library/Frameworks/Python.framework/Versions/Current/bin/python3
+  python3
+)
+
+SELECTED_PYTHON=""
+for candidate in "${PYTHON_CANDIDATES[@]}"; do
+  if ! command -v "$candidate" >/dev/null 2>&1; then
+    continue
+  fi
+  if "$candidate" - <<'PY' >/dev/null 2>&1
 import importlib.util
 import sys
 
@@ -143,14 +167,20 @@ if sys.version_info < (3, 11):
 if missing:
     raise SystemExit("Missing bundled dependency: " + ", ".join(missing))
 PY
-then
+  then
+    SELECTED_PYTHON="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$SELECTED_PYTHON" ]]; then
   if command -v osascript >/dev/null 2>&1; then
-    osascript -e 'display alert "EODHD Code Generator could not start" message "Install Python 3.11+ or launch with PYTHON_BIN pointing to a compatible Python."'
+    osascript -e 'display alert "EODHD Code Generator could not start" message "Install Python 3.11+ or launch with PYTHON_BIN pointing to a compatible Python. The app also checks common Homebrew and python.org install paths."'
   fi
   exit 1
 fi
 
-exec "$PYTHON_BIN" -m eodhd_codegen_app --host 127.0.0.1 --port 0 --open-browser
+exec "$SELECTED_PYTHON" -m eodhd_codegen_app --host 127.0.0.1 --port 0 --open-browser
 LAUNCHER
 
 chmod +x "$MACOS_DIR/eodhd-code-generator"

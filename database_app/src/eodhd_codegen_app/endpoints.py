@@ -219,19 +219,21 @@ SUPPORTED_ENDPOINTS: dict[str, EndpointSpec] = {
             ),
             ParamSpec(
                 "from_timestamp",
-                "From UTC timestamp",
+                "From UNIX timestamp (UTC seconds)",
                 "number",
                 default="",
                 placeholder="1627896900",
                 min_value=0,
+                help_text="Use the America/New_York helper above or enter UTC-based UNIX seconds directly.",
             ),
             ParamSpec(
                 "to_timestamp",
-                "To UTC timestamp",
+                "To UNIX timestamp (UTC seconds)",
                 "number",
                 default="",
                 placeholder="1630575300",
                 min_value=0,
+                help_text="Use the America/New_York helper above or enter UTC-based UNIX seconds directly.",
             ),
             ParamSpec(
                 "split_datetime",

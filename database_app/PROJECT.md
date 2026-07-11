@@ -85,6 +85,7 @@ Wind 学习依据：
 - Previous Execute result is retained and marked as previous/stale after a new Confirm。
 - Imported ticker validation resolves against active DB `symbol` or `provider_symbol` exact matches, case-insensitively; unknown or guessed aliases are rejected。
 - `Date helper: T+n` for business-day or calendar-day offsets into date fields。
+- Intraday second-precision time helper: interpret input as U.S. Eastern `America/New_York`, apply EST/EDT automatically, and write UTC-based UNIX timestamp seconds。
 - Program language selector that switches generated code tabs。
 - Login / Config token dialog backed by server-side token store。
 - Request validation and normalization。
@@ -169,6 +170,7 @@ financial-data-platform/
         static/
           index.html
           styles.css
+          timezone.js
           app.js
     tests/
       test_client.py
@@ -181,6 +183,7 @@ financial-data-platform/
       test_universe.py
       test_universe_db.py
       test_static_app.py
+      test_timezone_tools.js
     scripts/
       run_local.command
       package_macos_app.sh
@@ -197,7 +200,7 @@ financial-data-platform/
 - `universe.py`：DB-backed pool menu/load contract、preset pool 和 disabled taxonomy/index-constituent 边界。
 - `universe_db.py`：读取 DB env、建立 SQLAlchemy engine、只读查询 `us_share.instrument`。
 - `server.py`：HTTP route、静态文件、API response、本机请求 guard。
-- `static/`：single workspace、function toolbar、3-step request wizard、T+n date helper、代码区、结果区、样式和浏览器端交互。
+- `static/`：single workspace、function toolbar、3-step request wizard、T+n date helper、Intraday timezone/UNIX converter、代码区、结果区、样式和浏览器端交互。
 - `tests/`：验证参数边界、代码生成、执行解析、token redaction、registry 完整性、DB pool 查询边界和前端 pool state 回归点。
 
 ## 6. 运行方式
@@ -279,7 +282,7 @@ python3 -m http.server 8765 --directory .
 - `http://localhost:8765/j21_terminal/`：Meridian landing 与 terminal prototype。
 - `http://localhost:8765/database_app/site/`：CodeGen 产品 / 下载页。
 
-该 wrapper 会用随机本地端口绑定 `127.0.0.1` 并打开系统浏览器。生成的 `.app` 会复制 `database_app` 源码、文档和纯 Python 依赖到 bundle resources，移动 `.app` 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。目标机器需要 Python 3.11+，或用 `PYTHON_BIN` 指向兼容 Python。
+该 wrapper 会用随机本地端口绑定 `127.0.0.1` 并打开系统浏览器。生成的 `.app` 会复制 `database_app` 源码、文档和纯 Python 依赖到 bundle resources，移动 `.app` 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。启动时会先检查 `PYTHON_BIN`，再检查常见 Homebrew 和 python.org Python 3.11+ 安装路径，最后才 fallback 到 `python3`。
 
 直接启动脚本会在启动 server 前 `unset EODHD_API_KEY`，因此桌面式启动路径只使用 `Login / Config` 中保存的 token。
 
@@ -296,7 +299,7 @@ python3 -m http.server 8765 --directory .
 | Endpoint id | EODHD path | 用途 | 格式 | 状态 |
 | --- | --- | --- | --- | --- |
 | `historical_eod` | `/api/eod/{provider_symbol}` | 一个或少量 symbol 的历史 EOD OHLCV | JSON / CSV | implemented |
-| `intraday` | `/api/intraday/{provider_symbol}` | 1m/5m/1h intraday bars | JSON / CSV | implemented |
+| `intraday` | `/api/intraday/{provider_symbol}` | 1m/5m/1h bars；U.S. Eastern time helper 转 UTC UNIX seconds | JSON / CSV | implemented |
 | `live_ohlcv` | `/api/real-time/{provider_symbol}` | 最新 delayed OHLCV snapshot | JSON / CSV | implemented |
 | `bulk_last_day_eod` | `/api/eod-bulk-last-day/{exchange}` | 小规模手动 bulk last-day 查询 | JSON / CSV | implemented |
 | `dividends` | `/api/div/{provider_symbol}` | 历史分红 | JSON / CSV | implemented |
@@ -334,7 +337,7 @@ App 在生成 URL 或执行 API 前做参数校验：
 - 前端 selected rows、codegen payload、Execute API 使用同一批 confirmed DB provider symbols，避免 UI 显示一个 symbol 但生成 URL 使用另一个 symbol。
 - Historical EOD 日期范围最多 3660 天。
 - T+n helper 只做 UI 日期填充，不绕过后端日期范围校验；business-day 模式当前按周一到周五计算，不含交易所节假日。
-- Intraday 支持 `1m`、`5m`、`1h`；如果提供 timestamp range，会按官方区间上限校验。
+- Intraday 支持 `1m`、`5m`、`1h`；如果提供 timestamp range，会按官方区间上限校验。前端秒级 helper 始终把输入解释为 U.S. Eastern `America/New_York`，按日期自动处理 EST/EDT，再写入 EODHD 所需的 UTC-based UNIX seconds；DST 不存在/重复时刻会明确拒绝，不静默猜测。
 - Bulk EOD 默认必须提供 symbols；除非用户显式勾选 full exchange。
 - Bulk EOD 默认最多 2000 个 symbols。
 - Bulk EOD 支持 `trade_date` 或 `date_from`/`date_to`，日期范围最多 31 个 calendar days，会生成每个日期一个 bulk URL。
@@ -448,6 +451,7 @@ PYTHONPATH=src ../database_system_cli/.venv/bin/python -m pytest
 - preset/exchange/asset_type/index asset pool query semantics。
 - API cost estimation and bulk confirmation guard。
 - frontend static smoke for single workspace, wizard import/confirm, stale-result boundary, and no-key execute error path。
+- Intraday timezone conversion for winter/summer EST/EDT, second precision, UNIX round-trip, and DST gap/overlap rejection。
 
 `database_system_cli` 主线测试可单独在其目录运行，不依赖 `database_app`。
 

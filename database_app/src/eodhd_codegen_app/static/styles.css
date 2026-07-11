@@ -542,6 +542,7 @@ textarea {
 .notice,
 .endpoint-note,
 .date-offset-panel,
+.intraday-time-panel,
 .pool-source-note,
 .review-box {
   margin: 8px 0 10px;
@@ -821,6 +822,34 @@ textarea {
 
 #apply_date_offset {
   width: 142px;
+}
+
+#apply_intraday_time {
+  width: 190px;
+}
+
+.timezone-notice {
+  margin: 6px 0 10px;
+}
+
+.time-conversion-output {
+  display: block;
+  min-height: 34px;
+  margin-top: 4px;
+  padding: 5px 7px;
+  border: 1px solid #c5d2de;
+  background: #ffffff;
+  color: #3f5365;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.time-conversion-output.error {
+  border-color: #d79a9a;
+  background: #fff4f4;
+  color: var(--danger);
 }
 
 .config-status {

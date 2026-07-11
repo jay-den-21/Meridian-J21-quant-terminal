@@ -90,6 +90,7 @@ database_app/
     static/
       index.html
       styles.css
+      timezone.js
       app.js
   tests/
     test_client.py
@@ -100,6 +101,8 @@ database_app/
     test_server_security.py
     test_token_store.py
     test_universe.py
+    test_static_app.py
+    test_timezone_tools.js
   scripts/
     run_local.command
     package_macos_app.sh
@@ -130,6 +133,12 @@ The browser calls `/api/endpoints`, builds the endpoint dropdown and parameter f
 ```
 
 This keeps the UI maintainable as endpoints are added.
+
+### Intraday Time Input Contract
+
+The Intraday wizard accepts helper date/time values through seconds and always interprets them in the IANA `America/New_York` zone. Browser/computer local timezone is ignored. `Intl.DateTimeFormat` resolves EST or EDT for the selected date, and the frontend writes the resulting UTC-based UNIX timestamp seconds into the existing `from_timestamp` and `to_timestamp` fields.
+
+The conversion utility validates its own round trip. A spring DST-gap time that never occurred and a fall DST-overlap time that occurred twice are rejected explicitly instead of being silently normalized. Direct numeric UNIX timestamp editing remains available, and backend interval/range validation remains authoritative.
 
 ## Request Flow
 
@@ -189,7 +198,7 @@ This blocks simple `text/plain` cross-site POSTs from arbitrary web pages. It is
 - `dist/EODHD-Code-Generator-1.0.0.pkg`
 - `dist/SHA256SUMS.txt`
 
-The bundle copies `database_app` source/docs and pure Python dependencies into app resources. The launcher prepends those resource paths to `PYTHONPATH`, sets `PYTHONDONTWRITEBYTECODE=1` so Python does not mutate signed bundle resources, unsets `EODHD_API_KEY`, and starts the local server on `127.0.0.1` with a random port. It still expects Python 3.11+ on the Mac or a `PYTHON_BIN` override.
+The bundle copies `database_app` source/docs and pure Python dependencies into app resources. The launcher prepends those resource paths to `PYTHONPATH`, sets `PYTHONDONTWRITEBYTECODE=1` so Python does not mutate signed bundle resources, unsets `EODHD_API_KEY`, and starts the local server on `127.0.0.1` with a random port. It does not bundle the Python runtime; at launch it checks `PYTHON_BIN`, common Homebrew paths, common python.org framework paths, and finally `python3`, requiring Python 3.11+.
 
 The script also copies DMG/PKG/checksum artifacts into `site/downloads/`, so `site/index.html` can serve as the CodeGen product/download page after packaging. The personal homepage and J21 Terminal are independent sibling roots and are not bundled into `database_app`. Public distribution requires a separate signing and notarization release process.
 
@@ -262,7 +271,7 @@ The request validator rejects unsupported input before URL generation or executi
 - Unknown strings and guessed aliases, such as `BRK.B` when only `BRK-B` is stored, are rejected.
 - Historical ranges where `date_from > date_to`.
 - Historical ranges longer than 3660 days.
-- Intraday unsupported intervals and oversized timestamp ranges.
+- Intraday unsupported intervals and oversized timestamp ranges; frontend helper tests also cover EST/EDT conversion and DST gap/overlap rejection.
 - Bulk requests without symbols unless full exchange is explicitly allowed.
 - More than 2000 bulk symbols by default.
 - More than 2000 symbols for intraday/technical/live code generation.

@@ -52,7 +52,7 @@ It also copies the DMG/PKG and checksums to `site/downloads/`, so the CodeGen pr
 open site/index.html
 ```
 
-The wrapper starts the same local server on `127.0.0.1` with a random port and opens it in the system browser. The generated `.app` copies the app source/docs and pure Python dependencies into its bundle, but it does not bundle the Python runtime; it expects Python 3.11+ or a `PYTHON_BIN` override.
+The wrapper starts the same local server on `127.0.0.1` with a random port and opens it in the system browser. The generated `.app` copies the app source/docs and pure Python dependencies into its bundle, but it does not bundle the Python runtime. At launch it checks `PYTHON_BIN` first, then common Homebrew and python.org Python 3.11+ install paths, before falling back to `python3`.
 Direct launch scripts unset `EODHD_API_KEY` before starting the server, so the desktop-style flow uses the token saved in `Login / Config`.
 
 The generated DMG/PKG are local developer artifacts. Public Mac distribution should use Apple Developer ID signing and notarization before posting the files on a public website.
@@ -82,7 +82,7 @@ Supported endpoints are registry-driven in `src/eodhd_codegen_app/endpoints.py` 
 | Endpoint id | EODHD path | Formats | Notes |
 | --- | --- | --- | --- |
 | `historical_eod` | `/api/eod/{provider_symbol}` | JSON / CSV | Historical daily/weekly/monthly EOD OHLCV |
-| `intraday` | `/api/intraday/{provider_symbol}` | JSON / CSV | 1m/5m/1h bars; UTC timestamp range |
+| `intraday` | `/api/intraday/{provider_symbol}` | JSON / CSV | 1m/5m/1h bars; U.S. Eastern helper converts to UTC UNIX seconds |
 | `live_ohlcv` | `/api/real-time/{provider_symbol}` | JSON / CSV | Delayed latest OHLCV, small watchlist |
 | `bulk_last_day_eod` | `/api/eod-bulk-last-day/{exchange}` | JSON / CSV | Requires symbols unless full exchange is explicitly allowed |
 | `dividends` | `/api/div/{provider_symbol}` | JSON / CSV | Historical dividends |
@@ -117,7 +117,7 @@ The main screen shows five P0 function cards:
 Clicking a function opens a floating 3-step wizard:
 
 - `Stocks / 选股`: browse DB-backed Pool Resources, parse `.csv` / `.txt` / pasted tickers locally, resolve them against the local `us_share.instrument` table, and select with checkbox, double-click, or Command/Ctrl-click.
-- `Parameters / 参数`: fill dates, period, adjustment, interval, lookup fields, and endpoint-specific parameters. `Date helper: T+n` fills `from` / `to` / `trade_date` from an anchor date plus business-day or calendar-day offsets.
+- `Parameters / 参数`: fill dates, period, adjustment, interval, lookup fields, and endpoint-specific parameters. `Date helper: T+n` fills `from` / `to` / `trade_date` from an anchor date plus business-day or calendar-day offsets. Intraday adds a second-precision `America/New_York` helper that applies EST/EDT automatically and writes UTC-based UNIX timestamp seconds.
 - `Review / 确认`: check selected ticker count, format, preview rows, warnings, and estimated API calls; Confirm updates generated code and the executable request.
 
 Notes:
@@ -131,6 +131,7 @@ Notes:
 - The app does not label S&P/MSCI/broker/申万-style industry or index pools unless there is an official/authorized constituent source.
 - Imported tickers must exact-match active DB `symbol` or `provider_symbol` values case-insensitively. Unknown strings are rejected instead of being normalized into fake provider symbols.
 - Imported tickers are DB-exact. Class-share aliases are not guessed; use the active DB `symbol` or `provider_symbol` spelling, for example `BRK-B` / `BRK-B.US` if that is how the instrument is stored.
+- Intraday helper date/time input is always U.S. Eastern Time (`America/New_York`), not the browser or computer timezone. Ambiguous and nonexistent DST transition times are rejected explicitly.
 - Most per-symbol endpoints consume one API call per ticker. The UI strongly warns above 100 selected tickers and caps selection at 2000.
 - High-call execution requires explicit confirmation, and the local `Execute API` button is hard-capped at 50 generated HTTP requests. Use generated code for larger research lists.
 - Code tabs include one-URL-per-line output and list/array loop snippets. Bulk loop snippets iterate dates, not symbols, so they do not repeat the same bulk request per ticker.
