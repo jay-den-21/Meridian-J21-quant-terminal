@@ -14,6 +14,7 @@ from fdp.sources.eodhd.ingest import (
     BulkDailyPriceLoadResult,
     HistoricalDailyPriceUnitResult,
 )
+from fdp.sources.eodhd.client import EodhdApiResponse
 
 
 class FakeContext:
@@ -400,6 +401,20 @@ def test_daily_range_reports_actual_weighted_api_units(
     )
     monkeypatch.setattr(
         DailyRangeJob,
+        "_check_remote_api_capacity",
+        staticmethod(
+            lambda client, *, required_units: {
+                "remote_api_requests_used": 100,
+                "remote_daily_rate_limit": 100_000,
+                "remote_extra_units_remaining": 0,
+                "remote_api_units_remaining": 99_900,
+                "remote_api_requests_date": "2024-01-03",
+                "remote_preflight_api_units": 1,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        DailyRangeJob,
         "_load_trading_dates",
         staticmethod(lambda connection, *, date_from, date_to: trade_dates),
     )
@@ -451,8 +466,40 @@ def test_daily_range_reports_actual_weighted_api_units(
 
     assert result.status == "success"
     assert result.parameters["instrument_status"] == "all"
-    assert result.metrics == {
-        "api_units_limit": 200,
-        "api_units_consumed": 200,
-        "api_units_remaining": 0,
-    }
+    assert result.metrics["api_units_limit"] == 200
+    assert result.metrics["api_units_consumed"] == 200
+    assert result.metrics["api_units_remaining"] == 0
+    assert result.metrics["task_api_units_consumed"] == 201
+    assert result.metrics["remote_api_units_remaining"] == 99_900
+
+
+def test_daily_range_remote_budget_preflight_is_redacted_and_strict() -> None:
+    class UserClient:
+        def get_user(self):
+            return EodhdApiResponse(
+                endpoint="/user",
+                status_code=200,
+                success=True,
+                retry_count=0,
+                rows_returned=1,
+                duration_ms=1,
+                payload=[
+                    {
+                        "name": "Private User",
+                        "email": "private@example.com",
+                        "apiRequests": 99_500,
+                        "apiRequestsDate": "2026-07-11",
+                        "dailyRateLimit": 100_000,
+                        "extraLimit": 500,
+                    }
+                ],
+            )
+
+    metrics = DailyRangeJob._check_remote_api_capacity(UserClient(), required_units=1_000)
+
+    assert metrics["remote_api_units_remaining"] == 1_000
+    assert "name" not in metrics
+    assert "email" not in metrics
+
+    with pytest.raises(ValueError, match="remaining=1000 required=1001"):
+        DailyRangeJob._check_remote_api_capacity(UserClient(), required_units=1_001)

@@ -394,3 +394,21 @@ def test_budget_exhaustion_happens_before_transport() -> None:
         client.get_bulk_eod("US", trade_date=date(2023, 1, 3))
 
     assert calls == 0
+
+
+def test_bulk_symbol_filter_charges_full_exchange_plus_each_symbol() -> None:
+    budget = WeightedApiBudget(102)
+    client = EodhdClient(
+        api_key="test-token",
+        transport=lambda request, timeout: FakeResponse([]),
+        api_budget=budget,
+    )
+
+    response = client.get_bulk_eod(
+        "US",
+        trade_date=date(2023, 1, 3),
+        symbols=["AAPL", "MSFT", "AAPL"],
+    )
+
+    assert response.success is True
+    assert budget.snapshot().consumed == 102

@@ -32,6 +32,7 @@ from fdp.get_data.historical.base import (
     GLOBAL_TRANSIENT_STATUS_CODES,
 )
 from fdp.get_data.runtime import JobRuntime
+from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.ingest import BulkDailyPriceLoadResult, load_bulk_daily_prices
 from fdp.sources.eodhd.identity import DatedInstrumentIdentityResolver
 from fdp.sources.eodhd.retry import WeightedApiBudget
@@ -167,6 +168,14 @@ class DailyRangeJob:
                 date_from=parameters["date_from"],
                 date_to=parameters["date_to"],
             )
+        remote_budget = self._check_remote_api_capacity(
+            active_runtime.client(
+                active_reporter,
+                max_requests_per_minute=parameters["max_requests_per_minute"],
+            ),
+            required_units=active_preflight.estimated_api_calls,
+        )
+        with active_runtime.engine.connect() as connection:
             identity_resolver = DatedInstrumentIdentityResolver.from_connection(
                 connection,
                 market=parameters["market"],
@@ -248,6 +257,11 @@ class DailyRangeJob:
                 "api_units_limit": budget_snapshot.limit,
                 "api_units_consumed": budget_snapshot.consumed,
                 "api_units_remaining": budget_snapshot.remaining,
+                **remote_budget,
+                "task_api_units_consumed": (
+                    budget_snapshot.consumed
+                    + int(remote_budget["remote_preflight_api_units"])
+                ),
             },
             error_message=error_message,
             preflight=active_preflight,
@@ -530,6 +544,41 @@ class DailyRangeJob:
             "source": "job_default",
         }
         return values, sources
+
+    @staticmethod
+    def _check_remote_api_capacity(
+        client: EodhdClient,
+        *,
+        required_units: int,
+    ) -> dict[str, int | str]:
+        """Use the redacted User API counters to reject an underfunded real run."""
+        response = client.get_user()
+        if not response.success or not response.payload:
+            raise ValueError(
+                "EODHD User API budget preflight failed: "
+                f"{response.error_message or response.status_code}"
+            )
+        payload = response.payload[0]
+        try:
+            used = int(payload["apiRequests"])
+            daily_limit = int(payload["dailyRateLimit"])
+            extra_remaining = int(payload.get("extraLimit") or 0)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("EODHD User API returned incomplete budget counters") from exc
+        remote_remaining = max(daily_limit - used, 0) + max(extra_remaining, 0)
+        if remote_remaining < required_units:
+            raise ValueError(
+                "EODHD remote API budget is insufficient: "
+                f"remaining={remote_remaining} required={required_units}"
+            )
+        return {
+            "remote_api_requests_used": used,
+            "remote_daily_rate_limit": daily_limit,
+            "remote_extra_units_remaining": extra_remaining,
+            "remote_api_units_remaining": remote_remaining,
+            "remote_api_requests_date": str(payload.get("apiRequestsDate") or "unknown"),
+            "remote_preflight_api_units": response.retry_count + 1,
+        }
 
     @staticmethod
     def _load_trading_dates(connection: Any, *, date_from: date, date_to: date) -> list[date]:

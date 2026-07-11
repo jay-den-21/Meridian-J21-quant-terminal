@@ -215,6 +215,7 @@ class EodhdClient:
             "api_token": self.api_key,
             "fmt": "json",
         }
+        normalized_symbols: list[str] = []
         if trade_date is not None:
             query_params["date"] = trade_date.isoformat()
         if symbols:
@@ -230,7 +231,7 @@ class EodhdClient:
             endpoint=endpoint,
             url=url,
             object_name="bulk EOD",
-            api_units=100,
+            api_units=100 + len(normalized_symbols),
         )
 
     def _get_json_list(
