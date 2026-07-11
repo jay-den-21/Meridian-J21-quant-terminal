@@ -112,7 +112,7 @@ def test_identity_resolution_rejects_type_mismatch_and_ambiguity() -> None:
     assert ambiguous.candidate_instrument_ids == (1, 2)
 
 
-def test_identity_resolution_never_guesses_when_type_is_missing() -> None:
+def test_identity_resolution_allows_unique_exact_symbol_when_bulk_type_is_missing() -> None:
     resolver = DatedInstrumentIdentityResolver(
         current_rows=[_instrument(1, "AAPL", "stock")],
         history_rows=[],
@@ -125,5 +125,85 @@ def test_identity_resolution_never_guesses_when_type_is_missing() -> None:
         eodhd_type=None,
     )
 
+    assert result.instrument["instrument_id"] == 1
+    assert result.matched_by == "current_provider_symbol"
+
+
+def test_identity_resolution_uses_dated_history_when_bulk_type_is_missing() -> None:
+    meta = _instrument(1, "META", "stock")
+    reused_fb = _instrument(2, "FB", "etf")
+    resolver = DatedInstrumentIdentityResolver(
+        current_rows=[meta, reused_fb],
+        history_rows=[
+            _history(meta, "FB.US", valid_from=None, valid_to=date(2022, 6, 8)),
+        ],
+        asset_types=["stock", "etf"],
+    )
+
+    result = resolver.resolve(
+        provider_symbol="FB.US",
+        trade_date=date(2014, 8, 18),
+        eodhd_type=None,
+    )
+
+    assert result.instrument["instrument_id"] == 1
+    assert result.matched_by == "identifier_history"
+
+
+def test_missing_bulk_type_allows_provider_current_code_for_same_instrument() -> None:
+    meta = _instrument(1, "META", "stock")
+    resolver = DatedInstrumentIdentityResolver(
+        current_rows=[meta],
+        history_rows=[
+            _history(meta, "META.US", valid_from=date(2022, 6, 9), valid_to=None),
+        ],
+        asset_types=["stock"],
+    )
+
+    result = resolver.resolve(
+        provider_symbol="META.US",
+        trade_date=date(2014, 8, 18),
+        eodhd_type=None,
+    )
+
+    assert result.instrument["instrument_id"] == 1
+    assert result.matched_by == "current_provider_symbol"
+
+
+def test_missing_bulk_type_does_not_cross_reused_identifier_owners() -> None:
+    old_owner = _instrument(1, "OLD", "stock")
+    current_owner = _instrument(2, "OLD", "etf")
+    resolver = DatedInstrumentIdentityResolver(
+        current_rows=[current_owner],
+        history_rows=[
+            _history(old_owner, "OLD.US", valid_from=None, valid_to=date(2020, 1, 1)),
+        ],
+        asset_types=["stock", "etf"],
+    )
+
+    result = resolver.resolve(
+        provider_symbol="OLD.US",
+        trade_date=date(2024, 1, 2),
+        eodhd_type=None,
+    )
+
     assert result.instrument is None
-    assert result.reason == "unsupported_or_missing_eodhd_type"
+    assert result.reason == "identifier_not_valid_on_trade_date"
+    assert result.candidate_instrument_ids == (1, 2)
+
+
+def test_identity_resolution_rejects_present_but_unsupported_type() -> None:
+    resolver = DatedInstrumentIdentityResolver(
+        current_rows=[_instrument(1, "AAPL", "stock")],
+        history_rows=[],
+        asset_types=["stock"],
+    )
+
+    result = resolver.resolve(
+        provider_symbol="AAPL.US",
+        trade_date=date(2024, 1, 2),
+        eodhd_type="Bond",
+    )
+
+    assert result.instrument is None
+    assert result.reason == "unsupported_eodhd_type"

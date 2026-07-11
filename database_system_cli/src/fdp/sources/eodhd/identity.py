@@ -113,9 +113,10 @@ class DatedInstrumentIdentityResolver:
         """Return one date/type-compatible identity or a reason suitable for staging."""
         normalized_provider_symbol = provider_symbol.strip().upper()
         observed_asset_type = normalize_eodhd_asset_type(eodhd_type)
-        if observed_asset_type is None:
-            return _unresolved("unsupported_or_missing_eodhd_type")
-        if observed_asset_type not in self._asset_types:
+        provider_type_missing = _provider_type_is_missing(eodhd_type)
+        if observed_asset_type is None and not provider_type_missing:
+            return _unresolved("unsupported_eodhd_type")
+        if observed_asset_type is not None and observed_asset_type not in self._asset_types:
             return _unresolved(f"asset_type_not_selected:{observed_asset_type}")
 
         all_history = self._history_by_provider_symbol.get(normalized_provider_symbol, [])
@@ -131,9 +132,21 @@ class DatedInstrumentIdentityResolver:
 
         current_candidates = self._current_by_provider_symbol.get(normalized_provider_symbol, [])
         if all_history and current_candidates:
+            if provider_type_missing:
+                historical_ids = {int(row["instrument_id"]) for row in all_history}
+                current_ids = {int(row["instrument_id"]) for row in current_candidates}
+                if historical_ids != current_ids:
+                    return _unresolved(
+                        "identifier_not_valid_on_trade_date",
+                        candidate_rows=[*all_history, *current_candidates],
+                    )
             historical_types = {str(row["asset_type"]) for row in all_history}
             current_types = {str(row["asset_type"]) for row in current_candidates}
-            if observed_asset_type in historical_types and observed_asset_type in current_types:
+            if (
+                observed_asset_type is not None
+                and observed_asset_type in historical_types
+                and observed_asset_type in current_types
+            ):
                 return _unresolved(
                     "identifier_not_valid_on_trade_date",
                     candidate_rows=[*all_history, *current_candidates],
@@ -196,7 +209,7 @@ def _is_valid_on(row: dict[str, object], trade_date: date) -> bool:
 def _resolve_candidates(
     rows: list[dict[str, object]],
     *,
-    observed_asset_type: str,
+    observed_asset_type: str | None,
     matched_by: IdentityMatchSource,
     mismatch_reason: str,
     ambiguous_reason: str,
@@ -204,7 +217,7 @@ def _resolve_candidates(
     compatible_by_id = {
         int(row["instrument_id"]): row
         for row in rows
-        if row["asset_type"] == observed_asset_type
+        if observed_asset_type is None or row["asset_type"] == observed_asset_type
     }
     if not compatible_by_id:
         return _unresolved(mismatch_reason, candidate_rows=rows)
@@ -215,6 +228,10 @@ def _resolve_candidates(
         matched_by=matched_by,
         reason=None,
     )
+
+
+def _provider_type_is_missing(value: object) -> bool:
+    return value is None or not str(value).strip()
 
 
 def _unresolved(
