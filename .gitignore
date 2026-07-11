@@ -15,6 +15,7 @@ dist/
 build/
 *.egg-info/
 backups/
+database_system_cli/logs/
 
 .trellis/.developer
 .trellis/.runtime/
