@@ -107,7 +107,9 @@ def test_identity_resolution_rejects_type_mismatch_and_ambiguity() -> None:
     )
 
     assert mismatch.reason == "current_provider_symbol_asset_type_mismatch"
+    assert mismatch.candidate_instrument_ids == (1,)
     assert ambiguous.reason == "ambiguous_identifier_history"
+    assert ambiguous.candidate_instrument_ids == (1, 2)
 
 
 def test_identity_resolution_never_guesses_when_type_is_missing() -> None:

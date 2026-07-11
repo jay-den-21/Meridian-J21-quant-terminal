@@ -23,6 +23,7 @@ class InstrumentIdentityResolution:
     instrument: dict[str, object] | None
     matched_by: IdentityMatchSource | None
     reason: str | None
+    candidate_instrument_ids: tuple[int, ...] = ()
 
 
 class DatedInstrumentIdentityResolver:
@@ -133,7 +134,10 @@ class DatedInstrumentIdentityResolver:
             historical_types = {str(row["asset_type"]) for row in all_history}
             current_types = {str(row["asset_type"]) for row in current_candidates}
             if observed_asset_type in historical_types and observed_asset_type in current_types:
-                return _unresolved("identifier_not_valid_on_trade_date")
+                return _unresolved(
+                    "identifier_not_valid_on_trade_date",
+                    candidate_rows=[*all_history, *current_candidates],
+                )
 
         if current_candidates:
             return _resolve_candidates(
@@ -144,7 +148,10 @@ class DatedInstrumentIdentityResolver:
                 ambiguous_reason="ambiguous_current_provider_symbol",
             )
         if all_history:
-            return _unresolved("identifier_not_valid_on_trade_date")
+            return _unresolved(
+                "identifier_not_valid_on_trade_date",
+                candidate_rows=all_history,
+            )
         return _unresolved("provider_symbol_not_found")
 
 
@@ -200,9 +207,9 @@ def _resolve_candidates(
         if row["asset_type"] == observed_asset_type
     }
     if not compatible_by_id:
-        return _unresolved(mismatch_reason)
+        return _unresolved(mismatch_reason, candidate_rows=rows)
     if len(compatible_by_id) > 1:
-        return _unresolved(ambiguous_reason)
+        return _unresolved(ambiguous_reason, candidate_rows=list(compatible_by_id.values()))
     return InstrumentIdentityResolution(
         instrument=next(iter(compatible_by_id.values())),
         matched_by=matched_by,
@@ -210,5 +217,17 @@ def _resolve_candidates(
     )
 
 
-def _unresolved(reason: str) -> InstrumentIdentityResolution:
-    return InstrumentIdentityResolution(instrument=None, matched_by=None, reason=reason)
+def _unresolved(
+    reason: str,
+    *,
+    candidate_rows: list[dict[str, object]] | None = None,
+) -> InstrumentIdentityResolution:
+    candidate_ids = tuple(
+        sorted({int(row["instrument_id"]) for row in candidate_rows or []})
+    )
+    return InstrumentIdentityResolution(
+        instrument=None,
+        matched_by=None,
+        reason=reason,
+        candidate_instrument_ids=candidate_ids,
+    )

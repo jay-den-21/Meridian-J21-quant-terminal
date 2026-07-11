@@ -7,7 +7,10 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy.engine import Connection
 
 from fdp.sources.eodhd.client import EodhdClient
-from fdp.sources.eodhd.identity import DatedInstrumentIdentityResolver
+from fdp.sources.eodhd.identity import (
+    DatedInstrumentIdentityResolver,
+    InstrumentIdentityResolution,
+)
 from fdp.sources.eodhd.ingest.common import (
     InstrumentStatus,
     create_task_run,
@@ -346,7 +349,7 @@ def load_bulk_daily_prices(
                         symbol=symbol,
                         provider_symbol=provider_symbol,
                         fallback_trade_date=trade_date,
-                        reason=resolution.reason or "unresolved_instrument_identity",
+                        reason=_identity_resolution_reason(resolution),
                     )
                 )
             except ValueError as exc:
@@ -737,6 +740,16 @@ def _bulk_unmatched_observation_row(
         "first_seen_at": observed_at,
         "last_seen_at": observed_at,
     }
+
+
+def _identity_resolution_reason(resolution: InstrumentIdentityResolution) -> str:
+    """Format an unresolved identity reason with deterministic candidate ids."""
+    reason = resolution.reason or "unresolved_instrument_identity"
+    candidate_ids = resolution.candidate_instrument_ids
+    if not candidate_ids:
+        return str(reason)
+    joined = ",".join(str(instrument_id) for instrument_id in candidate_ids)
+    return f"{reason};candidate_instrument_ids={joined}"
 
 
 def _bulk_row_trade_date(

@@ -173,7 +173,7 @@ class DailyRangeJob:
                 active_reporter,
                 max_requests_per_minute=parameters["max_requests_per_minute"],
             ),
-            required_units=active_preflight.estimated_api_calls,
+            required_units=parameters["max_api_calls"],
         )
         with active_runtime.engine.connect() as connection:
             identity_resolver = DatedInstrumentIdentityResolver.from_connection(
