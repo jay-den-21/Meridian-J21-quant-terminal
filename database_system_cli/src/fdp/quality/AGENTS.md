@@ -31,5 +31,7 @@ date range + price/calendar tables -> read-only checks -> issue rows
 - issue 必须保留 target table、instrument/date、severity、details 和 open status。
 - 缺失检测基于已加载 instrument scope，避免把未建 universe 的标的误报为缺失。
 - 新 issue type 要明确进入 repair、quarantine 或人工 review 的哪条路径。
+- `asset_type_mismatch` 进入 `j21 migrate daily-price-asset-types` copy/verify/delete 路径，
+  不得当作坏价格直接 quarantine。
 - 不因 validator 重跑而静默关闭旧 issue；resolution 属于确认式 workflow。
 - 运行 quality query 和 validation tests。

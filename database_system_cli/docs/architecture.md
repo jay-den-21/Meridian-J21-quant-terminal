@@ -16,7 +16,8 @@ CLI / terminal menu / Python caller
 -> shared fdp.get_data Job
 -> EODHD provider client + ingest/parser
 -> SQLAlchemy Core upsert + MySQL audit/canonical tables
--> independent quality -> repair/quarantine -> research read layer
+-> independent quality -> repair/quarantine -> research read/indicator layer
+-> sibling read-only FastAPI/React Research Terminal
 ```
 
 关键边界：CLI 和菜单只是输入/输出 adapter；human-operable ingestion 的参数、预算、
@@ -35,7 +36,7 @@ CLI / terminal menu / Python caller
 | `src/fdp/quality/` | 检测 query、check run、issue persistence | 自动修复/删除 |
 | `src/fdp/repair/` | 缺失数据 plan/confirm/claim/backfill | 坏行删除 |
 | `src/fdp/quarantine/` | 坏行 plan/confirm/archive/delete/revalidate | missing backfill |
-| `src/fdp/research/` | 本地数据库只读研究接口 | EODHD API 和写库 |
+| `src/fdp/research/` | 本地只读查询/指标；受 200-unit cap 的 Technical 口径抽验 | 数据补拉和写库 |
 | `src/fdp/bulk_unmatched.py` | unmatched summary/classify/route domain logic | UI 和 API 拉取 |
 
 对应的局部 AI/maintainer 规则位于各路径的 `AGENTS.md`。规则继承顺序是：
@@ -73,11 +74,14 @@ flowchart TB
     end
 
     subgraph Research["Research Layer"]
-        K["Research Reader"]
+        K["Research Reader + Local Indicators"]
+        L["Read-only FastAPI"]
+        M["React / ECharts Terminal"]
     end
 
     E --> H["System Audit / Unmatched"]
     G --> K
+    K --> L --> M
 ```
 
 注意：`validate`、`repair`、`quarantine` 和 `research` 当前不是 ingest Job。它们由
@@ -194,7 +198,7 @@ j21 ingest delisted-instruments
 -> DelistedInstrumentsJob.run()
 -> load_delisted_instruments()
 -> EODHD delisted symbol list
--> parse inactive stock/ETF rows (EODHD fund is normalized to ETF)
+-> parse inactive stock/ETF/Fund rows into canonical asset_type
 -> instrument upsert with is_active=false/delisted_date
 -> instrument_lifecycle_event upsert by event_key
 ```
@@ -203,7 +207,7 @@ j21 ingest delisted-instruments
 
 ## 7. Historical EOD 路径
 
-`j21 ingest history` 根据 `--asset-types` 选择 `StockDailyJob`、`EtfDailyJob` 或通用
+`j21 ingest history` 根据 `--asset-types` 选择 stock、ETF、Fund、index Job 或通用
 `HistoricalDailyJob`。`--instrument-status active|inactive|all` 控制 instrument master
 匹配范围；旧 `--include-inactive` 仅为兼容参数。
 
@@ -232,6 +236,11 @@ units。
 `index_daily_price`。`MarketCalendarJob` 调用 exchange details/calendar parser，写入
 `market_calendar(calendar_date, is_trading_day, source)`。
 
+EODHD 历史 holiday payload 曾漏掉三个已证实休市日。US calendar parser 因此有显式、
+有一手来源的 closure override：Nasdaq 2012 schedule 的 `2012-01-02`，以及 SEC/NYSE
+Arca 记录的 Sandy `2012-10-29/30`。这些日期写 source
+`NASDAQ_SEC_US_CLOSURE`；不会从“返回行少”自动猜休市。
+
 ## 8. Bulk EOD 路径
 
 ### 8.1 单日 Bulk
@@ -241,9 +250,10 @@ j21 ingest daily
 -> BulkDailyJob.run()
 -> load_bulk_daily_prices()
 -> EodhdClient.get_bulk_eod(exchange, date, optional symbols)
--> load active instrument map for selected asset types
--> exact provider_symbol/current symbol match
-   -> matched: parse_daily_price_rows -> stock/ETF upsert
+-> load active/all temporal identity map for selected asset types
+-> dated identifier history -> current provider symbol -> optional Type compatibility
+-> batch natural-key arbitration: unique dated alias wins; lower alias is shadowed
+   -> matched: parse_daily_price_rows -> stock/ETF/Fund/index upsert
    -> unmatched: bulk_unmatched_daily_price_observation upsert
 -> finish task/API audit -> JobResult
 ```
@@ -259,6 +269,7 @@ j21 ingest daily-range --from ... --to ...
 -> verify complete market_calendar coverage
 -> select is_trading_day=true dates
 -> estimate API calls and storage
+-> User API preflight + thread-safe weighted attempt ledger
 -> dry-run by default
 -> --execute --yes
 -> one load_bulk_daily_prices transaction per trading date
@@ -266,7 +277,9 @@ j21 ingest daily-range --from ... --to ...
 -> aggregate committed per-day results
 ```
 
-并发只改变“多个交易日同时进行”，不改变单日事务、upsert 唯一键或 audit 语义。出现 fatal
+`--instrument-status active` 适合每日增量；历史 backfill 使用 `all`。每次 HTTP attempt 在发出前
+扣除真实 weighted units，retry 同样计费，预算不足时不发送请求。并发只改变“多个交易日同时
+进行”，不改变单日事务、upsert 唯一键或 audit 语义。出现 fatal
 条件后取消尚未启动的 future，同时收集已经开始的 future，保证结果计数等于真实提交。
 
 ## 9. Bulk Unmatched Reconcile
@@ -278,7 +291,7 @@ flowchart LR
     Classify["strict classifier"]
     Match{"exact provider_symbol<br/>instrument match?"}
     Route["route dry-run / execute"]
-    Price["stock / ETF / index daily price"]
+    Price["stock / ETF / Fund / index daily price"]
     Hold["needs_instrument / non_price_asset / unknown"]
 
     Raw --> Summary --> Classify --> Match
@@ -297,8 +310,9 @@ j21 validate daily-price
 ```
 
 `fdp.bulk_unmatched.classify_bulk_unmatched_observations()` 只接受 exact
-`provider_symbol` instrument match。fund/preferred/notes/warrant/unknown 不会被猜测写进
-stock/ETF/index price table。route 时重新通过 `parse_daily_price_rows()` 校验价格。
+source-date/current `provider_symbol` identity match。Fund 路由到 `fund_daily_price`；
+preferred/notes/bond/warrant/unknown 不会被猜测写进 canonical price table。route 时重新通过
+`parse_daily_price_rows()` 校验价格，并保留 observed symbol/provider symbol。
 
 ## 10. 质量、Repair 与 Quarantine
 
@@ -315,10 +329,17 @@ flowchart TD
     Quarantine --> Archive["archive payload/hash"]
     Archive --> Delete["delete locked source row"]
     Delete --> Verify2["revalidate"] --> Resolve2["resolve issue"]
+    Kind -- asset_type_mismatch --> Reconcile["migrate daily-price-asset-types"]
+    Reconcile --> Verify3["copy -> payload verify -> source delete"]
 ```
 
 `quality/checks/` 只生成 SELECT；`quality/validation.py` 负责写 check run 和 open issue。
 质量检查不自动改市场数据。
+
+instrument metadata 更正可能发生在旧价格写入之后。`asset_type_mismatch` 不走 quarantine；
+`j21 migrate daily-price-asset-types --phase plan` 只读列出 source/target/rows，execute 阶段按
+chunk transaction copy 到当前 canonical type 表，完整 payload 验证通过后才删除 source。
+同 natural key 的目标 payload 不一致时拒绝覆盖并回滚。
 
 Repair 只处理缺失行：执行前重验 issue、instrument/provider symbol 和 plan status，从
 `confirmed` 原子 claim 为 `executing`，按 `instrument_id` 回填；目标行存在后才 resolve。
@@ -342,17 +363,50 @@ Reader 只读本地数据库，不调用 EODHD。`analysis_close` 根据 `adjust
 `adjusted_close` 或 raw `close`。`is_active/delisted_date` 来自 instrument join，不复制到
 每天的 price row。
 
+```text
+local daily rows
+-> calculate_daily_indicators(adjusted=True|False)
+-> adjusted OHLC + SMA/EMA/Bollinger/RSI/MACD/Volume SMA/volatility
+```
+
+`j21 research technical-validate` 是唯一例外的小额 provider 诊断：固定比较
+SMA20/EMA20/RSI14，每请求 5 units，总 hard cap 200；它只输出误差报告、不写数据库。
+2026-07-11 对 2024 Q1 AAPL/META/SPY 的 9 组真实抽验全部通过，最大 absolute error 小于
+`0.00005`；完整记录见 `technical_indicator_parity_report.md`。
+
+## 11.1 Sibling Research Terminal
+
+```text
+React/TypeScript/ECharts
+-> GET-only FastAPI routes
+-> guarded SQLAlchemy Core repository
+-> us_share canonical + system audit
+-> local indicator transform
+```
+
+`../research_terminal/` 提供 Overview、Security Explorer、ETF/Fund、Data Health、safe CSV
+和 chart PNG。进程级 SQL guard 拒绝非 SELECT/SHOW/EXPLAIN/WITH，并且部署账号仍应只有
+SELECT 权限。没有 ingest/repair/migration HTTP route；页面只复制 CLI。`current_active` 是
+当前 master 状态，`price_observed` 不是 point-in-time universe。
+
 ## 12. 数据库分层
 
 | Schema | 内容 | 例子 |
 | --- | --- | --- |
-| `us_share` | canonical instrument/market data | instrument、identifier history、lifecycle、calendar、split daily price |
+| `us_share` | canonical instrument/market data | identity/lifecycle/calendar、六种 asset daily price |
 | `system` | 运行审计、DQ、人工 workflow、staging | task/API log、issues、repair/quarantine plan、bulk unmatched |
 | `app_log` | API playground/search/snapshot 临时响应 | quote/search/screener/live snapshot |
 
 `src/fdp/storage/tables.py` 管理 Data Core 的 runtime table contract；物理变化必须通过
 Alembic。`app_log` snapshot 当前由迁移历史管理，不应重新混入 `us_share` canonical
 metadata。
+
+ETF/Fund 历史混表已通过 `j21 migrate fund-daily-price` 的 plan/copy/verify/finalize workflow
+拆开。Alembic 只建 schema/checkpoint；数千万行 copy/compact swap 在可恢复 Job 中运行，
+finalize 需要 verified backup/hash 和 conservation/checksum gate，不自动 `OPTIMIZE TABLE`。
+
+后续 instrument type correction 由通用 `daily-price-asset-types` reconcile 维护跨表不变量；
+2026-07-11 已无损搬迁 871 行 `stock -> etf` drift，最终 mismatch count 为 0。
 
 ## 13. 常见修改的联查清单
 
@@ -371,8 +425,8 @@ metadata。
 - High-volume intraday bar store 尚未实现。若未来加入 5-minute 全市场数据，推荐将
   instrument/catalog/quality metadata 留在 SQL，将大规模 bars 放入按资产/周期/日期分区的
   Parquet；不要默认把数亿行 intraday bars 塞入当前日频 MySQL 模型。
-- Future data terminal 可以消费 research read API/导出数据，但不能直接修改 Data Core
-  canonical tables。
+- Research Terminal v1 已实现，但不是 PIT universe terminal；等待 universe membership 数据后
+  才能增加历史时点成分筛选。
 
 ## 15. 验证入口
 
