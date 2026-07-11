@@ -346,6 +346,7 @@ def test_daily_range_parallel_stop_still_collects_running_results(
         market,
         asset_types,
         instrument_status,
+        identity_resolver,
     ):
         started.wait()
         result = results[trade_date]
@@ -362,6 +363,7 @@ def test_daily_range_parallel_stop_still_collects_running_results(
         market="US",
         asset_types=["stock"],
         instrument_status="active",
+        identity_resolver=object(),
         parallel=True,
         workers=2,
         reporter=NullProgressReporter(),
@@ -392,6 +394,11 @@ def test_daily_range_reports_actual_weighted_api_units(
         staticmethod(lambda connection, *, date_from, date_to: None),
     )
     monkeypatch.setattr(
+        range_module.DatedInstrumentIdentityResolver,
+        "from_connection",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
         DailyRangeJob,
         "_load_trading_dates",
         staticmethod(lambda connection, *, date_from, date_to: trade_dates),
@@ -413,6 +420,7 @@ def test_daily_range_reports_actual_weighted_api_units(
         market,
         asset_types,
         instrument_status,
+        identity_resolver,
     ):
         runtime.api_budget.reserve(endpoint="/eod-bulk-last-day/US", units=100)
         return BulkDailyPriceLoadResult(

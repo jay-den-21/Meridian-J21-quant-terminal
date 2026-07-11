@@ -33,6 +33,7 @@ from fdp.get_data.historical.base import (
 )
 from fdp.get_data.runtime import JobRuntime
 from fdp.sources.eodhd.ingest import BulkDailyPriceLoadResult, load_bulk_daily_prices
+from fdp.sources.eodhd.identity import DatedInstrumentIdentityResolver
 from fdp.sources.eodhd.retry import WeightedApiBudget
 from fdp.storage.schema import ensure_runtime_schemas
 from fdp.storage.tables import instrument, market_calendar
@@ -166,6 +167,12 @@ class DailyRangeJob:
                 date_from=parameters["date_from"],
                 date_to=parameters["date_to"],
             )
+            identity_resolver = DatedInstrumentIdentityResolver.from_connection(
+                connection,
+                market=parameters["market"],
+                asset_types=parameters["asset_types"],
+                instrument_status=parameters["instrument_status"],
+            )
         api_budget = WeightedApiBudget(parameters["max_api_calls"])
         client = active_runtime.client(
             active_reporter,
@@ -183,6 +190,7 @@ class DailyRangeJob:
             market=parameters["market"],
             asset_types=parameters["asset_types"],
             instrument_status=parameters["instrument_status"],
+            identity_resolver=identity_resolver,
             parallel=parameters["parallel"],
             workers=parameters["workers"],
             reporter=active_reporter,
@@ -255,6 +263,7 @@ class DailyRangeJob:
         market: str,
         asset_types: list[str],
         instrument_status: str,
+        identity_resolver: DatedInstrumentIdentityResolver,
         parallel: bool,
         workers: int,
         reporter: ProgressReporter,
@@ -311,6 +320,7 @@ class DailyRangeJob:
                     market=market,
                     asset_types=asset_types,
                     instrument_status=instrument_status,
+                    identity_resolver=identity_resolver,
                 ): trade_date
                 for trade_date in trade_dates
             }
@@ -361,6 +371,7 @@ class DailyRangeJob:
                         market=market,
                         asset_types=asset_types,
                         instrument_status=instrument_status,
+                        identity_resolver=identity_resolver,
                     )
                 except Exception as exc:
                     completed += 1
@@ -393,6 +404,7 @@ class DailyRangeJob:
         market: str,
         asset_types: list[str],
         instrument_status: str,
+        identity_resolver: DatedInstrumentIdentityResolver,
     ) -> BulkDailyPriceLoadResult:
         with runtime.engine.begin() as connection:
             ensure_runtime_schemas(connection)
@@ -404,6 +416,7 @@ class DailyRangeJob:
                 market=market,
                 asset_types=asset_types,
                 instrument_status=instrument_status,
+                identity_resolver=identity_resolver,
             )
 
     @staticmethod

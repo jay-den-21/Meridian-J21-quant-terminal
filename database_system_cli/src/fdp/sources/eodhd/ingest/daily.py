@@ -225,6 +225,7 @@ def load_bulk_daily_prices(
     market: str = "US",
     asset_types: list[str] | None = None,
     instrument_status: InstrumentStatus = "active",
+    identity_resolver: DatedInstrumentIdentityResolver | None = None,
 ) -> BulkDailyPriceLoadResult:
     """Load one-day bulk EOD prices through point-in-time instrument identity.
 
@@ -284,7 +285,7 @@ def load_bulk_daily_prices(
             status_code=response.status_code,
         )
 
-    identity_resolver = DatedInstrumentIdentityResolver.from_connection(
+    active_identity_resolver = identity_resolver or DatedInstrumentIdentityResolver.from_connection(
         connection,
         market=market,
         asset_types=normalized_asset_types,
@@ -328,7 +329,7 @@ def load_bulk_daily_prices(
             )
             continue
 
-        resolution = identity_resolver.resolve(
+        resolution = active_identity_resolver.resolve(
             provider_symbol=provider_symbol,
             trade_date=observed_trade_date,
             eodhd_type=_first_present(row, "type", "Type"),
