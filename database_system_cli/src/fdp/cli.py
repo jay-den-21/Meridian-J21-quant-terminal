@@ -1187,6 +1187,7 @@ def research_bulk_unmatched_classify(
     typer.echo(
         "bulk-unmatched classify "
         f"scanned={metrics['scanned']} matched={metrics['matched']} "
+        f"ambiguous={metrics['ambiguous']} "
         f"needs_instrument={metrics['needs_instrument']} "
         f"non_price_asset={metrics['non_price_asset']} unknown={metrics['unknown']}"
     )

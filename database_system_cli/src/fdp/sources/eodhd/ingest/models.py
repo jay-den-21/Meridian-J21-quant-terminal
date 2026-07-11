@@ -112,6 +112,7 @@ class BulkDailyPriceLoadResult:
     api_calls: int
     rejected_rows: list[RejectedDailyPriceRow]
     unmatched_rows: int
+    shadowed_rows: int = 0
     error_message: str | None = None
     status_code: int | None = None
 

@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy.dialects import mysql
 
 from fdp.sources.eodhd.client import EodhdApiResponse
+from fdp.sources.eodhd.identity import InstrumentIdentityResolution
 from fdp.sources.eodhd.ingestion import (
     SYMBOL_CHANGE_HISTORY_START,
     load_bulk_daily_prices,
@@ -595,6 +596,77 @@ class FakeBulkClient:
         )
 
 
+class FakeAliasBulkClient:
+    def get_bulk_eod(
+        self,
+        exchange: str,
+        *,
+        trade_date: date | None = None,
+        symbols: list[str] | None = None,
+    ) -> EodhdApiResponse:
+        return EodhdApiResponse(
+            endpoint="/eod-bulk-last-day/US",
+            status_code=200,
+            success=True,
+            retry_count=0,
+            rows_returned=2,
+            duration_ms=10,
+            payload=[
+                {
+                    "code": "OLD",
+                    "date": "2014-08-18",
+                    "open": "10",
+                    "high": "11",
+                    "low": "9",
+                    "close": "10",
+                    "adjusted_close": "10",
+                    "volume": "100",
+                },
+                {
+                    "code": "NEW",
+                    "date": "2014-08-18",
+                    "open": "90",
+                    "high": "100",
+                    "low": "80",
+                    "close": "99",
+                    "adjusted_close": "99",
+                    "volume": "999",
+                },
+            ],
+        )
+
+
+class FakeAliasResolver:
+    instrument_row = {
+        "instrument_id": 1,
+        "symbol": "NEW",
+        "provider_symbol": "NEW.US",
+        "asset_type": "stock",
+        "currency": "USD",
+    }
+
+    def resolve(self, *, provider_symbol, trade_date, eodhd_type):
+        matched_by = (
+            "identifier_history"
+            if provider_symbol == "OLD.US"
+            else "current_provider_symbol"
+        )
+        return InstrumentIdentityResolution(
+            instrument=self.instrument_row,
+            matched_by=matched_by,
+            reason=None,
+        )
+
+
+class FakeAmbiguousAliasResolver(FakeAliasResolver):
+    def resolve(self, *, provider_symbol, trade_date, eodhd_type):
+        return InstrumentIdentityResolution(
+            instrument=self.instrument_row,
+            matched_by="current_provider_symbol",
+            reason=None,
+        )
+
+
 class FakeInactiveHistoryConnection(FakeHistoryConnection):
     def __init__(self) -> None:
         super().__init__()
@@ -670,6 +742,81 @@ def test_load_bulk_daily_prices_uses_one_api_call_and_split_table_upserts() -> N
         bulk_unmatched_daily_price_observation,
         ingestion_task_run,
     ]
+
+
+def test_bulk_daily_prefers_dated_alias_over_conflicting_current_code() -> None:
+    connection = FakeBulkConnection()
+
+    result = load_bulk_daily_prices(
+        connection,
+        FakeAliasBulkClient(),
+        exchange="US",
+        trade_date=date(2014, 8, 18),
+        instrument_status="all",
+        identity_resolver=FakeAliasResolver(),
+    )
+
+    assert result.status == "success"
+    assert result.rows_fetched == 2
+    assert result.rows_matched == 2
+    assert result.rows_inserted == 1
+    assert result.rows_rejected == 0
+    assert result.unmatched_rows == 0
+    assert result.shadowed_rows == 1
+
+    price_statement = next(
+        statement
+        for statement in connection.statements
+        if getattr(statement, "table", None) is stock_daily_price
+    )
+    price_values = price_statement.compile(dialect=mysql.dialect()).params.values()
+    assert "OLD.US" in price_values
+    assert "NEW.US" not in price_values
+    assert any(str(value) == "10" for value in price_values)
+    assert not any(str(value) == "99" for value in price_values)
+
+    classified_statement = next(
+        statement
+        for statement in connection.statements
+        if getattr(statement, "table", None) is bulk_unmatched_daily_price_observation
+    )
+    classified_values = classified_statement.compile(dialect=mysql.dialect()).params.values()
+    assert "shadowed" in classified_values
+    assert "NEW.US" in classified_values
+    assert any(
+        "selected_provider_symbol=OLD.US" in str(value)
+        for value in classified_values
+    )
+
+
+def test_bulk_daily_refuses_alias_conflict_without_one_dated_winner() -> None:
+    connection = FakeBulkConnection()
+
+    result = load_bulk_daily_prices(
+        connection,
+        FakeAliasBulkClient(),
+        exchange="US",
+        trade_date=date(2014, 8, 18),
+        instrument_status="all",
+        identity_resolver=FakeAmbiguousAliasResolver(),
+    )
+
+    assert result.status == "failed"
+    assert result.rows_fetched == 2
+    assert result.rows_matched == 0
+    assert result.rows_inserted == 0
+    assert result.rows_rejected == 2
+    assert result.unmatched_rows == 2
+    assert result.shadowed_rows == 0
+    assert stock_daily_price not in [
+        getattr(statement, "table", None) for statement in connection.statements
+    ]
+    classified_statement = next(
+        statement
+        for statement in connection.statements
+        if getattr(statement, "table", None) is bulk_unmatched_daily_price_observation
+    )
+    assert "ambiguous" in classified_statement.compile(dialect=mysql.dialect()).params.values()
 
 
 def test_load_historical_daily_prices_upserts_valid_rows() -> None:

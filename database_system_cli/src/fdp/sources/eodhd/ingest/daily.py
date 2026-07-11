@@ -1,6 +1,7 @@
 """EODHD historical daily price ingest workflows."""
 
 import json
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
@@ -33,11 +34,22 @@ from fdp.sources.eodhd.ingest.models import (
 from fdp.sources.eodhd.prices import RejectedDailyPriceRow, parse_daily_price_rows
 from fdp.storage.upsert import (
     build_bulk_unmatched_daily_price_observation_upsert,
+    build_classified_bulk_observation_upsert,
     build_daily_price_upsert,
     build_instrument_upsert,
 )
 
 BULK_DAILY_UPSERT_CHUNK_SIZE = 1000
+
+
+@dataclass(frozen=True)
+class _ResolvedBulkCandidate:
+    index: int
+    row: dict[str, object]
+    symbol: str
+    provider_symbol: str
+    trade_date: date
+    resolution: InstrumentIdentityResolution
 
 
 def load_historical_daily_prices(
@@ -284,6 +296,7 @@ def load_bulk_daily_prices(
             api_calls=1,
             rejected_rows=[],
             unmatched_rows=0,
+            shadowed_rows=0,
             error_message=response.error_message,
             status_code=response.status_code,
         )
@@ -297,9 +310,10 @@ def load_bulk_daily_prices(
 
     accepted_by_asset_type: dict[str, list[dict[str, object]]] = {}
     unmatched_observations: list[dict[str, object]] = []
+    classified_observations: list[dict[str, object]] = []
+    resolved_candidates: list[_ResolvedBulkCandidate] = []
     rejected_rows: list[RejectedDailyPriceRow] = []
     unmatched_rows = 0
-    rows_matched = 0
 
     for index, row in enumerate(response.payload):
         try:
@@ -365,12 +379,58 @@ def load_bulk_daily_prices(
             unmatched_rows += 1
             continue
 
-        rows_matched += 1
+        resolved_candidates.append(
+            _ResolvedBulkCandidate(
+                index=index,
+                row=row,
+                symbol=symbol,
+                provider_symbol=provider_symbol,
+                trade_date=observed_trade_date,
+                resolution=resolution,
+            )
+        )
+
+    selected_candidates, shadowed_candidates = _select_preferred_bulk_candidates(
+        resolved_candidates
+    )
+    ambiguous_alias_rows = sum(
+        classification_status == "ambiguous"
+        for _, classification_status, _ in shadowed_candidates
+    )
+    shadowed_alias_rows = sum(
+        classification_status == "shadowed"
+        for _, classification_status, _ in shadowed_candidates
+    )
+    unmatched_rows += ambiguous_alias_rows
+    for candidate, classification_status, reason in shadowed_candidates:
+        instrument_row = candidate.resolution.instrument
+        if instrument_row is None:  # The selector only receives resolved candidates.
+            raise RuntimeError("resolved Bulk candidate lost its instrument")
+        classified_observations.append(
+            _bulk_unmatched_observation_row(
+                candidate.row,
+                run_id=run_id,
+                market=market,
+                exchange=normalized_exchange,
+                symbol=candidate.symbol,
+                provider_symbol=candidate.provider_symbol,
+                fallback_trade_date=trade_date,
+                reason=reason,
+                classification_status=classification_status,
+                classified_asset_type=str(instrument_row["asset_type"]),
+                matched_instrument_id=int(instrument_row["instrument_id"]),
+            )
+        )
+
+    for candidate in selected_candidates:
+        instrument_row = candidate.resolution.instrument
+        if instrument_row is None:  # The selector only receives resolved candidates.
+            raise RuntimeError("resolved Bulk candidate lost its instrument")
         parsed_rows = parse_daily_price_rows(
-            [row],
+            [candidate.row],
             instrument_id=instrument_row["instrument_id"],
-            symbol=symbol,
-            provider_symbol=provider_symbol,
+            symbol=candidate.symbol,
+            provider_symbol=candidate.provider_symbol,
             currency=instrument_row["currency"],
         )
         rejected_rows.extend(parsed_rows.rejected)
@@ -381,6 +441,8 @@ def load_bulk_daily_prices(
     rows_inserted = _upsert_daily_price_chunks(connection, accepted_by_asset_type)
     if unmatched_observations:
         connection.execute(build_bulk_unmatched_daily_price_observation_upsert(unmatched_observations))
+    if classified_observations:
+        connection.execute(build_classified_bulk_observation_upsert(classified_observations))
     rows_rejected = len(rejected_rows) + unmatched_rows
     status, error_message = _bulk_daily_price_status(
         rows_inserted=rows_inserted,
@@ -405,12 +467,13 @@ def load_bulk_daily_prices(
         exchange=normalized_exchange,
         trade_date=trade_date,
         rows_fetched=response.rows_returned,
-        rows_matched=rows_matched,
+        rows_matched=len(resolved_candidates) - ambiguous_alias_rows,
         rows_inserted=rows_inserted,
         rows_rejected=rows_rejected,
         api_calls=1,
         rejected_rows=rejected_rows,
         unmatched_rows=unmatched_rows,
+        shadowed_rows=shadowed_alias_rows,
         error_message=error_message,
         status_code=response.status_code,
     )
@@ -712,6 +775,9 @@ def _bulk_unmatched_observation_row(
     provider_symbol: str,
     fallback_trade_date: date | None,
     reason: str,
+    classification_status: str = "unresolved",
+    classified_asset_type: str | None = None,
+    matched_instrument_id: int | None = None,
 ) -> dict[str, object]:
     """Build one raw unmatched observation row for later classification."""
     observed_at = now_utc()
@@ -732,14 +798,71 @@ def _bulk_unmatched_observation_row(
         "volume": _optional_int(row, "volume", "Volume"),
         "currency": _optional_str(row, "currency", "Currency"),
         "raw_payload": json.dumps(row, sort_keys=True, default=str),
-        "classification_status": "unresolved",
-        "classified_asset_type": None,
-        "matched_instrument_id": None,
+        "classification_status": classification_status,
+        "classified_asset_type": classified_asset_type,
+        "matched_instrument_id": matched_instrument_id,
         "reason": reason,
         "source": "EODHD",
         "first_seen_at": observed_at,
         "last_seen_at": observed_at,
     }
+
+
+def _select_preferred_bulk_candidates(
+    candidates: list[_ResolvedBulkCandidate],
+) -> tuple[
+    list[_ResolvedBulkCandidate],
+    list[tuple[_ResolvedBulkCandidate, str, str]],
+]:
+    """Select one canonical row per instrument/date with dated history as winner."""
+    grouped: dict[tuple[int, date], list[_ResolvedBulkCandidate]] = {}
+    for candidate in candidates:
+        instrument_row = candidate.resolution.instrument
+        if instrument_row is None:
+            raise ValueError("bulk candidate must have a resolved instrument")
+        key = (int(instrument_row["instrument_id"]), candidate.trade_date)
+        grouped.setdefault(key, []).append(candidate)
+
+    selected: list[_ResolvedBulkCandidate] = []
+    shadowed: list[tuple[_ResolvedBulkCandidate, str, str]] = []
+    for (instrument_id, trade_date), group in grouped.items():
+        if len(group) == 1:
+            selected.append(group[0])
+            continue
+
+        dated = [
+            candidate
+            for candidate in group
+            if candidate.resolution.matched_by == "identifier_history"
+        ]
+        if len(dated) == 1:
+            winner = dated[0]
+            selected.append(winner)
+            reason = (
+                "shadowed_by_dated_identifier_history;"
+                f"instrument_id={instrument_id};trade_date={trade_date};"
+                f"selected_provider_symbol={winner.provider_symbol}"
+            )
+            shadowed.extend(
+                (candidate, "shadowed", reason)
+                for candidate in group
+                if candidate is not winner
+            )
+            continue
+
+        provider_symbols = ",".join(
+            sorted({candidate.provider_symbol for candidate in group})
+        )
+        reason = (
+            "ambiguous_provider_aliases_for_instrument_date;"
+            f"instrument_id={instrument_id};trade_date={trade_date};"
+            f"candidate_provider_symbols={provider_symbols}"
+        )
+        shadowed.extend((candidate, "ambiguous", reason) for candidate in group)
+
+    selected.sort(key=lambda candidate: candidate.index)
+    shadowed.sort(key=lambda item: item[0].index)
+    return selected, shadowed
 
 
 def _identity_resolution_reason(resolution: InstrumentIdentityResolution) -> str:

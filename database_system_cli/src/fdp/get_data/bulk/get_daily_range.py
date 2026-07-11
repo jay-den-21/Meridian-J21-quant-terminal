@@ -258,6 +258,7 @@ class DailyRangeJob:
                 "api_units_consumed": budget_snapshot.consumed,
                 "api_units_remaining": budget_snapshot.remaining,
                 **remote_budget,
+                "rows_shadowed": totals["rows_shadowed"],
                 "task_api_units_consumed": (
                     budget_snapshot.consumed
                     + int(remote_budget["remote_preflight_api_units"])
@@ -441,6 +442,7 @@ class DailyRangeJob:
             "rows_inserted": sum(result.rows_inserted for result in results),
             "rows_rejected": sum(result.rows_rejected for result in results),
             "rows_unmatched": sum(result.unmatched_rows for result in results),
+            "rows_shadowed": sum(result.shadowed_rows for result in results),
             "api_calls": sum(result.api_calls for result in results),
         }
 

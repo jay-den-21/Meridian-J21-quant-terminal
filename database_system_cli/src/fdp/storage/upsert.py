@@ -273,3 +273,33 @@ def build_bulk_unmatched_daily_price_observation_upsert(rows: Row | Sequence[Row
             "updated_at",
         ],
     )
+
+
+def build_classified_bulk_observation_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Upsert deterministic duplicate/ambiguity classifications from the ingest batch."""
+    return build_mysql_upsert(
+        bulk_unmatched_daily_price_observation,
+        rows,
+        update_columns=[
+            "run_id",
+            "market",
+            "exchange",
+            "symbol",
+            "name",
+            "eodhd_type",
+            "open",
+            "high",
+            "low",
+            "close",
+            "adjusted_close",
+            "volume",
+            "currency",
+            "raw_payload",
+            "classification_status",
+            "classified_asset_type",
+            "matched_instrument_id",
+            "reason",
+            "last_seen_at",
+            "updated_at",
+        ],
+    )

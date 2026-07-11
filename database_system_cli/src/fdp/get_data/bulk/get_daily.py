@@ -128,6 +128,7 @@ class BulkDailyJob:
                     "fetched": result.rows_fetched,
                     "inserted": result.rows_inserted,
                     "unmatched": result.unmatched_rows,
+                    "shadowed": result.shadowed_rows,
                     "rejected": result.rows_rejected,
                     "failed": failed,
                     "api_calls": result.api_calls,
@@ -161,6 +162,7 @@ class BulkDailyJob:
             work_units_completed=1,
             work_units_failed=failed,
             failures=failures,
+            metrics={"rows_shadowed": result.shadowed_rows},
             error_message=result.error_message,
             preflight=active_preflight,
         )

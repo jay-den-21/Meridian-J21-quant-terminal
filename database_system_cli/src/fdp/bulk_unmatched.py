@@ -4,9 +4,13 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.engine import Connection
 
+from fdp.sources.eodhd.identity import (
+    DatedInstrumentIdentityResolver,
+    InstrumentIdentityResolution,
+)
 from fdp.sources.eodhd.prices import RejectedDailyPriceRow, parse_daily_price_rows
 from fdp.storage.tables import (
     bulk_unmatched_daily_price_observation,
@@ -35,6 +39,7 @@ class BulkUnmatchedSummaryRow:
 class BulkUnmatchedClassifyResult:
     scanned: int
     matched: int
+    ambiguous: int
     needs_instrument: int
     non_price_asset: int
     unknown: int
@@ -43,6 +48,7 @@ class BulkUnmatchedClassifyResult:
         return {
             "scanned": self.scanned,
             "matched": self.matched,
+            "ambiguous": self.ambiguous,
             "needs_instrument": self.needs_instrument,
             "non_price_asset": self.non_price_asset,
             "unknown": self.unknown,
@@ -144,12 +150,20 @@ def classify_bulk_unmatched_observations(
     date_to: date,
     market: str = "US",
     limit: int | None = None,
+    identity_resolver: DatedInstrumentIdentityResolver | None = None,
 ) -> BulkUnmatchedClassifyResult:
-    """Classify unresolved unmatched rows using strict provider-symbol instrument matches."""
+    """Classify unresolved rows with the same dated identity contract as Bulk ingest."""
+    active_resolver = identity_resolver or DatedInstrumentIdentityResolver.from_connection(
+        connection,
+        market=market,
+        asset_types=sorted(ROUTABLE_ASSET_TYPES),
+        instrument_status="all",
+    )
     statement = (
         select(
             bulk_unmatched_daily_price_observation.c.observation_id,
             bulk_unmatched_daily_price_observation.c.provider_symbol,
+            bulk_unmatched_daily_price_observation.c.trade_date,
             bulk_unmatched_daily_price_observation.c.eodhd_type,
         )
         .where(
@@ -164,21 +178,23 @@ def classify_bulk_unmatched_observations(
     if limit is not None:
         statement = statement.limit(limit)
 
-    scanned = matched = needs_instrument = non_price_asset = unknown = 0
+    scanned = matched = ambiguous = needs_instrument = non_price_asset = unknown = 0
     for row in connection.execute(statement).mappings():
         scanned += 1
         type_bucket = _bucket_eodhd_type(row["eodhd_type"])
-        instrument_row = _load_exact_instrument(
-            connection,
+        resolution = active_resolver.resolve(
             provider_symbol=str(row["provider_symbol"]),
-            market=market,
+            trade_date=row["trade_date"],
+            eodhd_type=row["eodhd_type"],
         )
         status, asset_type, matched_id, reason = _classification_decision(
             type_bucket=type_bucket,
-            instrument_row=instrument_row,
+            resolution=resolution,
         )
         if status == "matched":
             matched += 1
+        elif status == "ambiguous":
+            ambiguous += 1
         elif status == "needs_instrument":
             needs_instrument += 1
         elif status == "non_price_asset":
@@ -202,6 +218,7 @@ def classify_bulk_unmatched_observations(
     return BulkUnmatchedClassifyResult(
         scanned=scanned,
         matched=matched,
+        ambiguous=ambiguous,
         needs_instrument=needs_instrument,
         non_price_asset=non_price_asset,
         unknown=unknown,
@@ -234,9 +251,12 @@ def route_bulk_unmatched_observations(
             bulk_unmatched_daily_price_observation.c.close,
             bulk_unmatched_daily_price_observation.c.adjusted_close,
             bulk_unmatched_daily_price_observation.c.volume,
+            bulk_unmatched_daily_price_observation.c.symbol.label("observed_symbol"),
+            bulk_unmatched_daily_price_observation.c.provider_symbol.label(
+                "observed_provider_symbol"
+            ),
+            bulk_unmatched_daily_price_observation.c.reason.label("classification_reason"),
             instrument.c.instrument_id,
-            instrument.c.symbol,
-            instrument.c.provider_symbol,
             instrument.c.asset_type,
             instrument.c.currency,
         )
@@ -261,19 +281,21 @@ def route_bulk_unmatched_observations(
         statement = statement.limit(limit)
 
     rows = [dict(row) for row in connection.execute(statement).mappings()]
+    selected_rows, suppressed_rows = _select_route_rows(rows)
     if dry_run:
         return BulkUnmatchedRouteResult(
             dry_run=True,
-            routeable=len(rows),
+            routeable=len(selected_rows),
             rows_inserted=0,
-            rows_rejected=0,
+            rows_rejected=len(suppressed_rows),
             routed=0,
         )
 
     accepted_by_asset_type: dict[str, list[dict[str, object]]] = {}
     rejected_ids: list[int] = []
     routed_ids: list[int] = []
-    for row in rows:
+    _mark_suppressed_route_rows(connection, suppressed_rows)
+    for row in selected_rows:
         payload = {
             "date": row["trade_date"],
             "open": row["open"],
@@ -286,8 +308,8 @@ def route_bulk_unmatched_observations(
         parsed = parse_daily_price_rows(
             [payload],
             instrument_id=int(row["instrument_id"]),
-            symbol=str(row["symbol"]),
-            provider_symbol=str(row["provider_symbol"]),
+            symbol=str(row["observed_symbol"]),
+            provider_symbol=str(row["observed_provider_symbol"]),
             currency=str(row["currency"]),
         )
         if parsed.accepted:
@@ -315,11 +337,75 @@ def route_bulk_unmatched_observations(
 
     return BulkUnmatchedRouteResult(
         dry_run=False,
-        routeable=len(rows),
+        routeable=len(selected_rows),
         rows_inserted=rows_inserted,
-        rows_rejected=len(rejected_ids),
+        rows_rejected=len(rejected_ids) + len(suppressed_rows),
         routed=len(routed_ids),
     )
+
+
+def _select_route_rows(
+    rows: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[tuple[dict[str, object], str, str]]]:
+    """Apply dated-history precedence before routing staged rows to natural keys."""
+    grouped: dict[tuple[int, date], list[dict[str, object]]] = {}
+    for row in rows:
+        key = (int(row["instrument_id"]), row["trade_date"])
+        grouped.setdefault(key, []).append(row)
+
+    selected: list[dict[str, object]] = []
+    suppressed: list[tuple[dict[str, object], str, str]] = []
+    for (instrument_id, trade_date), group in grouped.items():
+        if len(group) == 1:
+            selected.append(group[0])
+            continue
+        dated = [
+            row
+            for row in group
+            if row.get("classification_reason") == "identifier_history_match"
+        ]
+        if len(dated) == 1:
+            winner = dated[0]
+            selected.append(winner)
+            reason = (
+                "shadowed_by_dated_identifier_history;"
+                f"instrument_id={instrument_id};trade_date={trade_date};"
+                f"selected_observation_id={winner['observation_id']}"
+            )
+            suppressed.extend(
+                (row, "shadowed", reason) for row in group if row is not winner
+            )
+            continue
+        provider_symbols = ",".join(
+            sorted({str(row["observed_provider_symbol"]) for row in group})
+        )
+        reason = (
+            "ambiguous_provider_aliases_for_instrument_date;"
+            f"instrument_id={instrument_id};trade_date={trade_date};"
+            f"candidate_provider_symbols={provider_symbols}"
+        )
+        suppressed.extend((row, "route_failed", reason) for row in group)
+
+    return selected, suppressed
+
+
+def _mark_suppressed_route_rows(
+    connection: Connection,
+    rows: list[tuple[dict[str, object], str, str]],
+) -> None:
+    grouped: dict[tuple[str, str], list[int]] = {}
+    for row, status, reason in rows:
+        grouped.setdefault((status, reason), []).append(int(row["observation_id"]))
+    for (status, reason), observation_ids in grouped.items():
+        connection.execute(
+            update(bulk_unmatched_daily_price_observation)
+            .where(bulk_unmatched_daily_price_observation.c.observation_id.in_(observation_ids))
+            .values(
+                classification_status=status,
+                reason=reason,
+                updated_at=func.current_timestamp(),
+            )
+        )
 
 
 def _base_observation_conditions(
@@ -335,33 +421,14 @@ def _base_observation_conditions(
     ]
 
 
-def _load_exact_instrument(
-    connection: Connection,
-    *,
-    provider_symbol: str,
-    market: str,
-) -> dict[str, object] | None:
-    statement = select(
-        instrument.c.instrument_id,
-        instrument.c.asset_type,
-    ).where(
-        and_(
-            instrument.c.market == market,
-            instrument.c.provider == "EODHD",
-            instrument.c.provider_symbol == provider_symbol,
-        )
-    )
-    row = connection.execute(statement).mappings().first()
-    return dict(row) if row is not None else None
-
-
 def _classification_decision(
     *,
     type_bucket: str | None,
-    instrument_row: dict[str, object] | None,
+    resolution: InstrumentIdentityResolution,
 ) -> tuple[str, str | None, int | None, str]:
     if type_bucket in {"preferred", "other"}:
         return "non_price_asset", type_bucket, None, f"non_price_eodhd_type:{type_bucket}"
+    instrument_row = resolution.instrument
     if instrument_row is not None:
         asset_type = str(instrument_row["asset_type"])
         if asset_type in ROUTABLE_ASSET_TYPES:
@@ -369,12 +436,24 @@ def _classification_decision(
                 "matched",
                 asset_type,
                 int(instrument_row["instrument_id"]),
-                "exact_provider_symbol_match",
+                f"{resolution.matched_by}_match",
             )
         return "non_price_asset", asset_type, int(instrument_row["instrument_id"]), "non_price_asset"
+    if resolution.reason and resolution.reason.startswith("ambiguous_"):
+        return "ambiguous", type_bucket or "unknown", None, _resolution_reason(resolution)
+    if resolution.reason == "identifier_not_valid_on_trade_date":
+        return "ambiguous", type_bucket or "unknown", None, _resolution_reason(resolution)
     if type_bucket in ROUTABLE_ASSET_TYPES:
-        return "needs_instrument", type_bucket, None, "no_exact_provider_symbol_instrument"
-    return "unknown", type_bucket or "unknown", None, "unknown_eodhd_type"
+        return "needs_instrument", type_bucket, None, _resolution_reason(resolution)
+    return "unknown", type_bucket or "unknown", None, _resolution_reason(resolution)
+
+
+def _resolution_reason(resolution: InstrumentIdentityResolution) -> str:
+    reason = resolution.reason or "unresolved_instrument_identity"
+    if not resolution.candidate_instrument_ids:
+        return str(reason)
+    candidates = ",".join(str(value) for value in resolution.candidate_instrument_ids)
+    return f"{reason};candidate_instrument_ids={candidates}"
 
 
 def _bucket_eodhd_type(value: object) -> str | None:
