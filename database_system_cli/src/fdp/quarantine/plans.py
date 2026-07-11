@@ -13,13 +13,11 @@ from sqlalchemy import Table, delete, select, update
 from sqlalchemy.engine import Connection
 
 from fdp.storage.tables import (
+    DAILY_PRICE_TABLES,
     data_quality_issue,
-    etf_daily_price,
-    index_daily_price,
     market_calendar,
     quarantine_plan,
     quarantined_daily_price_row,
-    stock_daily_price,
 )
 
 PENDING_CONFIRMATION = "pending_confirmation"
@@ -41,11 +39,7 @@ ISSUE_TYPE_ACTIONS = {
     "price_on_non_trading_day": QUARANTINE_DAILY_PRICE_ROW,
 }
 
-DAILY_PRICE_TARGET_TABLES = {
-    stock_daily_price.name: stock_daily_price,
-    etf_daily_price.name: etf_daily_price,
-    index_daily_price.name: index_daily_price,
-}
+DAILY_PRICE_TARGET_TABLES = {table.name: table for table in DAILY_PRICE_TABLES.values()}
 
 
 @dataclass(frozen=True)
@@ -888,9 +882,8 @@ def _normalize_issue_types(issue_types: list[str] | None) -> list[str]:
 
 def _target_tables_for_asset_types(asset_types: list[str] | None) -> dict[str, Table]:
     base = {
-        "stock": stock_daily_price,
-        "etf": etf_daily_price,
-        "index": index_daily_price,
+        asset_type: DAILY_PRICE_TABLES[asset_type]
+        for asset_type in ("stock", "etf", "fund", "index")
     }
     if asset_types is None:
         selected = base

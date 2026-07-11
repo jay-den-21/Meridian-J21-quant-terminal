@@ -16,18 +16,15 @@ from fdp.quality.checks.duplicate import duplicate_daily_price_groups
 from fdp.quality.checks.missing import loaded_daily_price_instruments, missing_daily_price_dates
 from fdp.quality.checks.ohlcv import invalid_ohlcv_rows
 from fdp.storage.tables import (
+    DAILY_PRICE_TABLES,
     US_SHARE_SCHEMA,
     data_quality_check_run,
     data_quality_issue,
-    etf_daily_price,
-    index_daily_price,
-    stock_daily_price,
 )
 
 PRICE_TABLES = {
-    "stock": stock_daily_price,
-    "etf": etf_daily_price,
-    "index": index_daily_price,
+    asset_type: DAILY_PRICE_TABLES[asset_type]
+    for asset_type in ("stock", "etf", "fund", "index")
 }
 
 

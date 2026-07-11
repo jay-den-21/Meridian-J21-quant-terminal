@@ -30,17 +30,10 @@ from fdp.sources.eodhd.ingest.models import (
 from fdp.sources.eodhd.prices import RejectedDailyPriceRow, parse_daily_price_rows
 from fdp.storage.upsert import (
     build_bulk_unmatched_daily_price_observation_upsert,
-    build_etf_daily_price_upsert,
-    build_index_daily_price_upsert,
+    build_daily_price_upsert,
     build_instrument_upsert,
-    build_stock_daily_price_upsert,
 )
 
-PRICE_UPSERT_BUILDERS = {
-    "stock": build_stock_daily_price_upsert,
-    "etf": build_etf_daily_price_upsert,
-    "index": build_index_daily_price_upsert,
-}
 BULK_DAILY_UPSERT_CHUNK_SIZE = 1000
 
 
@@ -68,11 +61,11 @@ def load_historical_daily_prices(
         date_from=date_from,
         date_to=date_to,
         market=market,
-        asset_types=["stock", "etf"],
+        asset_types=["stock", "etf", "fund"],
         include_inactive=include_inactive,
         instrument_status=instrument_status,
         job_name="eodhd_historical_daily_price",
-        target_table="stock_daily_price,etf_daily_price",
+        target_table="stock_daily_price,etf_daily_price,fund_daily_price",
     )
 
 
@@ -140,6 +133,33 @@ def load_etf_daily_prices(
     )
 
 
+def load_fund_daily_prices(
+    connection: Connection,
+    client: EodhdClient,
+    *,
+    symbols: list[str],
+    date_from: date,
+    date_to: date,
+    market: str = "US",
+    include_inactive: bool = False,
+    instrument_status: InstrumentStatus = "active",
+) -> HistoricalDailyPriceLoadResult:
+    """Load historical daily EOD prices for Fund symbols only."""
+    return _load_symbol_daily_prices(
+        connection,
+        client,
+        symbols=symbols,
+        date_from=date_from,
+        date_to=date_to,
+        market=market,
+        asset_types=["fund"],
+        include_inactive=include_inactive,
+        instrument_status=instrument_status,
+        job_name="eodhd_fund_daily_price",
+        target_table="fund_daily_price",
+    )
+
+
 def load_daily_prices_for_instrument_ids(
     connection: Connection,
     client: EodhdClient,
@@ -150,7 +170,9 @@ def load_daily_prices_for_instrument_ids(
     market: str = "US",
     asset_types: list[str] | None = None,
     job_name: str = "eodhd_repair_daily_price",
-    target_table: str = "stock_daily_price,etf_daily_price,index_daily_price",
+    target_table: str = (
+        "stock_daily_price,etf_daily_price,fund_daily_price,index_daily_price"
+    ),
 ) -> HistoricalDailyPriceLoadResult:
     """Load historical daily prices for exact database instrument ids.
 
@@ -210,13 +232,13 @@ def load_bulk_daily_prices(
     Flow: bulk API -> active instrument map -> parse EOD rows -> split-table upsert.
     """
     normalized_exchange = exchange.strip().upper()
-    normalized_asset_types = asset_types or ["stock", "etf"]
+    normalized_asset_types = asset_types or ["stock", "etf", "fund"]
     normalized_symbols = normalize_symbols(symbols or [])
     run_id = create_task_run(
         connection,
         market=market,
         job_name="eodhd_bulk_daily_price",
-        target_table="stock_daily_price,etf_daily_price",
+        target_table="stock_daily_price,etf_daily_price,fund_daily_price",
         date_from=trade_date,
         date_to=trade_date,
     )
@@ -532,7 +554,7 @@ def _load_daily_prices_for_instruments(
         rejected_rows.extend(parsed_rows.rejected)
         if parsed_rows.accepted:
             asset_type = str(instrument_row["asset_type"])
-            connection.execute(PRICE_UPSERT_BUILDERS[asset_type](parsed_rows.accepted))
+            connection.execute(build_daily_price_upsert(asset_type, parsed_rows.accepted))
             rows_inserted += len(parsed_rows.accepted)
 
     rows_rejected = len(rejected_rows) + len(missing_symbols)
@@ -621,7 +643,7 @@ def load_historical_daily_price_unit(
     rows_inserted = 0
     if parsed_rows.accepted:
         asset_type = str(instrument_row["asset_type"])
-        connection.execute(PRICE_UPSERT_BUILDERS[asset_type](parsed_rows.accepted))
+        connection.execute(build_daily_price_upsert(asset_type, parsed_rows.accepted))
         rows_inserted = len(parsed_rows.accepted)
 
     rows_rejected = len(parsed_rows.rejected)
@@ -757,10 +779,9 @@ def _upsert_daily_price_chunks(
     """Write accepted rows to split daily price tables in bounded chunks."""
     rows_inserted = 0
     for asset_type, rows in accepted_by_asset_type.items():
-        upsert_builder = PRICE_UPSERT_BUILDERS[asset_type]
         for start in range(0, len(rows), BULK_DAILY_UPSERT_CHUNK_SIZE):
             chunk = rows[start:start + BULK_DAILY_UPSERT_CHUNK_SIZE]
-            connection.execute(upsert_builder(chunk))
+            connection.execute(build_daily_price_upsert(asset_type, chunk))
             rows_inserted += len(chunk)
     return rows_inserted
 

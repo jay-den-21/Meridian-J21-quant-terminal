@@ -6,7 +6,7 @@ import pytest
 import fdp.get_data.bulk.get_daily_range as range_module
 import fdp.get_data.historical.base as historical_module
 from fdp.config import EodhdRuntimeConfig
-from fdp.get_data.bulk import DailyRangeJob
+from fdp.get_data.bulk import BulkDailyJob, DailyRangeJob
 from fdp.get_data.contracts import NullProgressReporter
 from fdp.get_data.historical import HistoricalDailyJob, StockDailyJob
 from fdp.get_data.runtime import JobRuntime
@@ -62,6 +62,17 @@ def test_stock_job_requires_symbols_and_dates_when_python_defaults_are_empty() -
             instrument_status=None,
             override_source="python",
         )
+
+
+def test_bulk_daily_default_routes_stock_etf_and_fund_tables() -> None:
+    preflight = BulkDailyJob().preflight()
+
+    assert preflight.parameters["asset_types"] == ["stock", "etf", "fund"]
+    assert preflight.target_tables[:3] == [
+        "stock_daily_price",
+        "etf_daily_price",
+        "fund_daily_price",
+    ]
 
 
 def test_historical_job_resolves_canonical_and_provider_symbols_from_instrument_master(

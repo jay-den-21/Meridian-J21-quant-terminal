@@ -3,6 +3,7 @@ from typer.testing import CliRunner
 
 import fdp.cli as cli_module
 from fdp.cli import app
+from fdp.get_data.contracts import JobResult
 
 
 def test_cli_registers_instrument_ingest_command() -> None:
@@ -22,6 +23,42 @@ def test_cli_registers_history_ingest_command() -> None:
     assert "--from" in result.output
     assert "--to" in result.output
     assert "--instrument-status" in result.output
+
+
+def test_cli_history_routes_fund_asset_type_to_fund_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[dict[str, object]] = []
+
+    def fake_run(self, **kwargs):
+        seen.append(kwargs)
+        return JobResult(
+            job="ingest.history",
+            status="success",
+            run_id=1,
+            parameters={"asset_types": ["fund"]},
+            parameter_sources={},
+        )
+
+    monkeypatch.setattr(cli_module.FundDailyJob, "run", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "ingest",
+            "history",
+            "--symbols",
+            "VFINX",
+            "--from",
+            "2024-01-01",
+            "--to",
+            "2024-01-31",
+            "--asset-types",
+            "fund",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen[0]["symbols"] == ["VFINX"]
 
 
 def test_cli_registers_indices_ingest_command() -> None:
@@ -65,6 +102,21 @@ def test_cli_registers_daily_range_ingest_command() -> None:
     assert "--workers" in result.output
     assert "--max-requests-per-minute" in result.output
     assert "--max-api-calls" in result.output
+
+
+def test_cli_registers_guarded_fund_daily_price_migration() -> None:
+    runner = CliRunner()
+    help_result = runner.invoke(app, ["migrate", "fund-daily-price", "--help"])
+    unsafe_copy = runner.invoke(
+        app,
+        ["migrate", "fund-daily-price", "--phase", "copy"],
+    )
+
+    assert help_result.exit_code == 0
+    assert "--backup-file" in help_result.output
+    assert "--run-id" in help_result.output
+    assert unsafe_copy.exit_code != 0
+    assert "requires --execute --yes" in unsafe_copy.output
 
 
 def test_cli_registers_bulk_unmatched_commands() -> None:

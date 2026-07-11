@@ -8,7 +8,8 @@ SUPPORTED_ASSET_TYPES = {
     "common stock": "stock",
     "stock": "stock",
     "etf": "etf",
-    "fund": "etf",
+    "fund": "fund",
+    "mutual fund": "fund",
 }
 
 

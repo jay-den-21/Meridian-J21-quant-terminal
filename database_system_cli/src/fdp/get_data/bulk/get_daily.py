@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from fdp.assets import US_BULK_EOD_ASSET_TYPES
 from fdp.get_data.contracts import (
     JobFailure,
     JobPreflight,
@@ -18,10 +19,10 @@ from fdp.sources.eodhd.ingest.common import normalize_symbols
 from fdp.storage.schema import ensure_runtime_schemas
 
 EODHD_BULK_FULL_EXCHANGE_API_CALL_COST = 100
-SUPPORTED_BULK_ASSET_TYPES = {"stock", "etf"}
+SUPPORTED_BULK_ASSET_TYPES = set(US_BULK_EOD_ASSET_TYPES)
 DEFAULT_EXCHANGE = "US"
 DEFAULT_MARKET = "US"
-DEFAULT_ASSET_TYPES = ("stock", "etf")
+DEFAULT_ASSET_TYPES = US_BULK_EOD_ASSET_TYPES
 DEFAULT_SYMBOLS: tuple[str, ...] = ()
 DEFAULT_TRADE_DATE: date | None = None
 

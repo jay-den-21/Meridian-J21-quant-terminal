@@ -46,6 +46,22 @@ def test_parse_exchange_symbol_filters_unsupported_asset_types() -> None:
     assert parse_exchange_symbol({"Code": "ABC", "Type": "Bond"}) is None
 
 
+@pytest.mark.parametrize("provider_type", ["Fund", "Mutual Fund"])
+def test_parse_exchange_symbol_keeps_funds_separate_from_etfs(provider_type: str) -> None:
+    row = parse_exchange_symbol(
+        {
+            "Code": "VFINX",
+            "Name": "Vanguard 500 Index Fund",
+            "Exchange": "NMFQS",
+            "Type": provider_type,
+            "Currency": "USD",
+        }
+    )
+
+    assert row is not None
+    assert row["asset_type"] == "fund"
+
+
 def test_parse_exchange_symbol_rejects_market_mismatch() -> None:
     with pytest.raises(ValueError, match="does not match"):
         parse_exchange_symbol(

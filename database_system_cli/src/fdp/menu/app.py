@@ -17,6 +17,8 @@ from fdp.get_data import (
     DailyRangeJob,
     DelistedInstrumentsJob,
     EtfDailyJob,
+    FundDailyJob,
+    HistoricalDailyJob,
     IndexDailyJob,
     JobPreflight,
     JobResult,
@@ -156,10 +158,14 @@ def _run_etf_daily(session: PromptSession, language: Language) -> None:
     _run_historical(session, language, EtfDailyJob(), "etf")
 
 
+def _run_fund_daily(session: PromptSession, language: Language) -> None:
+    _run_historical(session, language, FundDailyJob(), "fund")
+
+
 def _run_historical(
     session: PromptSession,
     language: Language,
-    job: StockDailyJob | EtfDailyJob,
+    job: HistoricalDailyJob,
     asset_type: str,
 ) -> None:
     default_symbols = ",".join(job.default_symbols)
@@ -325,7 +331,7 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
     if raw_symbols is None:
         raise MenuCancelled
     symbols = _csv(raw_symbols, allow_empty=True)
-    asset_types = _assets(session, language, defaults={"stock", "etf"})
+    asset_types = _assets(session, language, defaults={"stock", "etf", "fund"})
     exchange = "US"
     market = "US"
     if _advanced(session, language):
@@ -370,7 +376,7 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
 def _run_daily_range(session: PromptSession, language: Language) -> None:
     date_from = _date_value(session, tr(language, "date_from"))
     date_to = _date_value(session, tr(language, "date_to"))
-    asset_types = _assets(session, language, defaults={"stock", "etf"})
+    asset_types = _assets(session, language, defaults={"stock", "etf", "fund"})
     runtime = JobRuntime.from_env()
     advanced = _advanced(session, language)
     exchange = "US"
@@ -466,7 +472,7 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
 def _run_bulk_unmatched(session: PromptSession, language: Language) -> None:
     date_from = _date_value(session, tr(language, "date_from"))
     date_to = _date_value(session, tr(language, "date_to"))
-    asset_types = ["stock", "etf", "index"]
+    asset_types = ["stock", "etf", "fund", "index"]
     market = "US"
     limit = None
     if _advanced(session, language):
@@ -625,7 +631,7 @@ def _advanced(session: PromptSession, language: Language) -> bool:
 def _assets(session: PromptSession, language: Language, *, defaults: set[str]) -> list[str]:
     selected = session.checkbox(
         tr(language, "asset_types"),
-        [("Stock", "stock"), ("ETF", "etf")],
+        [("Stock", "stock"), ("ETF", "etf"), ("Fund", "fund")],
         defaults=defaults,
     )
     if not selected:
@@ -728,6 +734,7 @@ JOB_HANDLERS: dict[str, Callable[[PromptSession, Language], None]] = {
     "delisted_instruments": _run_delisted,
     "stock_daily": _run_stock_daily,
     "etf_daily": _run_etf_daily,
+    "fund_daily": _run_fund_daily,
     "index_daily": _run_index_daily,
     "bulk_daily": _run_bulk_daily,
     "daily_range": _run_daily_range,

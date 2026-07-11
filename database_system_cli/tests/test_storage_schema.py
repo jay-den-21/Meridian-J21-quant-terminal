@@ -2,9 +2,15 @@ from fdp.storage import (
     SYSTEM_SCHEMA,
     US_SHARE_SCHEMA,
     bulk_unmatched_daily_price_observation,
+    crypto_daily_price,
+    DAILY_PRICE_TABLES,
     data_quality_issue,
     etf_daily_price,
     etf_instrument,
+    forex_daily_price,
+    fund_daily_price,
+    fund_daily_price_split_run,
+    fund_instrument,
     index_daily_price,
     index_instrument,
     instrument,
@@ -23,18 +29,24 @@ def test_initial_metadata_contains_project_tables() -> None:
     assert f"{US_SHARE_SCHEMA}.instrument" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.stock_instrument" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.etf_instrument" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.fund_instrument" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.index_instrument" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.instrument_identifier_history" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.instrument_lifecycle_event" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.stock_daily_price" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.etf_daily_price" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.fund_daily_price" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.index_daily_price" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.forex_daily_price" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.crypto_daily_price" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.market_calendar" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.data_quality_issue" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.repair_plan" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.quarantine_plan" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.quarantined_daily_price_row" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.bulk_unmatched_daily_price_observation" in metadata.tables
+    assert f"{SYSTEM_SCHEMA}.fund_daily_price_split_run" in metadata.tables
+    assert fund_daily_price_split_run.schema == SYSTEM_SCHEMA
 
 
 def test_instrument_keeps_standard_and_provider_symbols() -> None:
@@ -47,7 +59,15 @@ def test_instrument_keeps_standard_and_provider_symbols() -> None:
 
 
 def test_asset_daily_price_tables_have_instrument_date_uniqueness() -> None:
-    for price_table in (stock_daily_price, etf_daily_price, index_daily_price):
+    assert set(DAILY_PRICE_TABLES) == {"stock", "etf", "fund", "index", "forex", "crypto"}
+    for price_table in (
+        stock_daily_price,
+        etf_daily_price,
+        fund_daily_price,
+        index_daily_price,
+        forex_daily_price,
+        crypto_daily_price,
+    ):
         assert "symbol" in price_table.c
         assert "provider_symbol" in price_table.c
         assert {"instrument_id", "trade_date"} in [
@@ -56,7 +76,7 @@ def test_asset_daily_price_tables_have_instrument_date_uniqueness() -> None:
 
 
 def test_asset_instrument_views_are_read_handles() -> None:
-    for view in (stock_instrument, etf_instrument, index_instrument):
+    for view in (stock_instrument, etf_instrument, fund_instrument, index_instrument):
         assert view.schema == US_SHARE_SCHEMA
         assert view.info["is_view"] is True
         assert "instrument_id" in view.c

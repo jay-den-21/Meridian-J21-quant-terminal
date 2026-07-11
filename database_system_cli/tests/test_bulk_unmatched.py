@@ -123,3 +123,27 @@ def test_route_bulk_unmatched_writes_price_rows_only_when_executed() -> None:
     statement_tables = [getattr(statement, "table", None) for statement in execute_connection.statements]
     assert stock_daily_price in statement_tables
     assert bulk_unmatched_daily_price_observation in statement_tables
+
+
+def test_fund_bulk_type_is_routeable_when_instrument_exists() -> None:
+    connection = FakeConnection(
+        [
+            [
+                {
+                    "observation_id": 2,
+                    "provider_symbol": "VFINX.US",
+                    "eodhd_type": "Mutual Fund",
+                }
+            ],
+            [{"instrument_id": 88, "asset_type": "fund"}],
+        ]
+    )
+
+    result = classify_bulk_unmatched_observations(
+        connection,
+        date_from=date(2024, 1, 2),
+        date_to=date(2024, 1, 2),
+    )
+
+    assert result.matched == 1
+    assert result.non_price_asset == 0

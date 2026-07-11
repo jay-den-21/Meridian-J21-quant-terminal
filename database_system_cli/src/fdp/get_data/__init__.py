@@ -4,6 +4,7 @@ from fdp.get_data.bulk import BulkDailyJob, DailyRangeJob
 from fdp.get_data.contracts import JobPreflight, JobResult, ProgressEvent, ProgressReporter
 from fdp.get_data.historical import (
     EtfDailyJob,
+    FundDailyJob,
     HistoricalDailyJob,
     IndexDailyJob,
     MarketCalendarJob,
@@ -20,6 +21,7 @@ __all__ = [
     "DailyRangeJob",
     "DelistedInstrumentsJob",
     "EtfDailyJob",
+    "FundDailyJob",
     "HistoricalDailyJob",
     "IndexDailyJob",
     "JobPreflight",

@@ -1,9 +1,12 @@
 import json
+from dataclasses import asdict
 from datetime import date
+from pathlib import Path
 
 import typer
 from sqlalchemy import create_engine
 
+from fdp.assets import CANONICAL_ASSET_TYPES, US_BULK_EOD_ASSET_TYPES
 from fdp.get_data import (
     ActiveInstrumentsJob,
     BulkDailyJob,
@@ -11,6 +14,7 @@ from fdp.get_data import (
     DailyRangeJob,
     DelistedInstrumentsJob,
     EtfDailyJob,
+    FundDailyJob,
     HistoricalDailyJob,
     IndexDailyJob,
     MarketCalendarJob,
@@ -18,6 +22,12 @@ from fdp.get_data import (
 )
 from fdp.get_data.contracts import JobResult, ProgressEvent
 from fdp.get_data.reporting import format_eodhd_event
+from fdp.migrate import (
+    copy_fund_daily_prices,
+    finalize_fund_daily_prices,
+    plan_fund_daily_prices,
+    verify_fund_daily_prices,
+)
 from fdp.bulk_unmatched import (
     list_bulk_unmatched_observations,
     summarize_bulk_unmatched_observations,
@@ -59,15 +69,19 @@ validate_app = typer.Typer(help="Validate stored market data quality.")
 repair_app = typer.Typer(help="Create and manage human-confirmed repair plans.")
 quarantine_app = typer.Typer(help="Create and manage human-confirmed quarantine plans.")
 research_app = typer.Typer(help="Read stored database data for research code.")
+migrate_app = typer.Typer(help="Run operator-controlled resumable data migrations.")
 bulk_unmatched_app = typer.Typer(help="Inspect and classify Bulk EOD unmatched rows.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(validate_app, name="validate")
 app.add_typer(repair_app, name="repair")
 app.add_typer(quarantine_app, name="quarantine")
 app.add_typer(research_app, name="research")
+app.add_typer(migrate_app, name="migrate")
 research_app.add_typer(bulk_unmatched_app, name="bulk-unmatched")
 
-DAILY_PRICE_ASSET_TYPES = {"stock", "etf", "index"}
+DAILY_PRICE_ASSET_TYPES = {"stock", "etf", "fund", "index"}
+HISTORICAL_ASSET_TYPES = set(US_BULK_EOD_ASSET_TYPES)
+BULK_ASSET_TYPES = set(US_BULK_EOD_ASSET_TYPES)
 QUARANTINE_DAILY_PRICE_ISSUE_TYPES = {
     "duplicate_key",
     "invalid_ohlcv",
@@ -111,6 +125,96 @@ def terminal_menu() -> None:
         run_terminal_menu()
     except RuntimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+
+@migrate_app.command("fund-daily-price")
+def migrate_fund_daily_price(
+    phase: str = typer.Option(
+        ...,
+        "--phase",
+        help="Migration phase: plan, copy, verify, or finalize.",
+    ),
+    run_id: int | None = typer.Option(
+        None,
+        "--run-id",
+        help="Existing split run id for resume, verify, or finalize.",
+    ),
+    backup_file: Path | None = typer.Option(
+        None,
+        "--backup-file",
+        help="Absolute .sql or .sql.gz backup path; required for a new copy run.",
+    ),
+    chunk_size: int = typer.Option(
+        10_000,
+        "--chunk-size",
+        help="Maximum Fund source rows per transaction.",
+    ),
+    max_chunks: int | None = typer.Option(
+        None,
+        "--max-chunks",
+        help="Optional chunk cap for a controlled partial/resume run.",
+    ),
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help="Required for copy and finalize.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Confirm copy or destructive finalize."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Plan, copy, verify, or finalize the physical ETF/Fund table split."""
+    normalized_phase = phase.strip().lower()
+    if normalized_phase not in {"plan", "copy", "verify", "finalize"}:
+        raise typer.BadParameter("phase must be plan, copy, verify, or finalize")
+    if run_id is not None and run_id <= 0:
+        raise typer.BadParameter("run-id must be positive")
+    if chunk_size <= 0:
+        raise typer.BadParameter("chunk-size must be positive")
+    if max_chunks is not None and max_chunks <= 0:
+        raise typer.BadParameter("max-chunks must be positive")
+    if normalized_phase in {"copy", "finalize"} and not (execute and yes):
+        raise typer.BadParameter(f"{normalized_phase} requires --execute --yes")
+    if normalized_phase in {"verify", "finalize"} and run_id is None:
+        raise typer.BadParameter(f"{normalized_phase} requires --run-id")
+
+    engine = create_engine(database_url_from_env())
+    try:
+        if normalized_phase == "plan":
+            with engine.connect() as connection:
+                ensure_runtime_schemas(connection)
+                result = plan_fund_daily_prices(connection)
+        elif normalized_phase == "copy":
+            result = copy_fund_daily_prices(
+                engine,
+                backup_file=backup_file,
+                run_id=run_id,
+                chunk_size=chunk_size,
+                max_chunks=max_chunks,
+            )
+        elif normalized_phase == "verify":
+            result = verify_fund_daily_prices(engine, run_id=run_id)
+        else:
+            result = finalize_fund_daily_prices(
+                engine,
+                run_id=run_id,
+                chunk_size=chunk_size,
+                max_chunks=max_chunks,
+            )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        engine.dispose()
+
+    payload = asdict(result)
+    if as_json:
+        typer.echo(json.dumps(payload, default=_json_cli_default, sort_keys=True))
+        return
+    typer.echo(f"fund-daily-price phase={normalized_phase}")
+    for key, value in payload.items():
+        if isinstance(value, dict):
+            typer.echo(f"  {key}={json.dumps(value, sort_keys=True)}")
+        else:
+            typer.echo(f"  {key}={value}")
 
 
 @ingest_app.command("instruments")
@@ -170,9 +274,9 @@ def ingest_history(
     ),
     market: str = typer.Option("US", "--market", help="Market code to ingest."),
     asset_types: str = typer.Option(
-        "stock,etf",
+        "stock,etf,fund",
         "--asset-types",
-        help="Comma-separated historical asset types: stock,etf.",
+        help="Comma-separated historical asset types: stock,etf,fund.",
     ),
     instrument_status: str = typer.Option(
         "active",
@@ -199,7 +303,7 @@ def ingest_history(
     parsed_to = _parse_optional_date(date_to, field_name="to")
     if parsed_from is not None and parsed_to is not None and parsed_to < parsed_from:
         raise typer.BadParameter("to must be greater than or equal to from")
-    parsed_asset_types = _parse_asset_types(asset_types, supported={"stock", "etf"})
+    parsed_asset_types = _parse_asset_types(asset_types, supported=HISTORICAL_ASSET_TYPES)
     resolved_instrument_status = _resolve_history_instrument_status(
         instrument_status=instrument_status,
         include_inactive=include_inactive,
@@ -208,6 +312,8 @@ def ingest_history(
         job = StockDailyJob()
     elif parsed_asset_types == ["etf"]:
         job = EtfDailyJob()
+    elif parsed_asset_types == ["fund"]:
+        job = FundDailyJob()
     else:
         job = HistoricalDailyJob(asset_types=tuple(parsed_asset_types))
     output_mode = _parse_output_format(output)
@@ -371,9 +477,9 @@ def ingest_daily(
         help="Optional comma-separated symbols; omitted means entire exchange bulk request.",
     ),
     asset_types: str = typer.Option(
-        "stock,etf",
+        "stock,etf,fund",
         "--asset-types",
-        help="Comma-separated asset types to write: stock,etf.",
+        help="Comma-separated asset types to write: stock,etf,fund.",
     ),
     market: str = typer.Option("US", "--market", help="Internal market code to match instruments."),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
@@ -388,7 +494,7 @@ def ingest_daily(
         parsed_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
         if not parsed_symbols:
             raise typer.BadParameter("symbols must contain at least one symbol when provided")
-    parsed_asset_types = _parse_asset_types(asset_types, supported={"stock", "etf"})
+    parsed_asset_types = _parse_asset_types(asset_types, supported=BULK_ASSET_TYPES)
 
     output_mode = _parse_output_format(output)
     try:
@@ -422,9 +528,9 @@ def ingest_daily_range(
     date_to: str = typer.Option(..., "--to", help="End calendar date in YYYY-MM-DD format."),
     exchange: str = typer.Option("US", "--exchange", help="EODHD bulk exchange code."),
     asset_types: str = typer.Option(
-        "stock,etf",
+        "stock,etf,fund",
         "--asset-types",
-        help="Comma-separated asset types to write: stock,etf.",
+        help="Comma-separated asset types to write: stock,etf,fund.",
     ),
     market: str = typer.Option("US", "--market", help="Internal market code to match instruments."),
     bytes_per_row: int = typer.Option(
@@ -493,7 +599,7 @@ def ingest_daily_range(
         raise typer.BadParameter("max-api-calls must be positive")
 
     parsed_from, parsed_to = _parse_date_range(date_from, date_to)
-    parsed_asset_types = _parse_asset_types(asset_types, supported={"stock", "etf"})
+    parsed_asset_types = _parse_asset_types(asset_types, supported=BULK_ASSET_TYPES)
     if not yes:
         if not dry_run:
             raise typer.BadParameter("--execute requires --yes")
@@ -556,9 +662,9 @@ def ingest_bulk_unmatched_route(
     date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
     date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
     asset_types: str = typer.Option(
-        "stock,etf,index",
+        "stock,etf,fund,index",
         "--asset-types",
-        help="Comma-separated asset types to route: stock,etf,index.",
+        help="Comma-separated asset types to route: stock,etf,fund,index.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to route."),
     dry_run: bool = typer.Option(
@@ -608,9 +714,9 @@ def validate_daily_price(
     date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
     date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
     asset_types: str = typer.Option(
-        "stock,etf,index",
+        "stock,etf,fund,index",
         "--asset-types",
-        help="Comma-separated asset types to validate: stock,etf,index.",
+        help="Comma-separated US asset types to validate: stock,etf,fund,index.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to validate."),
 ) -> None:
@@ -648,9 +754,9 @@ def repair_plan_daily_price(
     date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
     date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
     asset_types: str = typer.Option(
-        "stock,etf,index",
+        "stock,etf,fund,index",
         "--asset-types",
-        help="Comma-separated asset types to plan: stock,etf,index.",
+        help="Comma-separated US asset types to plan: stock,etf,fund,index.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to repair."),
 ) -> None:
@@ -811,9 +917,9 @@ def quarantine_plan_daily_price(
         ),
     ),
     asset_types: str = typer.Option(
-        "stock,etf,index",
+        "stock,etf,fund,index",
         "--asset-types",
-        help="Comma-separated asset types to plan: stock,etf,index.",
+        help="Comma-separated US asset types to plan: stock,etf,fund,index.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to quarantine."),
 ) -> None:
@@ -1081,7 +1187,7 @@ def research_daily_prices(
     asset_type: str = typer.Option(
         "stock",
         "--asset-type",
-        help="Asset type to read: stock, etf, or index.",
+        help="Asset type to read: stock, etf, fund, index, forex, or crypto.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to read."),
     adjusted: bool = typer.Option(
@@ -1153,7 +1259,7 @@ def _parse_asset_types(asset_types: str, *, supported: set[str] | None = None) -
     parsed = [asset_type.strip().lower() for asset_type in asset_types.split(",") if asset_type.strip()]
     if not parsed:
         raise typer.BadParameter("asset-types must contain at least one asset type")
-    supported_asset_types = supported or {"stock", "etf", "index"}
+    supported_asset_types = supported or set(CANONICAL_ASSET_TYPES)
     unsupported = [asset_type for asset_type in parsed if asset_type not in supported_asset_types]
     if unsupported:
         expected = ",".join(sorted(supported_asset_types))

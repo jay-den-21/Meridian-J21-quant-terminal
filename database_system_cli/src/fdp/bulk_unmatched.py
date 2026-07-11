@@ -12,18 +12,9 @@ from fdp.storage.tables import (
     bulk_unmatched_daily_price_observation,
     instrument,
 )
-from fdp.storage.upsert import (
-    build_etf_daily_price_upsert,
-    build_index_daily_price_upsert,
-    build_stock_daily_price_upsert,
-)
+from fdp.storage.upsert import build_daily_price_upsert
 
-ROUTABLE_ASSET_TYPES = {"stock", "etf", "index"}
-PRICE_UPSERT_BUILDERS = {
-    "stock": build_stock_daily_price_upsert,
-    "etf": build_etf_daily_price_upsert,
-    "index": build_index_daily_price_upsert,
-}
+ROUTABLE_ASSET_TYPES = {"stock", "etf", "fund", "index"}
 
 
 @dataclass(frozen=True)
@@ -309,7 +300,7 @@ def route_bulk_unmatched_observations(
 
     rows_inserted = 0
     for asset_type, price_rows in accepted_by_asset_type.items():
-        connection.execute(PRICE_UPSERT_BUILDERS[asset_type](price_rows))
+        connection.execute(build_daily_price_upsert(asset_type, price_rows))
         rows_inserted += len(price_rows)
     if routed_ids:
         connection.execute(
@@ -369,7 +360,7 @@ def _classification_decision(
     type_bucket: str | None,
     instrument_row: dict[str, object] | None,
 ) -> tuple[str, str | None, int | None, str]:
-    if type_bucket in {"fund", "preferred", "other"}:
+    if type_bucket in {"preferred", "other"}:
         return "non_price_asset", type_bucket, None, f"non_price_eodhd_type:{type_bucket}"
     if instrument_row is not None:
         asset_type = str(instrument_row["asset_type"])
