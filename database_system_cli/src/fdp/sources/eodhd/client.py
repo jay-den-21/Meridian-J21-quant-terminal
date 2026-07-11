@@ -234,6 +234,62 @@ class EodhdClient:
             api_units=100 + len(normalized_symbols),
         )
 
+    def get_technical(
+        self,
+        provider_symbol: str,
+        *,
+        function: str,
+        period: int,
+        date_from: date,
+        date_to: date,
+        order: str = "a",
+        filter_name: str | None = None,
+        split_adjusted_only: bool = False,
+    ) -> EodhdApiResponse:
+        """Fetch one EODHD technical-indicator series for local formula validation.
+
+        Input: provider symbol, indicator function/period, date range, and output options.
+        Output: technical rows from `/technical/{provider_symbol}` at a cost of 5 API units.
+        Flow: validate arguments -> technical URL -> weighted retrying GET -> parsed rows.
+        """
+        normalized_symbol = provider_symbol.strip().upper()
+        normalized_function = function.strip().lower()
+        normalized_order = order.strip().lower()
+        if not normalized_symbol:
+            raise ValueError("provider_symbol must not be empty")
+        if not normalized_function:
+            raise ValueError("function must not be empty")
+        if period < 1:
+            raise ValueError("period must be at least 1")
+        if date_to < date_from:
+            raise ValueError("date_to must be greater than or equal to date_from")
+        if normalized_order not in {"a", "d"}:
+            raise ValueError("order must be 'a' or 'd'")
+
+        endpoint = f"/technical/{normalized_symbol}"
+        query_params = {
+            "from": date_from.isoformat(),
+            "to": date_to.isoformat(),
+            "order": normalized_order,
+            "function": normalized_function,
+            "period": period,
+            "api_token": self.api_key,
+            "fmt": "json",
+        }
+        if filter_name:
+            query_params["filter"] = filter_name.strip()
+        if split_adjusted_only:
+            query_params["splitadjusted_only"] = "1"
+        query = urlencode(query_params)
+        url = f"{self.base_url}{endpoint}?{query}"
+
+        return self._get_json_list(
+            endpoint=endpoint,
+            url=url,
+            object_name="technical indicator",
+            api_units=5,
+        )
+
     def _get_json_list(
         self,
         *,

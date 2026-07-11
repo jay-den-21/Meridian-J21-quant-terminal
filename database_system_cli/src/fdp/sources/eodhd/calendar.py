@@ -13,25 +13,39 @@ WEEKDAY_CODES = {
     "sun": 6,
 }
 
+# EODHD exchange-details omitted these closures from the historical payload observed in 2026.
+# Nasdaq's 2012 calendar confirms 2012-01-02; SEC Release 34-70097 confirms both Sandy dates.
+US_MARKET_CLOSURE_OVERRIDES = frozenset(
+    {
+        date(2012, 1, 2),
+        date(2012, 10, 29),
+        date(2012, 10, 30),
+    }
+)
+US_MARKET_CLOSURE_OVERRIDE_SOURCE = "NASDAQ_SEC_US_CLOSURE"
+
 
 def build_market_calendar_rows(
     exchange_details: dict[str, Any],
     *,
     date_from: date,
     date_to: date,
+    market: str = "US",
     source: str = "EODHD_EXCHANGE_DETAILS",
 ) -> list[dict[str, Any]]:
     """Build storage-ready daily calendar rows for one exchange.
 
     Input: EODHD exchange-details payload and an inclusive date range.
     Output: one `market_calendar` row for every calendar date in the inclusive range.
-    Flow: trading weekdays + holiday map -> date range expansion -> calendar rows.
+    Flow: weekdays + provider holidays + documented US overrides -> daily calendar rows.
     """
     if date_to < date_from:
         raise ValueError("date_to must be greater than or equal to date_from")
 
     working_days = _working_day_numbers(exchange_details)
     non_trading_dates = _holiday_dates(exchange_details)
+    closure_overrides = US_MARKET_CLOSURE_OVERRIDES if market.strip().upper() == "US" else frozenset()
+    non_trading_dates.update(closure_overrides)
 
     rows: list[dict[str, Any]] = []
     for calendar_date in _date_range(date_from, date_to):
@@ -41,7 +55,11 @@ def build_market_calendar_rows(
             {
                 "calendar_date": calendar_date,
                 "is_trading_day": is_trading_day,
-                "source": source,
+                "source": (
+                    US_MARKET_CLOSURE_OVERRIDE_SOURCE
+                    if calendar_date in closure_overrides
+                    else source
+                ),
             }
         )
 

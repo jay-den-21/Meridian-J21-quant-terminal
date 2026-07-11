@@ -216,6 +216,46 @@ def test_eodhd_client_fetches_bulk_eod_prices() -> None:
     assert response.rows_returned == 1
 
 
+def test_eodhd_client_fetches_weighted_technical_indicator() -> None:
+    requested_urls: list[str] = []
+    budget = WeightedApiBudget(5)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        requested_urls.append(request.full_url)
+        return FakeResponse([{"date": "2024-01-02", "rsi": 51.5}])
+
+    client = EodhdClient(
+        api_key="test-token",
+        transport=fake_transport,
+        api_budget=budget,
+    )
+    response = client.get_technical(
+        "aapl.us",
+        function="RSI",
+        period=14,
+        date_from=date(2024, 1, 1),
+        date_to=date(2024, 3, 1),
+        order="d",
+        filter_name="last_rsi",
+        split_adjusted_only=True,
+    )
+
+    parsed_url = urlparse(requested_urls[0])
+    query = parse_qs(parsed_url.query)
+
+    assert parsed_url.path == "/api/technical/AAPL.US"
+    assert query["from"] == ["2024-01-01"]
+    assert query["to"] == ["2024-03-01"]
+    assert query["function"] == ["rsi"]
+    assert query["period"] == ["14"]
+    assert query["order"] == ["d"]
+    assert query["filter"] == ["last_rsi"]
+    assert query["splitadjusted_only"] == ["1"]
+    assert response.success is True
+    assert response.rows_returned == 1
+    assert budget.snapshot().consumed == 5
+
+
 def test_eodhd_client_fetches_legacy_exchange_details() -> None:
     requested_urls: list[str] = []
 

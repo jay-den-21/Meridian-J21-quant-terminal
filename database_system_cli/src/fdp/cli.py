@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 from sqlalchemy import create_engine
+from typer.main import get_command
 
 from fdp.assets import CANONICAL_ASSET_TYPES, US_BULK_EOD_ASSET_TYPES
 from fdp.get_data import (
@@ -25,7 +26,9 @@ from fdp.get_data.reporting import format_eodhd_event
 from fdp.migrate import (
     copy_fund_daily_prices,
     finalize_fund_daily_prices,
+    plan_daily_price_asset_type_reconcile,
     plan_fund_daily_prices,
+    reconcile_daily_price_asset_types,
     verify_fund_daily_prices,
 )
 from fdp.bulk_unmatched import (
@@ -38,6 +41,7 @@ from fdp.config import (
     eodhd_api_key_from_env,
     eodhd_runtime_config_from_env,
 )
+from fdp.docs_staleness import validate_docs_staleness
 from fdp.repair import (
     confirm_repair_plan,
     create_missing_daily_price_repair_plans,
@@ -53,13 +57,21 @@ from fdp.quarantine import (
     list_quarantine_plans,
     preview_quarantine_plan_source_rows,
 )
-from fdp.research import DailyPriceReader
+from fdp.research import (
+    DailyPriceReader,
+    required_technical_validation_units,
+    validate_technical_indicators,
+)
 from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.ingest import (
     DEFAULT_INDEX_PROVIDER_SYMBOLS,
     SYMBOL_CHANGE_HISTORY_START,
 )
-from fdp.sources.eodhd.retry import EodhdApiEvent, EodhdRequestRateLimiter
+from fdp.sources.eodhd.retry import (
+    EodhdApiEvent,
+    EodhdRequestRateLimiter,
+    WeightedApiBudget,
+)
 from fdp.quality.validation import validate_daily_prices
 from fdp.storage.schema import ensure_runtime_schemas
 
@@ -125,6 +137,97 @@ def terminal_menu() -> None:
         run_terminal_menu()
     except RuntimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+
+@validate_app.command("docs-staleness")
+def validate_documentation_staleness(
+    root: Path = typer.Option(
+        Path("."),
+        "--root",
+        help="Repository root or database_system_cli directory.",
+    ),
+) -> None:
+    """Verify CLI tutorial coverage and managed Markdown/HTML mirrors."""
+    try:
+        report = validate_docs_staleness(root, get_command(app))
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="--root") from exc
+
+    typer.echo(
+        f"docs-staleness status={'current' if report.is_current else 'stale'} "
+        f"documented={len(report.documented_leaf_routes)} "
+        f"actual={len(report.actual_leaf_routes)}"
+    )
+    for label, values in (
+        ("missing route", report.missing_routes),
+        ("unknown route", report.unknown_routes),
+        ("stale HTML", report.stale_html_pairs),
+    ):
+        for value in values:
+            typer.echo(f"{label}: {value}")
+    if not report.is_current:
+        raise typer.Exit(code=1)
+
+
+@migrate_app.command("daily-price-asset-types")
+def migrate_daily_price_asset_types(
+    phase: str = typer.Option(..., "--phase", help="Migration phase: plan or execute."),
+    chunk_size: int = typer.Option(1_000, "--chunk-size", help="Rows per transaction."),
+    max_chunks: int | None = typer.Option(
+        None,
+        "--max-chunks",
+        help="Optional global chunk cap for a controlled resumable run.",
+    ),
+    execute: bool = typer.Option(False, "--execute", help="Required for the execute phase."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm source-row deletion after copy/verify."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Reconcile physical daily tables after canonical instrument type corrections."""
+    normalized_phase = phase.strip().lower()
+    if normalized_phase not in {"plan", "execute"}:
+        raise typer.BadParameter("phase must be plan or execute")
+    if chunk_size <= 0:
+        raise typer.BadParameter("chunk-size must be positive")
+    if max_chunks is not None and max_chunks <= 0:
+        raise typer.BadParameter("max-chunks must be positive")
+    if normalized_phase == "execute" and not (execute and yes):
+        raise typer.BadParameter("execute phase requires --execute --yes")
+
+    engine = create_engine(database_url_from_env())
+    try:
+        if normalized_phase == "plan":
+            with engine.connect() as connection:
+                ensure_runtime_schemas(connection)
+                plan = plan_daily_price_asset_type_reconcile(connection)
+            payload = {
+                "phase": "plan",
+                "total_rows": plan.total_rows,
+                "groups": [asdict(group) for group in plan.groups],
+            }
+        else:
+            with engine.connect() as connection:
+                ensure_runtime_schemas(connection)
+            result = reconcile_daily_price_asset_types(
+                engine,
+                chunk_size=chunk_size,
+                max_chunks=max_chunks,
+            )
+            payload = {"phase": "execute", **asdict(result)}
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if as_json:
+        typer.echo(json.dumps(payload, default=_json_cli_default, indent=2))
+        return
+    typer.echo(
+        "daily-price-asset-types "
+        + " ".join(f"{key}={value}" for key, value in payload.items() if key != "groups")
+    )
+    for group in payload.get("groups", []):
+        typer.echo(
+            f"  {group['source_asset_type']} -> {group['target_asset_type']}: "
+            f"rows={group['rows_count']} instruments={group['instruments_count']}"
+        )
 
 
 @migrate_app.command("fund-daily-price")
@@ -1252,6 +1355,95 @@ def research_daily_prices(
     _print_daily_price_rows(rows, limit=limit)
 
 
+@research_app.command("technical-validate")
+def research_technical_validate(
+    symbols: str = typer.Option(
+        "AAPL.US,META.US,SPY.US",
+        "--symbols",
+        help="Comma-separated canonical provider symbols.",
+    ),
+    date_from: str = typer.Option(..., "--from", help="Start date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End date in YYYY-MM-DD format."),
+    max_api_units: int = typer.Option(
+        200,
+        "--max-api-units",
+        help="Hard weighted-unit budget; this diagnostic never permits more than 200.",
+    ),
+    tolerance: float = typer.Option(
+        0.0002,
+        "--tolerance",
+        help="Maximum absolute error after provider four-decimal rounding.",
+    ),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Compare local SMA20/EMA20/RSI14 with a bounded EODHD Technical sample."""
+    parsed_symbols = [symbol.strip().upper() for symbol in symbols.split(",") if symbol.strip()]
+    if not parsed_symbols:
+        raise typer.BadParameter("symbols must contain at least one provider symbol")
+    if max_api_units <= 0 or max_api_units > 200:
+        raise typer.BadParameter("max-api-units must be between 1 and 200")
+    if tolerance < 0:
+        raise typer.BadParameter("tolerance must be non-negative")
+    normalized_output = output.strip().lower()
+    if normalized_output not in {"text", "json"}:
+        raise typer.BadParameter("output must be text or json")
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    required_units = required_technical_validation_units(len(parsed_symbols))
+    if required_units > max_api_units:
+        raise typer.BadParameter(
+            f"technical validation requires {required_units} units for {len(parsed_symbols)} "
+            f"symbols, exceeding max-api-units={max_api_units}"
+        )
+
+    budget = WeightedApiBudget(max_api_units)
+    client = _eodhd_client(
+        eodhd_api_key_from_env(),
+        api_budget=budget,
+        progress_to_stderr=normalized_output == "json",
+    )
+    engine = create_engine(database_url_from_env())
+    with engine.connect() as connection:
+        try:
+            comparisons = validate_technical_indicators(
+                connection,
+                client,
+                provider_symbols=parsed_symbols,
+                date_from=parsed_from,
+                date_to=parsed_to,
+                tolerance=tolerance,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
+    payload = {
+        "status": "pass" if all(row.status == "pass" for row in comparisons) else "mismatch",
+        "date_from": parsed_from,
+        "date_to": parsed_to,
+        "tolerance": tolerance,
+        "api_units_required": required_units,
+        "api_budget": asdict(budget.snapshot()),
+        "comparisons": [row.to_dict() for row in comparisons],
+    }
+    if normalized_output == "json":
+        typer.echo(json.dumps(payload, default=_json_cli_default, indent=2))
+    else:
+        typer.echo(
+            f"technical-validate status={payload['status']} symbols={len(parsed_symbols)} "
+            f"comparisons={len(comparisons)} api_units={budget.snapshot().consumed}/{max_api_units}"
+        )
+        typer.echo(
+            "provider_symbol\tasset_type\tindicator\tperiod\tstatus\toverlap\tmax_abs_error"
+        )
+        for row in comparisons:
+            error = "" if row.max_absolute_error is None else f"{row.max_absolute_error:.8f}"
+            typer.echo(
+                f"{row.provider_symbol}\t{row.asset_type}\t{row.local_field}\t{row.period}\t"
+                f"{row.status}\t{row.overlapping_rows}\t{error}"
+            )
+    if payload["status"] != "pass":
+        raise typer.Exit(code=1)
+
+
 def _parse_date_range(date_from: str, date_to: str) -> tuple[date, date]:
     """Parse and validate an inclusive CLI date range."""
     try:
@@ -1502,6 +1694,8 @@ def _eodhd_client(
     max_retries: int | None = None,
     retry_delay_seconds: int | None = None,
     max_requests_per_minute: int | None = None,
+    api_budget: WeightedApiBudget | None = None,
+    progress_to_stderr: bool = False,
 ) -> EodhdClient:
     """Build the CLI EODHD client with visible progress and retry messages."""
     runtime_config = eodhd_runtime_config_from_env()
@@ -1512,13 +1706,21 @@ def _eodhd_client(
         max_retries=max_retries or runtime_config.max_retries,
         retry_delay_seconds=retry_delay_seconds or runtime_config.retry_delay_seconds,
         rate_limiter=rate_limiter,
-        progress_callback=_echo_eodhd_event,
+        api_budget=api_budget,
+        progress_callback=(
+            _echo_eodhd_event_stderr if progress_to_stderr else _echo_eodhd_event
+        ),
     )
 
 
 def _echo_eodhd_event(event: EodhdApiEvent) -> None:
     """Print EODHD request progress without exposing API keys."""
     typer.echo(_format_eodhd_event(event))
+
+
+def _echo_eodhd_event_stderr(event: EodhdApiEvent) -> None:
+    """Print EODHD progress to stderr so JSON stdout remains machine-readable."""
+    typer.echo(_format_eodhd_event(event), err=True)
 
 
 def _format_eodhd_event(event: EodhdApiEvent) -> str:

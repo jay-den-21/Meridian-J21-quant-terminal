@@ -1,9 +1,12 @@
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
 import fdp.cli as cli_module
 from fdp.cli import app
 from fdp.get_data.contracts import JobResult
+from fdp.sources.eodhd.retry import EodhdApiEvent
 
 
 def test_cli_registers_instrument_ingest_command() -> None:
@@ -23,6 +26,27 @@ def test_cli_registers_history_ingest_command() -> None:
     assert "--from" in result.output
     assert "--to" in result.output
     assert "--instrument-status" in result.output
+
+
+def test_cli_registers_bounded_technical_validation_command() -> None:
+    result = CliRunner().invoke(app, ["research", "technical-validate", "--help"])
+
+    assert result.exit_code == 0
+    assert "--max-api-units" in result.output
+    assert "--output" in result.output
+
+
+def test_json_mode_eodhd_progress_is_written_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    client = cli_module._eodhd_client("test-token", progress_to_stderr=True)
+    assert client.progress_callback is not None
+
+    client.progress_callback(
+        EodhdApiEvent(kind="request", endpoint="/technical/AAPL.US", attempt=1, max_attempts=1)
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "/technical/AAPL.US" in captured.err
 
 
 def test_cli_history_routes_fund_asset_type_to_fund_job(
@@ -79,6 +103,17 @@ def test_cli_registers_calendar_ingest_command() -> None:
     assert "--to" in result.output
 
 
+def test_cli_documentation_and_html_mirrors_are_current() -> None:
+    repository_root = Path(__file__).parents[2]
+    result = CliRunner().invoke(
+        app,
+        ["validate", "docs-staleness", "--root", str(repository_root)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "status=current" in result.output
+
+
 def test_cli_registers_daily_bulk_ingest_command() -> None:
     result = CliRunner().invoke(app, ["ingest", "daily", "--help"])
 
@@ -117,6 +152,20 @@ def test_cli_registers_guarded_fund_daily_price_migration() -> None:
     assert "--run-id" in help_result.output
     assert unsafe_copy.exit_code != 0
     assert "requires --execute --yes" in unsafe_copy.output
+
+
+def test_cli_registers_guarded_asset_type_reconcile() -> None:
+    runner = CliRunner()
+    help_result = runner.invoke(app, ["migrate", "daily-price-asset-types", "--help"])
+    unsafe_execute = runner.invoke(
+        app,
+        ["migrate", "daily-price-asset-types", "--phase", "execute"],
+    )
+
+    assert help_result.exit_code == 0
+    assert "--chunk-size" in help_result.output
+    assert unsafe_execute.exit_code != 0
+    assert "requires --execute --yes" in unsafe_execute.output
 
 
 def test_cli_registers_bulk_unmatched_commands() -> None:

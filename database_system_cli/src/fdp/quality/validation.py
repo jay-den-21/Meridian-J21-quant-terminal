@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import Table, update
 from sqlalchemy.engine import Connection
 
+from fdp.quality.checks.asset_type import asset_type_mismatch_rows
 from fdp.quality.checks.calendar_alignment import price_rows_on_non_trading_days
 from fdp.quality.checks.duplicate import duplicate_daily_price_groups
 from fdp.quality.checks.missing import loaded_daily_price_instruments, missing_daily_price_dates
@@ -107,6 +108,7 @@ def _validate_price_table(
         connection,
         check_run_id=check_run_id,
         market=market,
+        asset_type=asset_type,
         price_table=price_table,
         date_from=date_from,
         date_to=date_to,
@@ -135,11 +137,43 @@ def _collect_issue_rows(
     *,
     check_run_id: int,
     market: str,
+    asset_type: str,
     price_table: Table,
     date_from: date,
     date_to: date,
 ) -> list[dict[str, object]]:
     issues: list[dict[str, object]] = []
+
+    mismatch_rows = connection.execute(
+        asset_type_mismatch_rows(
+            expected_asset_type=asset_type,
+            date_from=date_from,
+            date_to=date_to,
+            price_table=price_table,
+        )
+    ).mappings()
+    for row in mismatch_rows:
+        details = _price_row_details(row)
+        details.update(
+            {
+                "expected_asset_type": asset_type,
+                "actual_asset_type": row["actual_asset_type"],
+                "resolution": "j21 migrate daily-price-asset-types --phase plan",
+            }
+        )
+        issues.append(
+            _issue_row(
+                check_run_id=check_run_id,
+                market=market,
+                target_table=price_table.name,
+                issue_type="asset_type_mismatch",
+                severity="error",
+                instrument_id=row["instrument_id"],
+                symbol=row["symbol"],
+                trade_date=row["trade_date"],
+                details=details,
+            )
+        )
 
     duplicate_rows = connection.execute(
         duplicate_daily_price_groups(

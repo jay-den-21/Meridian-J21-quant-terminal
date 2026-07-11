@@ -22,12 +22,14 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 # Repository Governance
 
-This repository has two sibling subprojects:
+This repository has three sibling subprojects:
 
 - `database_system_cli/`: database ingestion, validation, repair, and research read layer.
 - `database_app/`: local EODHD API code generator and API playground.
+- `research_terminal/`: localhost-only read-only FastAPI/React research visualization.
 
 Do not put new app work into `database_system_cli/` unless the user explicitly asks to extend the database CLI. Do not let `database_app/` write database schemas, migrations, or ingestion data.
+Do not let `research_terminal/` execute ingest/repair/migration or arbitrary SQL; it may only read canonical/audit data and display inert CLI suggestions.
 
 ## Scoped Context Routing
 
@@ -39,6 +41,7 @@ rules; it never overrides repository boundaries or secret-handling rules.
 | --- | --- |
 | `database_system_cli/**` | `database_system_cli/AGENTS.md` and its scoped routing table |
 | `database_app/**` | `database_app/AGENTS.md` |
+| `research_terminal/**` | `research_terminal/AGENTS.md` |
 | `.trellis/**`, `.agents/**`, `.codex/**` | this file and `.trellis/workflow.md` |
 
 The current CLI code-flow and path ownership map live in

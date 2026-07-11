@@ -40,14 +40,14 @@ The command uses EODHD symbol-change history before the current exchange list.
 It writes canonical instruments and identifier history; it does not guess rename
 relationships.
 
-## Historical Stock And ETF EOD
+## Historical Stock, ETF, And Fund EOD
 
 Load a small explicit symbol set:
 
 ```bash
 poetry run j21 ingest history \
   --symbols AAPL,MSFT,SPY \
-  --asset-types stock,etf \
+  --asset-types stock,etf,fund \
   --from 2024-01-01 \
   --to 2024-01-31 \
   --instrument-status active
@@ -80,7 +80,8 @@ poetry run j21 ingest calendar --market US --from 2024-01-01 --to 2024-12-31
 poetry run j21 ingest daily \
   --market US \
   --date 2026-07-07 \
-  --asset-types stock,etf
+  --asset-types stock,etf,fund \
+  --instrument-status active
 ```
 
 Matched rows enter the canonical split price tables. Unmatched provider rows are
@@ -101,6 +102,8 @@ Execute after reviewing the estimate:
 poetry run j21 ingest daily-range \
   --from 2024-01-01 \
   --to 2024-01-31 \
+  --asset-types stock,etf,fund \
+  --instrument-status all \
   --execute \
   --yes \
   --parallel \
@@ -115,7 +118,8 @@ Relevant controls:
 - `--parallel/--sequential`: enable or disable bounded per-day parallel ingestion.
 - `--workers`: worker count when parallel mode is enabled.
 - `--max-requests-per-minute`: request-rate throttle; must be at or below EODHD's 1000 requests/minute ceiling.
-- `--max-api-calls`: daily-range API-call budget guard.
+- `--instrument-status active|all`: daily update uses `active`; historical survivorship-aware matching uses `all`.
+- `--max-api-calls`: weighted hard budget charged before every HTTP attempt, including retries.
 - `--max-estimated-gb`: storage estimate guard.
 
 Runtime defaults live in `config/default.yaml` and can be overridden with:
@@ -129,7 +133,7 @@ Runtime defaults live in `config/default.yaml` and can be overridden with:
 
 ## Delisted Instruments
 
-Load EODHD inactive/delisted stock+ETF universe:
+Load EODHD inactive/delisted stock+ETF+Fund universe:
 
 ```bash
 poetry run j21 ingest delisted-instruments --market US
@@ -158,7 +162,7 @@ symbols and want to avoid spending API calls on active instruments.
 
 ## Bulk Unmatched Workflow
 
-`j21 ingest daily` and `j21 ingest daily-range` first write matched stock/ETF
+`j21 ingest daily` and `j21 ingest daily-range` first write matched stock/ETF/Fund
 rows into split daily price tables. Bulk EOD rows that cannot match the current
 instrument universe are stored in `system.bulk_unmatched_daily_price_observation`
 instead of being discarded.
@@ -188,6 +192,101 @@ Execute only after reviewing the preview:
 poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --execute --yes
 ```
 
-Routing only writes rows that strictly matched an existing stock/ETF/index
-`instrument_id`. Fund, preferred, notes, and unknown rows remain in staging for
-later review or schema expansion.
+Routing only writes rows that strictly matched an existing stock/ETF/Fund/index
+`instrument_id`. Preferred, notes, bonds, warrants, and unknown rows remain in staging.
+
+Historical Bulk identity order is source-date identifier history, current provider symbol,
+optional EODHD Type compatibility, then exact instrument. Old/current aliases for one natural
+key are not resolved by response order: the unique dated alias wins and the lower-priority row
+remains staged as `shadowed`.
+
+## Daily-Price Asset-Type Reconcile
+
+Metadata can correct an instrument type after older prices were written. Plan first:
+
+```bash
+poetry run j21 migrate daily-price-asset-types --phase plan
+```
+
+After pausing ingest and reviewing every source/target group, execute in bounded transactions:
+
+```bash
+poetry run j21 migrate daily-price-asset-types --phase execute --chunk-size 1000 --execute --yes
+```
+
+Each chunk copies to the current canonical type table, verifies all OHLCV/source fields, and only
+then deletes the old-table row. Existing conflicting target payloads stop and roll back the chunk.
+Rerunning is safe because committed rows no longer appear in the mismatch plan.
+
+## ETF/Fund Physical Split
+
+The large-table migration is operator-controlled and resumable:
+
+```bash
+poetry run j21 migrate fund-daily-price --phase plan
+poetry run j21 migrate fund-daily-price --phase copy --backup-file /absolute/backup.sql.gz --execute --yes
+poetry run j21 migrate fund-daily-price --phase verify --run-id 1
+poetry run j21 migrate fund-daily-price --phase finalize --run-id 1 --execute --yes
+```
+
+`copy` can resume by run ID. `finalize` refuses to run unless the current verification proves
+row conservation, zero natural-key duplicates, zero cross-type rows, and sample checksum match.
+Do not run `OPTIMIZE TABLE` as part of this workflow.
+
+## Validate, Repair, And Quarantine
+
+```bash
+poetry run j21 validate daily-price --from 2024-01-01 --to 2024-01-31 --asset-types stock,etf,fund,index
+poetry run j21 repair plan-daily-price --from 2024-01-01 --to 2024-01-31
+poetry run j21 repair list --status pending_confirmation
+poetry run j21 repair confirm --plan-id 123 --yes
+poetry run j21 repair run --plan-id 123 --yes
+poetry run j21 quarantine plan-daily-price --from 2024-01-01 --to 2024-01-31 --issue-types invalid_ohlcv,price_on_non_trading_day
+poetry run j21 quarantine list --status pending_confirmation
+poetry run j21 quarantine confirm --plan-id 123 --yes
+poetry run j21 quarantine run --plan-id 123 --yes
+poetry run j21 validate docs-staleness --root ..
+```
+
+Quarantine archives the full source payload and hash before deleting a canonical row. Planning,
+confirmation, and execution are separate on purpose. `docs-staleness` checks that this tutorial
+covers every current Typer leaf command and that managed Markdown/HTML pairs are synchronized.
+
+## Research And Technical Parity
+
+Read local prices:
+
+```bash
+poetry run j21 research daily-prices \
+  --symbols AAPL.US \
+  --asset-type stock \
+  --from 2024-01-01 \
+  --to 2024-03-31 \
+  --adjusted
+```
+
+Run the fixed local-vs-EODHD SMA20/EMA20/RSI14 sample. It never permits more than 200 weighted
+units and does not write the database:
+
+```bash
+poetry run j21 research technical-validate \
+  --symbols AAPL.US,META.US,SPY.US \
+  --from 2024-01-01 \
+  --to 2024-03-31 \
+  --max-api-units 200
+```
+
+## Research Terminal
+
+```bash
+cd ../research_terminal
+poetry install
+poetry run j21-terminal
+
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. The UI is read-only: it charts canonical data, exports CSV/PNG,
+and displays inert CLI suggestions; it cannot execute ingest, repair, quarantine, or migration.

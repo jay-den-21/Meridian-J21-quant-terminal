@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EODHD Technical Indicator Parity Report</title><style>
+:root { --bg:#f6f7f9; --paper:#fff; --text:#20242a; --muted:#667085;
+  --border:#d9dee7; --accent:#1769aa; --code:#f1f4f8; --nav:#15191e; }
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body { margin:0; background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+  "Microsoft YaHei",sans-serif; line-height:1.7; }
+.layout { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:100vh; }
+nav { position:sticky; top:0; height:100vh; overflow:auto; padding:28px 20px;
+  background:var(--nav); color:#d9e2ec; border-right:1px solid #0b1118; }
+nav h2 { margin:0 0 16px; color:#fff; font-size:15px; }
+nav a { display:block; padding:6px 0; color:#c9d2dc; text-decoration:none;
+  border-bottom:1px solid rgba(255,255,255,.06); font-size:13px; line-height:1.35; }
+nav a:hover { color:#fff; }
+.toc-1 { font-weight:700; } .toc-2 { padding-left:10px; }
+.toc-3 { padding-left:22px; color:#aebccc; }
+main { padding:42px 24px 64px; }
+article { max-width:980px; margin:0 auto; padding:44px 54px; background:var(--paper);
+  border:1px solid var(--border); border-radius:8px; box-shadow:0 12px 30px rgba(16,24,32,.06); }
+h1,h2,h3 { line-height:1.3; letter-spacing:0; }
+h1 { margin:0 0 24px; font-size:34px; }
+h2 { margin:42px 0 14px; padding-top:8px; font-size:25px; border-top:1px solid var(--border); }
+h3 { margin:28px 0 10px; font-size:20px; }
+p { margin:12px 0; } ul,ol { margin:10px 0 16px 22px; padding:0; }
+li { margin:6px 0; }
+table { width:100%; border-collapse:collapse; min-width:620px; font-size:14px; }
+.table-wrap { overflow-x:auto; margin:16px 0 22px; border:1px solid var(--border);
+  border-radius:6px; }
+th,td { padding:11px 13px; border-right:1px solid var(--border);
+  border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+th:last-child,td:last-child { border-right:0; }
+thead th { background:#edf2f7; color:#344054; font-weight:700; }
+tbody tr:last-child td { border-bottom:0; }
+tbody tr:nth-child(even) { background:#fafbfc; }
+code { padding:1px 5px; background:var(--code); border:1px solid #e1e6ef;
+  border-radius:5px; font-family:"SFMono-Regular",Consolas,monospace; font-size:.92em; }
+pre { overflow:auto; margin:16px 0 20px; padding:16px 18px; background:#101820;
+  color:#e6edf3; border-radius:8px; line-height:1.5; }
+pre code { padding:0; background:transparent; color:inherit; border:0; font-size:13px; }
+a { color:var(--accent); } .meta { margin-bottom:26px; padding-bottom:18px;
+  color:var(--muted); border-bottom:1px solid var(--border); font-size:13px; }
+@media (max-width:900px) { .layout { display:block; } nav { position:relative; height:auto;
+  max-height:42vh; } main { padding:18px 12px 40px; } article { padding:28px 22px; }
+  h1 { font-size:28px; } h2 { font-size:22px; } }
+@media print { body { background:#fff; } .layout { display:block; } nav { display:none; }
+  main { padding:0; } article { max-width:none; padding:0; border:0; box-shadow:none; } }
+</style></head>
+<body><div class="layout"><nav><h2>目录 / Contents</h2><a class="toc-1" href="#eodhd-technical-indicator-parity-report">EODHD Technical Indicator Parity Report</a><a class="toc-2" href="#scope">Scope</a><a class="toc-2" href="#result">Result</a><a class="toc-2" href="#interpretation">Interpretation</a></nav>
+<main><article><div class="meta">Generated from technical_indicator_parity_report.md. Markdown remains the source of truth.</div>
+<h1 id="eodhd-technical-indicator-parity-report">EODHD Technical Indicator Parity Report</h1><h2 id="scope">Scope</h2><p>This report records the bounded provider comparison run completed on 2026-07-11. It is a formula-parity diagnostic, not a source for stored indicators and not an ingestion workflow.</p><pre><code class="language-bash">poetry run j21 research technical-validate \
+  --symbols AAPL.US,META.US,SPY.US \
+  --from 2024-01-01 --to 2024-03-31 \
+  --max-api-units 200 --output json</code></pre><h2 id="result">Result</h2><div class="table-wrap"><table><thead><tr><th scope="col" style="text-align:left">Provider symbol</th><th scope="col" style="text-align:left">SMA 20</th><th scope="col" style="text-align:left">EMA 20</th><th scope="col" style="text-align:left">RSI 14</th></tr></thead><tbody><tr><td style="text-align:left"><code>AAPL.US</code></td><td style="text-align:left">Pass</td><td style="text-align:left">Pass</td><td style="text-align:left">Pass</td></tr><tr><td style="text-align:left"><code>META.US</code></td><td style="text-align:left">Pass</td><td style="text-align:left">Pass</td><td style="text-align:left">Pass</td></tr><tr><td style="text-align:left"><code>SPY.US</code></td><td style="text-align:left">Pass</td><td style="text-align:left">Pass</td><td style="text-align:left">Pass</td></tr></tbody></table></div><ul><li>Overall status: <code>pass</code> (<code>9/9</code> comparisons).</li><li>Weighted EODHD units consumed: <code>45</code> (<code>3 symbols x 3 requests x 5 units</code>).</li><li>Absolute-error tolerance: <code>0.0002</code>.</li><li>Maximum observed absolute error across the comparison matrix: less than <code>0.00005</code>.</li><li>The residual difference is consistent with the provider response being rounded to four decimal</li></ul><p>places; no local formula was changed from provider output.</p><h2 id="interpretation">Interpretation</h2><p>The result supports the local SMA20, EMA20, and Wilder RSI14 formulas for the tested symbols and window. It does not prove parity for every security, date, or indicator. SMA50/200, Bollinger, MACD, volume SMA, and volatility remain covered by deterministic local fixtures rather than by additional paid API calls.</p><p>Official endpoint reference: <a href="https://eodhd.com/financial-apis/technical-indicators-api">EODHD Technical Indicators API</a>.</p></article></main></div></body></html>
