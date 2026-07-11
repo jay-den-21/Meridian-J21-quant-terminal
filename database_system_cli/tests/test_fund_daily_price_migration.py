@@ -54,6 +54,13 @@ def _run_record(**overrides: Any) -> dict[str, Any]:
         "rows_deleted": 0,
         "copy_last_source_id": 0,
         "delete_last_source_id": 0,
+        "finalize_strategy": None,
+        "rows_compacted": 0,
+        "compact_last_source_id": 0,
+        "compact_verification_fingerprint": None,
+        "compact_verification_details": None,
+        "compact_verified_at": None,
+        "swapped_at": None,
         "chunk_size": 10,
         "backup_path": "/tmp/fund.sql.gz",
         "backup_size_bytes": 123,
@@ -138,11 +145,117 @@ def test_finalize_resume_does_not_reapply_pre_delete_fingerprint_gate(
     monkeypatch.setattr(migration, "_next_source_id", lambda *args, **kwargs: None)
     monkeypatch.setattr(migration, "_post_finalize_details", lambda *args: {"ok": 1})
     monkeypatch.setattr(migration, "_post_finalize_passed", lambda *args: True)
+    prepared: list[bool] = []
+    restored: list[bool] = []
+    monkeypatch.setattr(
+        migration,
+        "_prepare_source_for_finalize",
+        lambda engine: prepared.append(True),
+    )
+    monkeypatch.setattr(
+        migration,
+        "_restore_source_indexes",
+        lambda engine: restored.append(True),
+    )
 
     result = migration.finalize_fund_daily_prices(engine, run_id=7)
 
     assert result.status == "completed"
     assert result.verification.passed is True
+    assert prepared == [True]
+    assert restored == [True]
+
+
+def test_finalize_source_index_optimization_only_drops_rebuildable_indexes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+
+    class RecordingConnection:
+        def execute(self, statement, parameters=None):
+            statements.append(str(statement))
+            return object()
+
+    class RecordingEngine:
+        def begin(self):
+            return nullcontext(RecordingConnection())
+
+    monkeypatch.setattr(migration, "_index_exists", lambda *args: True)
+
+    migration._prepare_source_for_finalize(RecordingEngine())
+
+    sql = " ".join(statements)
+    assert "DROP INDEX ix_etf_daily_price_symbol_date" in sql
+    assert "DROP INDEX ix_etf_daily_price_trade_date" in sql
+    assert "uq_etf_daily_price_instrument_date" not in sql
+
+
+def test_finalize_strategy_uses_compact_swap_only_before_any_delete_commit() -> None:
+    high_delete = _run_record(source_total_before=100, source_fund_rows=90)
+
+    assert migration._select_finalize_strategy(high_delete) == migration.COMPACT_SWAP_STRATEGY
+    assert (
+        migration._select_finalize_strategy({**high_delete, "rows_deleted": 1})
+        == migration.CHUNK_DELETE_STRATEGY
+    )
+    assert (
+        migration._select_finalize_strategy(
+            _run_record(source_total_before=100, source_fund_rows=10)
+        )
+        == migration.CHUNK_DELETE_STRATEGY
+    )
+
+
+def test_high_delete_finalize_dispatches_to_compact_swap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = FakeEngine()
+    run = _run_record(
+        status="finalizing",
+        source_total_before=100,
+        source_fund_rows=90,
+    )
+    monkeypatch.setattr(migration, "_load_run", lambda *args, **kwargs: run)
+    monkeypatch.setattr(
+        migration,
+        "validate_backup_file",
+        lambda path: migration.BackupEvidence(path, 123, "a" * 64),
+    )
+    expected = migration.FundSplitFinalizeResult(
+        7,
+        "completed",
+        1,
+        90,
+        migration.FundSplitVerification(7, "completed", True, "c" * 64, {"ok": 1}),
+    )
+    calls: list[dict[str, Any]] = []
+
+    def compact_swap(engine, **kwargs):
+        calls.append(kwargs)
+        return expected
+
+    monkeypatch.setattr(
+        migration,
+        "_finalize_fund_daily_prices_by_compact_swap",
+        compact_swap,
+    )
+    monkeypatch.setattr(
+        migration,
+        "_prepare_source_for_finalize",
+        lambda engine: (_ for _ in ()).throw(AssertionError("chunk delete path used")),
+    )
+
+    result = migration.finalize_fund_daily_prices(engine, run_id=7, chunk_size=25)
+
+    assert result is expected
+    assert calls == [{"run_id": 7, "chunk_size": 25, "max_chunks": None}]
+
+
+def test_compaction_table_names_are_run_scoped() -> None:
+    assert migration._compaction_table_names(7) == (
+        "etf_daily_price_compact_7",
+        "etf_daily_price_retired_7",
+    )
 
 
 def test_pre_and_post_finalize_invariants_are_strict() -> None:

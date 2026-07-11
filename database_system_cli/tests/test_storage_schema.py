@@ -49,6 +49,18 @@ def test_initial_metadata_contains_project_tables() -> None:
     assert fund_daily_price_split_run.schema == SYSTEM_SCHEMA
 
 
+def test_fund_split_run_tracks_resumable_compact_swap_state() -> None:
+    assert {
+        "finalize_strategy",
+        "rows_compacted",
+        "compact_last_source_id",
+        "compact_verification_fingerprint",
+        "compact_verification_details",
+        "compact_verified_at",
+        "swapped_at",
+    }.issubset(fund_daily_price_split_run.c.keys())
+
+
 def test_instrument_keeps_standard_and_provider_symbols() -> None:
     assert instrument.schema == US_SHARE_SCHEMA
     assert "symbol" in instrument.c

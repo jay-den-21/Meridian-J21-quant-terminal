@@ -19,9 +19,16 @@ DEFAULT_CHUNK_SIZE = 10_000
 SAMPLE_MODULUS = 997
 COPYABLE_STATUSES = {"copying", "copied", "verification_failed"}
 FINALIZABLE_STATUSES = {"verified", "finalizing"}
+COMPACT_SWAP_DELETE_RATIO = 0.5
+CHUNK_DELETE_STRATEGY = "chunk_delete"
+COMPACT_SWAP_STRATEGY = "compact_swap"
 TARGET_SECONDARY_INDEXES = {
     "ix_fund_daily_price_symbol_date": ("symbol", "trade_date"),
     "ix_fund_daily_price_trade_date": ("trade_date",),
+}
+SOURCE_SECONDARY_INDEXES = {
+    "ix_etf_daily_price_symbol_date": ("symbol", "trade_date"),
+    "ix_etf_daily_price_trade_date": ("trade_date",),
 }
 
 PRICE_COPY_COLUMNS = (
@@ -55,6 +62,7 @@ PRICE_UPDATE_COLUMNS = (
     "source_updated_at",
     "updated_at",
 )
+ETF_COMPACT_COPY_COLUMNS = ("etf_daily_price_id", *PRICE_COPY_COLUMNS)
 
 
 @dataclass(frozen=True)
@@ -243,6 +251,7 @@ def verify_fund_daily_prices(
 ) -> FundSplitVerification:
     """Verify pre-finalize copy invariants or post-finalize conservation invariants."""
     _restore_target_indexes(engine)
+    _restore_source_indexes(engine)
     with engine.begin() as connection:
         run = _load_run(connection, run_id=run_id, for_update=True)
         if run["status"] == "completed":
@@ -286,7 +295,7 @@ def finalize_fund_daily_prices(
     chunk_size: int | None = None,
     max_chunks: int | None = None,
 ) -> FundSplitFinalizeResult:
-    """Delete copied Fund rows from ETF storage after rechecking every safety gate."""
+    """Remove copied Fund rows using chunk delete or a verified compact-table swap."""
     with engine.connect() as connection:
         initial_run = _load_run(connection, run_id=run_id)
     effective_chunk_size = chunk_size or int(initial_run["chunk_size"])
@@ -298,6 +307,7 @@ def finalize_fund_daily_prices(
     ):
         raise RuntimeError("backup file no longer matches the split-run evidence")
 
+    strategy: str
     with engine.begin() as connection:
         run = _load_run(connection, run_id=run_id, for_update=True)
         if run["status"] not in FINALIZABLE_STATUSES:
@@ -317,7 +327,27 @@ def finalize_fund_daily_prices(
                 .values(status="finalizing", error_message=None, updated_at=_now_utc())
             )
 
+        strategy = str(run.get("finalize_strategy") or _select_finalize_strategy(run))
+        if strategy not in {CHUNK_DELETE_STRATEGY, COMPACT_SWAP_STRATEGY}:
+            raise RuntimeError(f"unknown Fund split finalize strategy: {strategy}")
+        if run.get("finalize_strategy") is None:
+            connection.execute(
+                update(fund_daily_price_split_run)
+                .where(fund_daily_price_split_run.c.fund_split_run_id == run_id)
+                .values(finalize_strategy=strategy, updated_at=_now_utc())
+            )
+
+    if strategy == COMPACT_SWAP_STRATEGY:
+        return _finalize_fund_daily_prices_by_compact_swap(
+            engine,
+            run_id=run_id,
+            chunk_size=effective_chunk_size,
+            max_chunks=max_chunks,
+        )
+
+    _prepare_source_for_finalize(engine)
     chunks_completed = 0
+    terminal_result: FundSplitFinalizeResult | None = None
     while max_chunks is None or chunks_completed < max_chunks:
         with engine.begin() as connection:
             run = _load_run(connection, run_id=run_id, for_update=True)
@@ -352,30 +382,32 @@ def finalize_fund_daily_prices(
                             updated_at=_now_utc(),
                         )
                     )
-                    return FundSplitFinalizeResult(
+                    terminal_result = FundSplitFinalizeResult(
                         run_id,
                         "finalize_failed",
                         chunks_completed,
                         int(run["rows_deleted"]),
                         verification,
                     )
-                connection.execute(
-                    update(fund_daily_price_split_run)
-                    .where(fund_daily_price_split_run.c.fund_split_run_id == run_id)
-                    .values(
-                        status="completed",
-                        completed_at=_now_utc(),
-                        error_message=None,
-                        updated_at=_now_utc(),
+                else:
+                    connection.execute(
+                        update(fund_daily_price_split_run)
+                        .where(fund_daily_price_split_run.c.fund_split_run_id == run_id)
+                        .values(
+                            status="completed",
+                            completed_at=_now_utc(),
+                            error_message=None,
+                            updated_at=_now_utc(),
+                        )
                     )
-                )
-                return FundSplitFinalizeResult(
-                    run_id,
-                    "completed",
-                    chunks_completed,
-                    int(run["rows_deleted"]),
-                    verification,
-                )
+                    terminal_result = FundSplitFinalizeResult(
+                        run_id,
+                        "completed",
+                        chunks_completed,
+                        int(run["rows_deleted"]),
+                        verification,
+                    )
+                break
 
             deleted_rows = _delete_source_range(
                 connection,
@@ -392,6 +424,10 @@ def finalize_fund_daily_prices(
                 )
             )
         chunks_completed += 1
+
+    if terminal_result is not None:
+        _restore_source_indexes(engine)
+        return terminal_result
 
     with engine.connect() as connection:
         run = _load_run(connection, run_id=run_id)
@@ -410,6 +446,646 @@ def finalize_fund_daily_prices(
         int(run["rows_deleted"]),
         verification,
     )
+
+
+def _select_finalize_strategy(run: dict[str, Any]) -> str:
+    """Use compact-swap only before any chunk delete has committed."""
+    if int(run.get("rows_deleted") or 0) or int(run.get("delete_last_source_id") or 0):
+        return CHUNK_DELETE_STRATEGY
+    source_total = int(run["source_total_before"])
+    if source_total <= 0:
+        raise RuntimeError("Fund split source baseline must be positive")
+    delete_ratio = int(run["source_fund_rows"]) / source_total
+    return (
+        COMPACT_SWAP_STRATEGY
+        if delete_ratio >= COMPACT_SWAP_DELETE_RATIO
+        else CHUNK_DELETE_STRATEGY
+    )
+
+
+def _finalize_fund_daily_prices_by_compact_swap(
+    engine: Engine,
+    *,
+    run_id: int,
+    chunk_size: int,
+    max_chunks: int | None,
+) -> FundSplitFinalizeResult:
+    """Copy the minority ETF rows, verify, atomically swap, and retire the mixed table."""
+    compact_table, retired_table = _compaction_table_names(run_id)
+    _ensure_compact_table(
+        engine,
+        run_id=run_id,
+        compact_table=compact_table,
+        retired_table=retired_table,
+    )
+
+    chunks_completed = 0
+    while max_chunks is None or chunks_completed < max_chunks:
+        with engine.begin() as connection:
+            run = _load_run(connection, run_id=run_id, for_update=True)
+            if run["status"] != "finalizing":
+                raise ValueError(
+                    f"split run {run_id} status {run['status']!r} cannot resume compact-swap"
+                )
+            if _compact_swap_already_happened(
+                connection,
+                run=run,
+                compact_table=compact_table,
+                retired_table=retired_table,
+            ):
+                break
+            last_source_id = int(run.get("compact_last_source_id") or 0)
+            next_source_id = _next_etf_source_id(
+                connection,
+                after_source_id=last_source_id,
+                chunk_size=chunk_size,
+            )
+            if next_source_id is None:
+                break
+            compacted_rows = _copy_etf_source_range(
+                connection,
+                compact_table=compact_table,
+                after_source_id=last_source_id,
+                through_source_id=next_source_id,
+            )
+            connection.execute(
+                update(fund_daily_price_split_run)
+                .where(fund_daily_price_split_run.c.fund_split_run_id == run_id)
+                .values(
+                    rows_compacted=fund_daily_price_split_run.c.rows_compacted
+                    + compacted_rows,
+                    compact_last_source_id=next_source_id,
+                    compact_verification_fingerprint=None,
+                    compact_verification_details=None,
+                    compact_verified_at=None,
+                    error_message=None,
+                    updated_at=_now_utc(),
+                )
+            )
+        chunks_completed += 1
+
+    with engine.connect() as connection:
+        run = _load_run(connection, run_id=run_id)
+        already_swapped = _compact_swap_already_happened(
+            connection,
+            run=run,
+            compact_table=compact_table,
+            retired_table=retired_table,
+        )
+        copy_remaining = False
+        if not already_swapped:
+            copy_remaining = (
+                _next_etf_source_id(
+                    connection,
+                    after_source_id=int(run.get("compact_last_source_id") or 0),
+                    chunk_size=1,
+                )
+                is not None
+            )
+    if copy_remaining:
+        details = {
+            "rows_compacted": int(run.get("rows_compacted") or 0),
+            "expected_etf_rows": _expected_etf_rows(run),
+        }
+        verification = FundSplitVerification(
+            run_id,
+            "finalizing",
+            False,
+            _fingerprint(details),
+            details,
+        )
+        return FundSplitFinalizeResult(
+            run_id,
+            "finalizing",
+            chunks_completed,
+            int(run["rows_deleted"]),
+            verification,
+        )
+
+    if not already_swapped:
+        _restore_named_indexes(engine, compact_table, SOURCE_SECONDARY_INDEXES)
+        with engine.begin() as connection:
+            run = _load_run(connection, run_id=run_id, for_update=True)
+            details = _compact_pre_swap_details(
+                connection,
+                compact_table=compact_table,
+                run=run,
+            )
+            if not _compact_pre_swap_passed(details, run):
+                connection.execute(
+                    update(fund_daily_price_split_run)
+                    .where(fund_daily_price_split_run.c.fund_split_run_id == run_id)
+                    .values(
+                        error_message="ETF compact-table verification failed",
+                        compact_verification_details=json.dumps(details, sort_keys=True),
+                        updated_at=_now_utc(),
+                    )
+                )
+                raise RuntimeError("ETF compact-table verification failed before atomic swap")
+            fingerprint = _fingerprint(details)
+            connection.execute(
+                update(fund_daily_price_split_run)
+                .where(fund_daily_price_split_run.c.fund_split_run_id == run_id)
+                .values(
+                    compact_verification_fingerprint=fingerprint,
+                    compact_verification_details=json.dumps(details, sort_keys=True),
+                    compact_verified_at=_now_utc(),
+                    updated_at=_now_utc(),
+                )
+            )
+        _atomic_swap_compact_etf_table(
+            engine,
+            run_id=run_id,
+            compact_table=compact_table,
+            retired_table=retired_table,
+        )
+
+    with engine.begin() as connection:
+        run = _load_run(connection, run_id=run_id, for_update=True)
+        details = _compact_post_swap_details(
+            connection,
+            retired_table=retired_table,
+            run=run,
+        )
+        passed = _compact_post_swap_passed(details, run)
+        verification = FundSplitVerification(
+            run_id,
+            "completed" if passed else "finalize_failed",
+            passed,
+            _fingerprint(details),
+            details,
+        )
+        if not passed:
+            connection.execute(
+                update(fund_daily_price_split_run)
+                .where(fund_daily_price_split_run.c.fund_split_run_id == run_id)
+                .values(
+                    status="finalize_failed",
+                    error_message="post-swap ETF/Fund verification failed",
+                    updated_at=_now_utc(),
+                )
+            )
+            return FundSplitFinalizeResult(
+                run_id,
+                "finalize_failed",
+                chunks_completed,
+                int(run["rows_deleted"]),
+                verification,
+            )
+
+    _drop_retired_etf_table(engine, retired_table=retired_table)
+    with engine.begin() as connection:
+        run = _load_run(connection, run_id=run_id, for_update=True)
+        connection.execute(
+            update(fund_daily_price_split_run)
+            .where(fund_daily_price_split_run.c.fund_split_run_id == run_id)
+            .values(
+                status="completed",
+                rows_deleted=int(run["source_fund_rows"]),
+                swapped_at=run.get("swapped_at") or _now_utc(),
+                completed_at=_now_utc(),
+                error_message=None,
+                updated_at=_now_utc(),
+            )
+        )
+    return FundSplitFinalizeResult(
+        run_id,
+        "completed",
+        chunks_completed,
+        int(run["source_fund_rows"]),
+        verification,
+    )
+
+
+def _compaction_table_names(run_id: int) -> tuple[str, str]:
+    if run_id <= 0:
+        raise ValueError("run_id must be positive")
+    return f"etf_daily_price_compact_{run_id}", f"etf_daily_price_retired_{run_id}"
+
+
+def _expected_etf_rows(run: dict[str, Any]) -> int:
+    return int(run["source_total_before"]) - int(run["source_fund_rows"])
+
+
+def _ensure_compact_table(
+    engine: Engine,
+    *,
+    run_id: int,
+    compact_table: str,
+    retired_table: str,
+) -> None:
+    with engine.begin() as connection:
+        run = _load_run(connection, run_id=run_id, for_update=True)
+        if _compact_swap_already_happened(
+            connection,
+            run=run,
+            compact_table=compact_table,
+            retired_table=retired_table,
+        ):
+            return
+        if not _table_exists(connection, compact_table):
+            current_rows = _table_row_count(connection, "etf_daily_price")
+            if current_rows != int(run["source_total_before"]):
+                raise RuntimeError(
+                    "canonical ETF table no longer matches the pre-split baseline"
+                )
+            connection.execute(
+                text(
+                    f"CREATE TABLE us_share.{compact_table} "
+                    "LIKE us_share.etf_daily_price"
+                )
+            )
+
+    _drop_named_indexes(engine, compact_table, SOURCE_SECONDARY_INDEXES)
+    with engine.begin() as connection:
+        constraint_name = f"fk_etf_compact_{run_id}_instrument"
+        if not _foreign_key_exists(connection, compact_table, constraint_name):
+            connection.execute(
+                text(
+                    f"ALTER TABLE us_share.{compact_table} "
+                    f"ADD CONSTRAINT {constraint_name} FOREIGN KEY (instrument_id) "
+                    "REFERENCES us_share.instrument (instrument_id)"
+                )
+            )
+
+
+def _compact_swap_already_happened(
+    connection: Connection,
+    *,
+    run: dict[str, Any],
+    compact_table: str,
+    retired_table: str,
+) -> bool:
+    if _table_exists(connection, retired_table):
+        return not _table_exists(connection, compact_table)
+    if _table_exists(connection, compact_table):
+        return False
+    return _table_row_count(connection, "etf_daily_price") == _expected_etf_rows(run)
+
+
+def _next_etf_source_id(
+    connection: Connection,
+    *,
+    after_source_id: int,
+    chunk_size: int,
+) -> int | None:
+    value = connection.execute(
+        text(
+            """
+            SELECT MAX(chunk.etf_daily_price_id)
+            FROM (
+              SELECT p.etf_daily_price_id
+              FROM us_share.etf_daily_price AS p
+              JOIN us_share.instrument AS i ON i.instrument_id = p.instrument_id
+              WHERE i.asset_type = 'etf'
+                AND p.etf_daily_price_id > :after_source_id
+              ORDER BY p.etf_daily_price_id
+              LIMIT :chunk_size
+            ) AS chunk
+            """
+        ),
+        {"after_source_id": after_source_id, "chunk_size": chunk_size},
+    ).scalar_one()
+    return int(value) if value is not None else None
+
+
+def _copy_etf_source_range(
+    connection: Connection,
+    *,
+    compact_table: str,
+    after_source_id: int,
+    through_source_id: int,
+) -> int:
+    rows = _scalar(
+        connection,
+        """
+        SELECT COUNT(*)
+        FROM us_share.etf_daily_price AS p
+        JOIN us_share.instrument AS i ON i.instrument_id = p.instrument_id
+        WHERE i.asset_type = 'etf'
+          AND p.etf_daily_price_id > :after_source_id
+          AND p.etf_daily_price_id <= :through_source_id
+        """,
+        {"after_source_id": after_source_id, "through_source_id": through_source_id},
+    )
+    columns = ", ".join(ETF_COMPACT_COPY_COLUMNS)
+    selected = ", ".join(f"p.{column}" for column in ETF_COMPACT_COPY_COLUMNS)
+    updates = ", ".join(f"{column}=VALUES({column})" for column in PRICE_UPDATE_COLUMNS)
+    connection.execute(
+        text(
+            f"""
+            INSERT INTO us_share.{compact_table} ({columns})
+            SELECT {selected}
+            FROM us_share.etf_daily_price AS p
+            JOIN us_share.instrument AS i ON i.instrument_id = p.instrument_id
+            WHERE i.asset_type = 'etf'
+              AND p.etf_daily_price_id > :after_source_id
+              AND p.etf_daily_price_id <= :through_source_id
+            ON DUPLICATE KEY UPDATE {updates}
+            """
+        ),
+        {"after_source_id": after_source_id, "through_source_id": through_source_id},
+    )
+    return rows
+
+
+def _compact_pre_swap_details(
+    connection: Connection,
+    *,
+    compact_table: str,
+    run: dict[str, Any],
+) -> dict[str, int]:
+    source_sample_rows, source_sample_checksum = _etf_sample_signature(
+        connection,
+        table_name="etf_daily_price",
+        require_asset_type="etf",
+    )
+    compact_sample_rows, compact_sample_checksum = _etf_sample_signature(
+        connection,
+        table_name=compact_table,
+    )
+    return {
+        "source_total_rows": _table_row_count(connection, "etf_daily_price"),
+        "source_etf_rows": _asset_rows(connection, "etf_daily_price", "etf"),
+        "source_fund_rows": _asset_rows(connection, "etf_daily_price", "fund"),
+        "compact_total_rows": _table_row_count(connection, compact_table),
+        "compact_non_etf_rows": _non_asset_rows(connection, compact_table, "etf"),
+        "missing_compact_rows": _missing_compact_rows(connection, compact_table),
+        "extra_compact_rows": _extra_compact_rows(connection, compact_table),
+        "compact_duplicate_groups": _duplicate_groups(connection, compact_table),
+        "target_fund_rows": _table_row_count(connection, "fund_daily_price"),
+        "source_sample_rows": source_sample_rows,
+        "source_sample_checksum": source_sample_checksum,
+        "compact_sample_rows": compact_sample_rows,
+        "compact_sample_checksum": compact_sample_checksum,
+        "expected_etf_rows": _expected_etf_rows(run),
+    }
+
+
+def _compact_pre_swap_passed(details: dict[str, int], run: dict[str, Any]) -> bool:
+    return all(
+        (
+            details["source_total_rows"] == int(run["source_total_before"]),
+            details["source_etf_rows"] == _expected_etf_rows(run),
+            details["source_fund_rows"] == int(run["source_fund_rows"]),
+            details["compact_total_rows"] == _expected_etf_rows(run),
+            details["compact_non_etf_rows"] == 0,
+            details["missing_compact_rows"] == 0,
+            details["extra_compact_rows"] == 0,
+            details["compact_duplicate_groups"] == 0,
+            details["target_fund_rows"] == int(run["source_fund_rows"]),
+            details["source_sample_rows"] == details["compact_sample_rows"],
+            details["source_sample_checksum"] == details["compact_sample_checksum"],
+        )
+    )
+
+
+def _atomic_swap_compact_etf_table(
+    engine: Engine,
+    *,
+    run_id: int,
+    compact_table: str,
+    retired_table: str,
+) -> None:
+    with engine.begin() as connection:
+        run = _load_run(connection, run_id=run_id, for_update=True)
+        if _compact_swap_already_happened(
+            connection,
+            run=run,
+            compact_table=compact_table,
+            retired_table=retired_table,
+        ):
+            return
+        current_details = _compact_pre_swap_details(
+            connection,
+            compact_table=compact_table,
+            run=run,
+        )
+        fingerprint = _fingerprint(current_details)
+        if not _compact_pre_swap_passed(current_details, run):
+            raise RuntimeError("ETF compact-table state changed before atomic swap")
+        if fingerprint != run.get("compact_verification_fingerprint"):
+            raise RuntimeError("ETF compact-table verification fingerprint is stale")
+        connection.execute(
+            text(
+                "RENAME TABLE "
+                f"us_share.etf_daily_price TO us_share.{retired_table}, "
+                f"us_share.{compact_table} TO us_share.etf_daily_price"
+            )
+        )
+        connection.execute(
+            update(fund_daily_price_split_run)
+            .where(fund_daily_price_split_run.c.fund_split_run_id == run_id)
+            .values(swapped_at=_now_utc(), updated_at=_now_utc())
+        )
+
+
+def _compact_post_swap_details(
+    connection: Connection,
+    *,
+    retired_table: str,
+    run: dict[str, Any],
+) -> dict[str, int]:
+    stored = json.loads(str(run.get("compact_verification_details") or "{}"))
+    canonical_sample_rows, canonical_sample_checksum = _etf_sample_signature(
+        connection,
+        table_name="etf_daily_price",
+    )
+    details = {
+        "canonical_etf_rows": _table_row_count(connection, "etf_daily_price"),
+        "canonical_non_etf_rows": _non_asset_rows(
+            connection,
+            "etf_daily_price",
+            "etf",
+        ),
+        "canonical_duplicate_groups": _duplicate_groups(connection, "etf_daily_price"),
+        "target_fund_rows": _table_row_count(connection, "fund_daily_price"),
+        "conserved_total_rows": _table_row_count(connection, "etf_daily_price")
+        + _table_row_count(connection, "fund_daily_price"),
+        "canonical_sample_rows": canonical_sample_rows,
+        "canonical_sample_checksum": canonical_sample_checksum,
+        "expected_sample_rows": int(stored.get("compact_sample_rows", -1)),
+        "expected_sample_checksum": int(stored.get("compact_sample_checksum", -1)),
+    }
+    if _table_exists(connection, retired_table):
+        details["retired_total_rows"] = _table_row_count(connection, retired_table)
+    return details
+
+
+def _compact_post_swap_passed(details: dict[str, int], run: dict[str, Any]) -> bool:
+    return all(
+        (
+            details["canonical_etf_rows"] == _expected_etf_rows(run),
+            details["canonical_non_etf_rows"] == 0,
+            details["canonical_duplicate_groups"] == 0,
+            details["target_fund_rows"] == int(run["source_fund_rows"]),
+            details["conserved_total_rows"] == int(run["source_total_before"]),
+            details["canonical_sample_rows"] == details["expected_sample_rows"],
+            details["canonical_sample_checksum"] == details["expected_sample_checksum"],
+            details.get("retired_total_rows", int(run["source_total_before"]))
+            == int(run["source_total_before"]),
+        )
+    )
+
+
+def _drop_retired_etf_table(engine: Engine, *, retired_table: str) -> None:
+    with engine.begin() as connection:
+        if _table_exists(connection, retired_table):
+            connection.execute(text(f"DROP TABLE us_share.{retired_table}"))
+
+
+def _drop_named_indexes(
+    engine: Engine,
+    table_name: str,
+    indexes: dict[str, tuple[str, ...]],
+) -> None:
+    with engine.begin() as connection:
+        for index_name in indexes:
+            if _index_exists(connection, table_name, index_name):
+                connection.execute(
+                    text(f"ALTER TABLE us_share.{table_name} DROP INDEX {index_name}")
+                )
+
+
+def _restore_named_indexes(
+    engine: Engine,
+    table_name: str,
+    indexes: dict[str, tuple[str, ...]],
+) -> None:
+    with engine.begin() as connection:
+        for index_name, columns in indexes.items():
+            if _index_exists(connection, table_name, index_name):
+                continue
+            connection.execute(
+                text(
+                    f"CREATE INDEX {index_name} ON us_share.{table_name} "
+                    f"({', '.join(columns)})"
+                )
+            )
+
+
+def _table_exists(connection: Connection, table_name: str) -> bool:
+    return bool(
+        _scalar(
+            connection,
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'us_share' AND table_name = :table_name
+            """,
+            {"table_name": table_name},
+        )
+    )
+
+
+def _foreign_key_exists(
+    connection: Connection,
+    table_name: str,
+    constraint_name: str,
+) -> bool:
+    return bool(
+        _scalar(
+            connection,
+            """
+            SELECT COUNT(*)
+            FROM information_schema.referential_constraints
+            WHERE constraint_schema = 'us_share'
+              AND table_name = :table_name
+              AND constraint_name = :constraint_name
+            """,
+            {"table_name": table_name, "constraint_name": constraint_name},
+        )
+    )
+
+
+def _table_row_count(connection: Connection, table_name: str) -> int:
+    return _scalar(connection, f"SELECT COUNT(*) FROM us_share.{table_name}")
+
+
+def _asset_rows(connection: Connection, table_name: str, asset_type: str) -> int:
+    return _scalar(
+        connection,
+        f"""
+        SELECT COUNT(*)
+        FROM us_share.{table_name} AS p
+        JOIN us_share.instrument AS i ON i.instrument_id = p.instrument_id
+        WHERE i.asset_type = :asset_type
+        """,
+        {"asset_type": asset_type},
+    )
+
+
+def _non_asset_rows(connection: Connection, table_name: str, asset_type: str) -> int:
+    return _scalar(
+        connection,
+        f"""
+        SELECT COUNT(*)
+        FROM us_share.{table_name} AS p
+        JOIN us_share.instrument AS i ON i.instrument_id = p.instrument_id
+        WHERE i.asset_type != :asset_type
+        """,
+        {"asset_type": asset_type},
+    )
+
+
+def _missing_compact_rows(connection: Connection, compact_table: str) -> int:
+    return _scalar(
+        connection,
+        f"""
+        SELECT COUNT(*)
+        FROM us_share.etf_daily_price AS s
+        JOIN us_share.instrument AS i ON i.instrument_id = s.instrument_id
+        LEFT JOIN us_share.{compact_table} AS t
+          ON t.etf_daily_price_id = s.etf_daily_price_id
+        WHERE i.asset_type = 'etf' AND t.etf_daily_price_id IS NULL
+        """,
+    )
+
+
+def _extra_compact_rows(connection: Connection, compact_table: str) -> int:
+    return _scalar(
+        connection,
+        f"""
+        SELECT COUNT(*)
+        FROM us_share.{compact_table} AS t
+        LEFT JOIN us_share.etf_daily_price AS s
+          ON s.etf_daily_price_id = t.etf_daily_price_id
+        WHERE s.etf_daily_price_id IS NULL
+        """,
+    )
+
+
+def _etf_sample_signature(
+    connection: Connection,
+    *,
+    table_name: str,
+    require_asset_type: str | None = None,
+) -> tuple[int, int]:
+    join_sql = ""
+    type_sql = ""
+    parameters: dict[str, object] = {}
+    if require_asset_type is not None:
+        join_sql = "JOIN us_share.instrument AS i ON i.instrument_id = p.instrument_id"
+        type_sql = "i.asset_type = :asset_type AND"
+        parameters["asset_type"] = require_asset_type
+    row = connection.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS sample_rows,
+                   COALESCE(BIT_XOR(CAST(CRC32(CONCAT_WS('|',
+                     p.instrument_id, p.trade_date, p.open, p.high, p.low, p.close,
+                     p.adjusted_close, p.volume, p.currency, p.source
+                   )) AS UNSIGNED)), 0) AS sample_checksum
+            FROM us_share.{table_name} AS p
+            {join_sql}
+            WHERE {type_sql}
+              MOD(CRC32(CONCAT(p.instrument_id, ':', p.trade_date)),
+                  {SAMPLE_MODULUS}) = 0
+            """
+        ),
+        parameters,
+    ).mappings().one()
+    return int(row["sample_rows"]), int(row["sample_checksum"])
 
 
 def validate_backup_file(backup_file: Path | str) -> BackupEvidence:
@@ -451,7 +1127,7 @@ def _prepare_target_for_copy(engine: Engine) -> None:
     """Drop rebuildable non-unique indexes while the maintenance-window copy runs."""
     with engine.begin() as connection:
         for index_name in TARGET_SECONDARY_INDEXES:
-            if _index_exists(connection, index_name):
+            if _index_exists(connection, "fund_daily_price", index_name):
                 connection.execute(
                     text(f"ALTER TABLE us_share.fund_daily_price DROP INDEX {index_name}")
                 )
@@ -461,7 +1137,7 @@ def _restore_target_indexes(engine: Engine) -> None:
     """Restore the canonical Fund table indexes before verification can pass."""
     with engine.begin() as connection:
         for index_name, columns in TARGET_SECONDARY_INDEXES.items():
-            if _index_exists(connection, index_name):
+            if _index_exists(connection, "fund_daily_price", index_name):
                 continue
             column_sql = ", ".join(columns)
             connection.execute(
@@ -472,7 +1148,32 @@ def _restore_target_indexes(engine: Engine) -> None:
             )
 
 
-def _index_exists(connection: Connection, index_name: str) -> bool:
+def _prepare_source_for_finalize(engine: Engine) -> None:
+    """Drop rebuildable ETF indexes before deleting most rows from the source table."""
+    with engine.begin() as connection:
+        for index_name in SOURCE_SECONDARY_INDEXES:
+            if _index_exists(connection, "etf_daily_price", index_name):
+                connection.execute(
+                    text(f"ALTER TABLE us_share.etf_daily_price DROP INDEX {index_name}")
+                )
+
+
+def _restore_source_indexes(engine: Engine) -> None:
+    """Restore canonical ETF indexes after finalization or completed-run verification."""
+    with engine.begin() as connection:
+        for index_name, columns in SOURCE_SECONDARY_INDEXES.items():
+            if _index_exists(connection, "etf_daily_price", index_name):
+                continue
+            column_sql = ", ".join(columns)
+            connection.execute(
+                text(
+                    f"CREATE INDEX {index_name} "
+                    f"ON us_share.etf_daily_price ({column_sql})"
+                )
+            )
+
+
+def _index_exists(connection: Connection, table_name: str, index_name: str) -> bool:
     return bool(
         _scalar(
             connection,
@@ -480,10 +1181,10 @@ def _index_exists(connection: Connection, index_name: str) -> bool:
             SELECT COUNT(*)
             FROM information_schema.statistics
             WHERE table_schema = 'us_share'
-              AND table_name = 'fund_daily_price'
+              AND table_name = :table_name
               AND index_name = :index_name
             """,
-            {"index_name": index_name},
+            {"table_name": table_name, "index_name": index_name},
         )
     )
 

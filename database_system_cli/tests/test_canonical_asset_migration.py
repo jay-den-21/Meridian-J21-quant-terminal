@@ -40,3 +40,21 @@ def test_all_alembic_revision_ids_fit_default_version_table_width() -> None:
         revision_id = revision_line.split('"')[1]
 
         assert len(revision_id) <= 32, migration_path.name
+
+
+def test_compact_swap_migration_adds_resumable_finalize_evidence() -> None:
+    migration = (VERSIONS / "0014_fund_compact_swap.py").read_text()
+
+    assert 'revision: str = "0014_fund_compact_swap"' in migration
+    assert 'down_revision: str | None = "0013_fund_split_run"' in migration
+    for column in (
+        "finalize_strategy",
+        "rows_compacted",
+        "compact_last_source_id",
+        "compact_verification_fingerprint",
+        "compact_verification_details",
+        "compact_verified_at",
+        "swapped_at",
+    ):
+        assert f'"{column}"' in migration
+    assert "refusing downgrade while compact-swap evidence exists" in migration
