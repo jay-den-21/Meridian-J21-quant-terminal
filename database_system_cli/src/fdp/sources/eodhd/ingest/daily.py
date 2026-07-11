@@ -415,28 +415,6 @@ def load_bulk_daily_prices(
         exchange=normalized_exchange,
         candidates=selected_candidates,
     )
-    for candidate in selected_candidates:
-        staged_key = (candidate.provider_symbol, candidate.trade_date)
-        if staged_key not in existing_staged_keys:
-            continue
-        instrument_row = candidate.resolution.instrument
-        if instrument_row is None:
-            raise RuntimeError("resolved Bulk candidate lost its instrument")
-        classified_observations.append(
-            _bulk_unmatched_observation_row(
-                candidate.row,
-                run_id=run_id,
-                market=market,
-                exchange=normalized_exchange,
-                symbol=candidate.symbol,
-                provider_symbol=candidate.provider_symbol,
-                fallback_trade_date=trade_date,
-                reason=f"resolved_in_bulk_ingest:{candidate.resolution.matched_by}",
-                classification_status="resolved",
-                classified_asset_type=str(instrument_row["asset_type"]),
-                matched_instrument_id=int(instrument_row["instrument_id"]),
-            )
-        )
     for candidate, classification_status, reason in shadowed_candidates:
         instrument_row = candidate.resolution.instrument
         if instrument_row is None:  # The selector only receives resolved candidates.
@@ -472,6 +450,43 @@ def load_bulk_daily_prices(
         if parsed_rows.accepted:
             asset_type = str(instrument_row["asset_type"])
             accepted_by_asset_type.setdefault(asset_type, []).extend(parsed_rows.accepted)
+            if (candidate.provider_symbol, candidate.trade_date) in existing_staged_keys:
+                classified_observations.append(
+                    _bulk_unmatched_observation_row(
+                        candidate.row,
+                        run_id=run_id,
+                        market=market,
+                        exchange=normalized_exchange,
+                        symbol=candidate.symbol,
+                        provider_symbol=candidate.provider_symbol,
+                        fallback_trade_date=trade_date,
+                        reason=(
+                            "resolved_in_bulk_ingest:"
+                            f"{candidate.resolution.matched_by}"
+                        ),
+                        classification_status="resolved",
+                        classified_asset_type=asset_type,
+                        matched_instrument_id=int(instrument_row["instrument_id"]),
+                    )
+                )
+            continue
+
+        rejection_reason = "; ".join(row.reason for row in parsed_rows.rejected)
+        classified_observations.append(
+            _bulk_unmatched_observation_row(
+                candidate.row,
+                run_id=run_id,
+                market=market,
+                exchange=normalized_exchange,
+                symbol=candidate.symbol,
+                provider_symbol=candidate.provider_symbol,
+                fallback_trade_date=trade_date,
+                reason=rejection_reason or "invalid_price_payload",
+                classification_status="invalid_price",
+                classified_asset_type=str(instrument_row["asset_type"]),
+                matched_instrument_id=int(instrument_row["instrument_id"]),
+            )
+        )
 
     rows_inserted = _upsert_daily_price_chunks(connection, accepted_by_asset_type)
     _upsert_bulk_observations(

@@ -639,6 +639,34 @@ class FakeAliasBulkClient:
         )
 
 
+class FakeInvalidBulkClient:
+    def get_bulk_eod(
+        self,
+        exchange: str,
+        *,
+        trade_date: date | None = None,
+        symbols: list[str] | None = None,
+    ) -> EodhdApiResponse:
+        return EodhdApiResponse(
+            endpoint="/eod-bulk-last-day/US",
+            status_code=200,
+            success=True,
+            retry_count=0,
+            rows_returned=1,
+            duration_ms=10,
+            payload=[{
+                "code": "OLD",
+                "date": "2014-08-18",
+                "open": "10",
+                "high": "8",
+                "low": "9",
+                "close": "10",
+                "adjusted_close": "10",
+                "volume": "100",
+            }],
+        )
+
+
 class FakeAliasResolver:
     instrument_row = {
         "instrument_id": 1,
@@ -824,6 +852,32 @@ def test_bulk_daily_refreshes_existing_staging_match_with_pit_identity() -> None
     assert "resolved" in values
     assert "resolved_in_bulk_ingest:identifier_history" in values
     assert 1 in values
+
+
+def test_bulk_daily_persists_resolved_invalid_price_payload() -> None:
+    connection = FakeBulkConnection()
+
+    result = load_bulk_daily_prices(
+        connection,
+        FakeInvalidBulkClient(),
+        exchange="US",
+        trade_date=date(2014, 8, 18),
+        instrument_status="all",
+        identity_resolver=FakeAliasResolver(),
+    )
+
+    assert result.status == "failed"
+    assert result.rows_matched == 1
+    assert result.rows_inserted == 0
+    assert result.rows_rejected == 1
+    classified_statement = next(
+        statement
+        for statement in connection.statements
+        if getattr(statement, "table", None) is bulk_unmatched_daily_price_observation
+    )
+    values = classified_statement.compile(dialect=mysql.dialect()).params.values()
+    assert "invalid_price" in values
+    assert "invalid_ohlcv: high is lower than low" in values
 
 
 def test_bulk_daily_refuses_alias_conflict_without_one_dated_winner() -> None:
