@@ -507,8 +507,9 @@ class FakeHistoryClient:
 
 
 class FakeBulkConnection:
-    def __init__(self) -> None:
+    def __init__(self, staged_rows: list[dict[str, Any]] | None = None) -> None:
         self.statements: list[Any] = []
+        self.staged_rows = staged_rows or []
         self.instrument_rows = [
             {
                 "instrument_id": 1,
@@ -533,6 +534,8 @@ class FakeBulkConnection:
         if table is ingestion_task_run:
             return FakeResult(inserted_primary_key=(555,))
         if table is None:
+            if "bulk_unmatched_daily_price_observation" in str(statement):
+                return FakeHistorySelectResult(self.staged_rows)
             self.select_count += 1
             return FakeHistorySelectResult(
                 self.instrument_rows if self.select_count == 1 else []
@@ -737,6 +740,7 @@ def test_load_bulk_daily_prices_uses_one_api_call_and_split_table_upserts() -> N
         api_call_log,
         None,
         None,
+        None,
         stock_daily_price,
         etf_daily_price,
         bulk_unmatched_daily_price_observation,
@@ -787,6 +791,39 @@ def test_bulk_daily_prefers_dated_alias_over_conflicting_current_code() -> None:
         "selected_provider_symbol=OLD.US" in str(value)
         for value in classified_values
     )
+
+
+def test_bulk_daily_refreshes_existing_staging_match_with_pit_identity() -> None:
+    connection = FakeBulkConnection(
+        staged_rows=[{
+            "provider_symbol": "OLD.US",
+            "trade_date": date(2014, 8, 18),
+        }]
+    )
+
+    result = load_bulk_daily_prices(
+        connection,
+        FakeAliasBulkClient(),
+        exchange="US",
+        trade_date=date(2014, 8, 18),
+        instrument_status="all",
+        identity_resolver=FakeAliasResolver(),
+    )
+
+    assert result.rows_inserted == 1
+    classified_statements = [
+        statement
+        for statement in connection.statements
+        if getattr(statement, "table", None) is bulk_unmatched_daily_price_observation
+    ]
+    values = {
+        value
+        for statement in classified_statements
+        for value in statement.compile(dialect=mysql.dialect()).params.values()
+    }
+    assert "resolved" in values
+    assert "resolved_in_bulk_ingest:identifier_history" in values
+    assert 1 in values
 
 
 def test_bulk_daily_refuses_alias_conflict_without_one_dated_winner() -> None:

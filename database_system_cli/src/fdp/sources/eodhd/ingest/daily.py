@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
 from fdp.sources.eodhd.client import EodhdClient
@@ -32,6 +33,7 @@ from fdp.sources.eodhd.ingest.models import (
     HistoricalDailyPriceUnitResult,
 )
 from fdp.sources.eodhd.prices import RejectedDailyPriceRow, parse_daily_price_rows
+from fdp.storage.tables import bulk_unmatched_daily_price_observation
 from fdp.storage.upsert import (
     build_bulk_unmatched_daily_price_observation_upsert,
     build_classified_bulk_observation_upsert,
@@ -40,6 +42,7 @@ from fdp.storage.upsert import (
 )
 
 BULK_DAILY_UPSERT_CHUNK_SIZE = 1000
+BULK_OBSERVATION_UPSERT_CHUNK_SIZE = 1000
 
 
 @dataclass(frozen=True)
@@ -354,18 +357,21 @@ def load_bulk_daily_prices(
         instrument_row = resolution.instrument
         if instrument_row is None:
             try:
-                unmatched_observations.append(
-                    _bulk_unmatched_observation_row(
-                        row,
-                        run_id=run_id,
-                        market=market,
-                        exchange=normalized_exchange,
-                        symbol=symbol,
-                        provider_symbol=provider_symbol,
-                        fallback_trade_date=trade_date,
-                        reason=_identity_resolution_reason(resolution),
-                    )
+                observation = _bulk_unmatched_observation_row(
+                    row,
+                    run_id=run_id,
+                    market=market,
+                    exchange=normalized_exchange,
+                    symbol=symbol,
+                    provider_symbol=provider_symbol,
+                    fallback_trade_date=trade_date,
+                    reason=_identity_resolution_reason(resolution),
                 )
+                if _requires_authoritative_ambiguity(resolution):
+                    observation["classification_status"] = "ambiguous"
+                    classified_observations.append(observation)
+                else:
+                    unmatched_observations.append(observation)
             except ValueError as exc:
                 rejected_rows.append(
                     RejectedDailyPriceRow(
@@ -402,6 +408,35 @@ def load_bulk_daily_prices(
         for _, classification_status, _ in shadowed_candidates
     )
     unmatched_rows += ambiguous_alias_rows
+
+    existing_staged_keys = _existing_staged_observation_keys(
+        connection,
+        market=market,
+        exchange=normalized_exchange,
+        candidates=selected_candidates,
+    )
+    for candidate in selected_candidates:
+        staged_key = (candidate.provider_symbol, candidate.trade_date)
+        if staged_key not in existing_staged_keys:
+            continue
+        instrument_row = candidate.resolution.instrument
+        if instrument_row is None:
+            raise RuntimeError("resolved Bulk candidate lost its instrument")
+        classified_observations.append(
+            _bulk_unmatched_observation_row(
+                candidate.row,
+                run_id=run_id,
+                market=market,
+                exchange=normalized_exchange,
+                symbol=candidate.symbol,
+                provider_symbol=candidate.provider_symbol,
+                fallback_trade_date=trade_date,
+                reason=f"resolved_in_bulk_ingest:{candidate.resolution.matched_by}",
+                classification_status="resolved",
+                classified_asset_type=str(instrument_row["asset_type"]),
+                matched_instrument_id=int(instrument_row["instrument_id"]),
+            )
+        )
     for candidate, classification_status, reason in shadowed_candidates:
         instrument_row = candidate.resolution.instrument
         if instrument_row is None:  # The selector only receives resolved candidates.
@@ -439,10 +474,16 @@ def load_bulk_daily_prices(
             accepted_by_asset_type.setdefault(asset_type, []).extend(parsed_rows.accepted)
 
     rows_inserted = _upsert_daily_price_chunks(connection, accepted_by_asset_type)
-    if unmatched_observations:
-        connection.execute(build_bulk_unmatched_daily_price_observation_upsert(unmatched_observations))
-    if classified_observations:
-        connection.execute(build_classified_bulk_observation_upsert(classified_observations))
+    _upsert_bulk_observations(
+        connection,
+        unmatched_observations,
+        classified=False,
+    )
+    _upsert_bulk_observations(
+        connection,
+        classified_observations,
+        classified=True,
+    )
     rows_rejected = len(rejected_rows) + unmatched_rows
     status, error_message = _bulk_daily_price_status(
         rows_inserted=rows_inserted,
@@ -873,6 +914,53 @@ def _identity_resolution_reason(resolution: InstrumentIdentityResolution) -> str
         return str(reason)
     joined = ",".join(str(instrument_id) for instrument_id in candidate_ids)
     return f"{reason};candidate_instrument_ids={joined}"
+
+
+def _requires_authoritative_ambiguity(
+    resolution: InstrumentIdentityResolution,
+) -> bool:
+    reason = resolution.reason or ""
+    return reason.startswith("ambiguous_") or reason == "identifier_not_valid_on_trade_date"
+
+
+def _existing_staged_observation_keys(
+    connection: Connection,
+    *,
+    market: str,
+    exchange: str,
+    candidates: list[_ResolvedBulkCandidate],
+) -> set[tuple[str, date]]:
+    if not candidates:
+        return set()
+    trade_dates = sorted({candidate.trade_date for candidate in candidates})
+    statement = select(
+        bulk_unmatched_daily_price_observation.c.provider_symbol,
+        bulk_unmatched_daily_price_observation.c.trade_date,
+    ).where(
+        bulk_unmatched_daily_price_observation.c.source == "EODHD",
+        bulk_unmatched_daily_price_observation.c.market == market,
+        bulk_unmatched_daily_price_observation.c.exchange == exchange,
+        bulk_unmatched_daily_price_observation.c.trade_date.in_(trade_dates),
+    )
+    return {
+        (str(row["provider_symbol"]), row["trade_date"])
+        for row in connection.execute(statement).mappings()
+    }
+
+
+def _upsert_bulk_observations(
+    connection: Connection,
+    observations: list[dict[str, object]],
+    *,
+    classified: bool,
+) -> None:
+    builder = (
+        build_classified_bulk_observation_upsert
+        if classified
+        else build_bulk_unmatched_daily_price_observation_upsert
+    )
+    for start in range(0, len(observations), BULK_OBSERVATION_UPSERT_CHUNK_SIZE):
+        connection.execute(builder(observations[start:start + BULK_OBSERVATION_UPSERT_CHUNK_SIZE]))
 
 
 def _bulk_row_trade_date(
