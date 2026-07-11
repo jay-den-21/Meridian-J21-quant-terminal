@@ -47,51 +47,37 @@ repo AGENTS.md -> database_system_cli/AGENTS.md -> nearest scoped AGENTS.md
 ## 3. 总体组件图
 
 ```mermaid
-flowchart LR
-    subgraph Entry["输入层"]
-        CLI["Typer CLI<br/>fdp/cli.py"]
-        Menu["Terminal menu<br/>fdp/menu/"]
-        Py["Python caller"]
+flowchart TB
+    subgraph Input["Input Layer"]
+        direction LR
+        A["CLI / Menu / Python"] --> B["fdp.get_data Job"]
+        B --> C["JobRuntime"]
     end
 
-    subgraph Control["共享编排层"]
-        Registry["Job registry"]
-        Jobs["fdp.get_data Jobs"]
-        Contract["Preflight / Progress / Result"]
-        Runtime["JobRuntime"]
+    subgraph Source["External Data Source"]
+        D["EODHD Client"]
     end
 
-    subgraph Provider["EODHD provider 层"]
-        Client["EodhdClient + retry/rate limit"]
-        Ingest["sources/eodhd/ingest"]
-        Parser["instrument / price / calendar parser"]
+    subgraph Pipeline["Ingestion Pipeline"]
+        direction LR
+        C --> E["Provider Ingest / Parser"]
+        D --> E
+        E --> F["Storage Upsert"]
     end
 
-    subgraph Data["Data Core"]
-        Store["storage tables + upsert"]
-        Canonical["us_share canonical data"]
-        System["system audit / staging / DQ plans"]
+    subgraph Core["Canonical Data Layer"]
+        direction LR
+        F --> G["us_share Canonical Data"]
+        G --> I["Quality"]
+        I --> J["Repair / Quarantine"]
     end
 
-    subgraph After["入库后流程"]
-        Quality["quality validation"]
-        Repair["repair / quarantine"]
-        Research["research reader"]
+    subgraph Research["Research Layer"]
+        K["Research Reader"]
     end
 
-    CLI --> Jobs
-    Menu --> Registry --> Jobs
-    Py --> Jobs
-    Jobs --> Contract
-    Jobs --> Runtime --> Client
-    Jobs --> Ingest
-    Ingest --> Client
-    Ingest --> Parser --> Store
-    Store --> Canonical
-    Ingest --> System
-    Canonical --> Quality --> System
-    System --> Repair --> Canonical
-    Canonical --> Research
+    E --> H["System Audit / Unmatched"]
+    G --> K
 ```
 
 注意：`validate`、`repair`、`quarantine` 和 `research` 当前不是 ingest Job。它们由

@@ -27,6 +27,15 @@ h2 { margin:42px 0 14px; padding-top:8px; font-size:25px; border-top:1px solid v
 h3 { margin:28px 0 10px; font-size:20px; }
 p { margin:12px 0; } ul,ol { margin:10px 0 16px 22px; padding:0; }
 li { margin:6px 0; }
+table { width:100%; border-collapse:collapse; min-width:620px; font-size:14px; }
+.table-wrap { overflow-x:auto; margin:16px 0 22px; border:1px solid var(--border);
+  border-radius:6px; }
+th,td { padding:11px 13px; border-right:1px solid var(--border);
+  border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+th:last-child,td:last-child { border-right:0; }
+thead th { background:#edf2f7; color:#344054; font-weight:700; }
+tbody tr:last-child td { border-bottom:0; }
+tbody tr:nth-child(even) { background:#fafbfc; }
 code { padding:1px 5px; background:var(--code); border:1px solid #e1e6ef;
   border-radius:5px; font-family:"SFMono-Regular",Consolas,monospace; font-size:.92em; }
 pre { overflow:auto; margin:16px 0 20px; padding:16px 18px; background:#101820;
@@ -46,51 +55,37 @@ a { color:var(--accent); } .meta { margin-bottom:26px; padding-bottom:18px;
 -&gt; shared fdp.get_data Job
 -&gt; EODHD provider client + ingest/parser
 -&gt; SQLAlchemy Core upsert + MySQL audit/canonical tables
--&gt; independent quality -&gt; repair/quarantine -&gt; research read layer</code></pre><p>关键边界：CLI 和菜单只是输入/输出 adapter；human-operable ingestion 的参数、预算、 失败策略和结果必须收敛在同一个 <code>fdp.get_data</code> Job 中。</p><h2 id="2-当前目录职责">2. 当前目录职责</h2><p>| 路径 | 拥有的职责 | 不应放入 | | --- | --- | --- | | <code>src/fdp/cli.py</code> | Typer command、参数解析、文本/JSON 输出 | provider/SQL 业务流程 | | <code>src/fdp/menu/</code> | 双语 TTY、确认页、等价命令、tqdm | API、预算、写库逻辑 | | <code>src/fdp/get_data/</code> | Job、preflight、runtime、progress、result、registry | 原始 payload parser | | <code>src/fdp/sources/eodhd/</code> | HTTP、retry/rate limit、parser、provider ingest | UI 和 research query | | <code>src/fdp/storage/</code> | SQLAlchemy table contract、schema guard、upsert | migration 历史 | | <code>alembic/</code> | MySQL 物理 schema revision | 运行时业务逻辑 | | <code>src/fdp/quality/</code> | 检测 query、check run、issue persistence | 自动修复/删除 | | <code>src/fdp/repair/</code> | 缺失数据 plan/confirm/claim/backfill | 坏行删除 | | <code>src/fdp/quarantine/</code> | 坏行 plan/confirm/archive/delete/revalidate | missing backfill | | <code>src/fdp/research/</code> | 本地数据库只读研究接口 | EODHD API 和写库 | | <code>src/fdp/bulk_unmatched.py</code> | unmatched summary/classify/route domain logic | UI 和 API 拉取 |</p><p>对应的局部 AI/maintainer 规则位于各路径的 <code>AGENTS.md</code>。规则继承顺序是：</p><pre><code class="language-text">repo AGENTS.md -&gt; database_system_cli/AGENTS.md -&gt; nearest scoped AGENTS.md</code></pre><h2 id="3-总体组件图">3. 总体组件图</h2><pre><code class="language-mermaid">flowchart LR
-    subgraph Entry[&quot;输入层&quot;]
-        CLI[&quot;Typer CLI&lt;br/&gt;fdp/cli.py&quot;]
-        Menu[&quot;Terminal menu&lt;br/&gt;fdp/menu/&quot;]
-        Py[&quot;Python caller&quot;]
+-&gt; independent quality -&gt; repair/quarantine -&gt; research read layer</code></pre><p>关键边界：CLI 和菜单只是输入/输出 adapter；human-operable ingestion 的参数、预算、 失败策略和结果必须收敛在同一个 <code>fdp.get_data</code> Job 中。</p><h2 id="2-当前目录职责">2. 当前目录职责</h2><div class="table-wrap"><table><thead><tr><th scope="col" style="text-align:left">路径</th><th scope="col" style="text-align:left">拥有的职责</th><th scope="col" style="text-align:left">不应放入</th></tr></thead><tbody><tr><td style="text-align:left"><code>src/fdp/cli.py</code></td><td style="text-align:left">Typer command、参数解析、文本/JSON 输出</td><td style="text-align:left">provider/SQL 业务流程</td></tr><tr><td style="text-align:left"><code>src/fdp/menu/</code></td><td style="text-align:left">双语 TTY、确认页、等价命令、tqdm</td><td style="text-align:left">API、预算、写库逻辑</td></tr><tr><td style="text-align:left"><code>src/fdp/get_data/</code></td><td style="text-align:left">Job、preflight、runtime、progress、result、registry</td><td style="text-align:left">原始 payload parser</td></tr><tr><td style="text-align:left"><code>src/fdp/sources/eodhd/</code></td><td style="text-align:left">HTTP、retry/rate limit、parser、provider ingest</td><td style="text-align:left">UI 和 research query</td></tr><tr><td style="text-align:left"><code>src/fdp/storage/</code></td><td style="text-align:left">SQLAlchemy table contract、schema guard、upsert</td><td style="text-align:left">migration 历史</td></tr><tr><td style="text-align:left"><code>alembic/</code></td><td style="text-align:left">MySQL 物理 schema revision</td><td style="text-align:left">运行时业务逻辑</td></tr><tr><td style="text-align:left"><code>src/fdp/quality/</code></td><td style="text-align:left">检测 query、check run、issue persistence</td><td style="text-align:left">自动修复/删除</td></tr><tr><td style="text-align:left"><code>src/fdp/repair/</code></td><td style="text-align:left">缺失数据 plan/confirm/claim/backfill</td><td style="text-align:left">坏行删除</td></tr><tr><td style="text-align:left"><code>src/fdp/quarantine/</code></td><td style="text-align:left">坏行 plan/confirm/archive/delete/revalidate</td><td style="text-align:left">missing backfill</td></tr><tr><td style="text-align:left"><code>src/fdp/research/</code></td><td style="text-align:left">本地数据库只读研究接口</td><td style="text-align:left">EODHD API 和写库</td></tr><tr><td style="text-align:left"><code>src/fdp/bulk_unmatched.py</code></td><td style="text-align:left">unmatched summary/classify/route domain logic</td><td style="text-align:left">UI 和 API 拉取</td></tr></tbody></table></div><p>对应的局部 AI/maintainer 规则位于各路径的 <code>AGENTS.md</code>。规则继承顺序是：</p><pre><code class="language-text">repo AGENTS.md -&gt; database_system_cli/AGENTS.md -&gt; nearest scoped AGENTS.md</code></pre><h2 id="3-总体组件图">3. 总体组件图</h2><pre><code class="language-mermaid">flowchart TB
+    subgraph Input[&quot;Input Layer&quot;]
+        direction LR
+        A[&quot;CLI / Menu / Python&quot;] --&gt; B[&quot;fdp.get_data Job&quot;]
+        B --&gt; C[&quot;JobRuntime&quot;]
     end
 
-    subgraph Control[&quot;共享编排层&quot;]
-        Registry[&quot;Job registry&quot;]
-        Jobs[&quot;fdp.get_data Jobs&quot;]
-        Contract[&quot;Preflight / Progress / Result&quot;]
-        Runtime[&quot;JobRuntime&quot;]
+    subgraph Source[&quot;External Data Source&quot;]
+        D[&quot;EODHD Client&quot;]
     end
 
-    subgraph Provider[&quot;EODHD provider 层&quot;]
-        Client[&quot;EodhdClient + retry/rate limit&quot;]
-        Ingest[&quot;sources/eodhd/ingest&quot;]
-        Parser[&quot;instrument / price / calendar parser&quot;]
+    subgraph Pipeline[&quot;Ingestion Pipeline&quot;]
+        direction LR
+        C --&gt; E[&quot;Provider Ingest / Parser&quot;]
+        D --&gt; E
+        E --&gt; F[&quot;Storage Upsert&quot;]
     end
 
-    subgraph Data[&quot;Data Core&quot;]
-        Store[&quot;storage tables + upsert&quot;]
-        Canonical[&quot;us_share canonical data&quot;]
-        System[&quot;system audit / staging / DQ plans&quot;]
+    subgraph Core[&quot;Canonical Data Layer&quot;]
+        direction LR
+        F --&gt; G[&quot;us_share Canonical Data&quot;]
+        G --&gt; I[&quot;Quality&quot;]
+        I --&gt; J[&quot;Repair / Quarantine&quot;]
     end
 
-    subgraph After[&quot;入库后流程&quot;]
-        Quality[&quot;quality validation&quot;]
-        Repair[&quot;repair / quarantine&quot;]
-        Research[&quot;research reader&quot;]
+    subgraph Research[&quot;Research Layer&quot;]
+        K[&quot;Research Reader&quot;]
     end
 
-    CLI --&gt; Jobs
-    Menu --&gt; Registry --&gt; Jobs
-    Py --&gt; Jobs
-    Jobs --&gt; Contract
-    Jobs --&gt; Runtime --&gt; Client
-    Jobs --&gt; Ingest
-    Ingest --&gt; Client
-    Ingest --&gt; Parser --&gt; Store
-    Store --&gt; Canonical
-    Ingest --&gt; System
-    Canonical --&gt; Quality --&gt; System
-    System --&gt; Repair --&gt; Canonical
-    Canonical --&gt; Research</code></pre><p>注意：<code>validate</code>、<code>repair</code>、<code>quarantine</code> 和 <code>research</code> 当前不是 ingest Job。它们由 <code>fdp/cli.py</code> 直接调用各自 service/read layer。<code>j21 menu</code> 当前只覆盖 registry 中的 ingest/reconcile workflows。</p><h2 id="4-三种入口如何汇合">4. 三种入口如何汇合</h2><h3 id="4-1-typer-cli">4.1 Typer CLI</h3><p><code>pyproject.toml</code> 同时把 <code>j21</code> 和兼容命令 <code>fdp</code> 映射到 <code>fdp.cli:app</code>。</p><pre><code class="language-text">poetry run j21 ingest daily ...
+    E --&gt; H[&quot;System Audit / Unmatched&quot;]
+    G --&gt; K</code></pre><p>注意：<code>validate</code>、<code>repair</code>、<code>quarantine</code> 和 <code>research</code> 当前不是 ingest Job。它们由 <code>fdp/cli.py</code> 直接调用各自 service/read layer。<code>j21 menu</code> 当前只覆盖 registry 中的 ingest/reconcile workflows。</p><h2 id="4-三种入口如何汇合">4. 三种入口如何汇合</h2><h3 id="4-1-typer-cli">4.1 Typer CLI</h3><p><code>pyproject.toml</code> 同时把 <code>j21</code> 和兼容命令 <code>fdp</code> 映射到 <code>fdp.cli:app</code>。</p><pre><code class="language-text">poetry run j21 ingest daily ...
 -&gt; fdp.cli.ingest_daily()
 -&gt; BulkDailyJob.run(override_source=&quot;cli&quot;)</code></pre><p>CLI 负责把字符串转成 date/list/enum，选择 Job，渲染 <code>JobResult</code>。<code>--output json</code> 时，stdout 只输出一个 JSON result，progress 走 stderr。</p><h3 id="4-2-terminal-menu">4.2 Terminal menu</h3><pre><code class="language-text">poetry run j21 menu
 -&gt; fdp.cli.terminal_menu()
@@ -197,7 +192,7 @@ j21 validate daily-price</code></pre><p><code>fdp.bulk_unmatched.classify_bulk_u
 -&gt; match current symbol / provider_symbol / valid identifier history
 -&gt; join instrument to selected split price table
 -&gt; expose current lifecycle + historical price symbols
--&gt; return ordered dictionaries</code></pre><p>Reader 只读本地数据库，不调用 EODHD。<code>analysis_close</code> 根据 <code>adjusted=True/False</code> 选择 <code>adjusted_close</code> 或 raw <code>close</code>。<code>is_active/delisted_date</code> 来自 instrument join，不复制到 每天的 price row。</p><h2 id="12-数据库分层">12. 数据库分层</h2><p>| Schema | 内容 | 例子 | | --- | --- | --- | | <code>us_share</code> | canonical instrument/market data | instrument、identifier history、lifecycle、calendar、split daily price | | <code>system</code> | 运行审计、DQ、人工 workflow、staging | task/API log、issues、repair/quarantine plan、bulk unmatched | | <code>app_log</code> | API playground/search/snapshot 临时响应 | quote/search/screener/live snapshot |</p><p><code>src/fdp/storage/tables.py</code> 管理 Data Core 的 runtime table contract；物理变化必须通过 Alembic。<code>app_log</code> snapshot 当前由迁移历史管理，不应重新混入 <code>us_share</code> canonical metadata。</p><h2 id="13-常见修改的联查清单">13. 常见修改的联查清单</h2><p>| 修改类型 | 至少联查 | | --- | --- | | 新 ingest workflow | Job + registry + CLI + menu + provider ingest + tests/docs | | EODHD 字段变化 | client/parser + ingest model + storage/upsert + quality/research + tests | | schema 变化 | tables + Alembic + upsert + callers + tests + PROJECT/HTML | | 新 quality issue | check + persistence + repair/quarantine/manual route + CLI/tests | | research 返回字段 | reader query + CLI renderer + tests + PROJECT contract | | 文档命令变化 | actual Typer <code>--help</code> tree + CLI Markdown/HTML + command-registration tests |</p><h2 id="14-当前未实现边界">14. 当前未实现边界</h2><ul><li>Terminal menu 尚未覆盖 validate、repair、quarantine 和普通 research 查询。</li><li>High-volume intraday bar store 尚未实现。若未来加入 5-minute 全市场数据，推荐将</li></ul><p>instrument/catalog/quality metadata 留在 SQL，将大规模 bars 放入按资产/周期/日期分区的 Parquet；不要默认把数亿行 intraday bars 塞入当前日频 MySQL 模型。</p><ul><li>Future data terminal 可以消费 research read API/导出数据，但不能直接修改 Data Core</li></ul><p>canonical tables。</p><h2 id="15-验证入口">15. 验证入口</h2><pre><code class="language-bash">cd database_system_cli
+-&gt; return ordered dictionaries</code></pre><p>Reader 只读本地数据库，不调用 EODHD。<code>analysis_close</code> 根据 <code>adjusted=True/False</code> 选择 <code>adjusted_close</code> 或 raw <code>close</code>。<code>is_active/delisted_date</code> 来自 instrument join，不复制到 每天的 price row。</p><h2 id="12-数据库分层">12. 数据库分层</h2><div class="table-wrap"><table><thead><tr><th scope="col" style="text-align:left">Schema</th><th scope="col" style="text-align:left">内容</th><th scope="col" style="text-align:left">例子</th></tr></thead><tbody><tr><td style="text-align:left"><code>us_share</code></td><td style="text-align:left">canonical instrument/market data</td><td style="text-align:left">instrument、identifier history、lifecycle、calendar、split daily price</td></tr><tr><td style="text-align:left"><code>system</code></td><td style="text-align:left">运行审计、DQ、人工 workflow、staging</td><td style="text-align:left">task/API log、issues、repair/quarantine plan、bulk unmatched</td></tr><tr><td style="text-align:left"><code>app_log</code></td><td style="text-align:left">API playground/search/snapshot 临时响应</td><td style="text-align:left">quote/search/screener/live snapshot</td></tr></tbody></table></div><p><code>src/fdp/storage/tables.py</code> 管理 Data Core 的 runtime table contract；物理变化必须通过 Alembic。<code>app_log</code> snapshot 当前由迁移历史管理，不应重新混入 <code>us_share</code> canonical metadata。</p><h2 id="13-常见修改的联查清单">13. 常见修改的联查清单</h2><div class="table-wrap"><table><thead><tr><th scope="col" style="text-align:left">修改类型</th><th scope="col" style="text-align:left">至少联查</th></tr></thead><tbody><tr><td style="text-align:left">新 ingest workflow</td><td style="text-align:left">Job + registry + CLI + menu + provider ingest + tests/docs</td></tr><tr><td style="text-align:left">EODHD 字段变化</td><td style="text-align:left">client/parser + ingest model + storage/upsert + quality/research + tests</td></tr><tr><td style="text-align:left">schema 变化</td><td style="text-align:left">tables + Alembic + upsert + callers + tests + PROJECT/HTML</td></tr><tr><td style="text-align:left">新 quality issue</td><td style="text-align:left">check + persistence + repair/quarantine/manual route + CLI/tests</td></tr><tr><td style="text-align:left">research 返回字段</td><td style="text-align:left">reader query + CLI renderer + tests + PROJECT contract</td></tr><tr><td style="text-align:left">文档命令变化</td><td style="text-align:left">actual Typer <code>--help</code> tree + CLI Markdown/HTML + command-registration tests</td></tr></tbody></table></div><h2 id="14-当前未实现边界">14. 当前未实现边界</h2><ul><li>Terminal menu 尚未覆盖 validate、repair、quarantine 和普通 research 查询。</li><li>High-volume intraday bar store 尚未实现。若未来加入 5-minute 全市场数据，推荐将</li></ul><p>instrument/catalog/quality metadata 留在 SQL，将大规模 bars 放入按资产/周期/日期分区的 Parquet；不要默认把数亿行 intraday bars 塞入当前日频 MySQL 模型。</p><ul><li>Future data terminal 可以消费 research read API/导出数据，但不能直接修改 Data Core</li></ul><p>canonical tables。</p><h2 id="15-验证入口">15. 验证入口</h2><pre><code class="language-bash">cd database_system_cli
 poetry run pytest
 poetry run ruff check --no-cache src tests scripts
 poetry run python -m compileall -q src tests scripts
