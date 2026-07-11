@@ -1,6 +1,6 @@
 """adopt canonical asset daily tables and add Fund storage
 
-Revision ID: 0012_canonical_asset_daily_tables
+Revision ID: 0012_asset_daily_tables
 Revises: 0011_drop_us_share_snapshots
 Create Date: 2026-07-11
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0012_canonical_asset_daily_tables"
+revision: str = "0012_asset_daily_tables"
 down_revision: str | None = "0011_drop_us_share_snapshots"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

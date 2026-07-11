@@ -332,6 +332,13 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
         raise MenuCancelled
     symbols = _csv(raw_symbols, allow_empty=True)
     asset_types = _assets(session, language, defaults={"stock", "etf", "fund"})
+    instrument_status = session.select(
+        tr(language, "status"),
+        [("Active", "active"), ("Active + inactive", "all")],
+        default="active",
+    )
+    if instrument_status is None:
+        raise MenuCancelled
     exchange = "US"
     market = "US"
     if _advanced(session, language):
@@ -345,6 +352,7 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
         symbols=symbols,
         asset_types=asset_types,
         market=market,
+        instrument_status=instrument_status,
         override_source="menu",
     )
     args: list[Any] = ["ingest", "daily", "--exchange", exchange]
@@ -352,7 +360,16 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
         args.extend(["--date", trade_date])
     if symbols:
         args.extend(["--symbols", ",".join(symbols)])
-    args.extend(["--asset-types", ",".join(asset_types), "--market", market])
+    args.extend(
+        [
+            "--asset-types",
+            ",".join(asset_types),
+            "--market",
+            market,
+            "--instrument-status",
+            instrument_status,
+        ]
+    )
     command = _command(*args)
     _confirm_and_run(
         session,
@@ -365,6 +382,7 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
             symbols=symbols,
             asset_types=asset_types,
             market=market,
+            instrument_status=instrument_status,
             runtime=runtime,
             reporter=reporter,
             override_source="menu",
@@ -377,6 +395,13 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
     date_from = _date_value(session, tr(language, "date_from"))
     date_to = _date_value(session, tr(language, "date_to"))
     asset_types = _assets(session, language, defaults={"stock", "etf", "fund"})
+    instrument_status = session.select(
+        tr(language, "status"),
+        [("Active", "active"), ("Active + inactive", "all")],
+        default="active",
+    )
+    if instrument_status is None:
+        raise MenuCancelled
     runtime = JobRuntime.from_env()
     advanced = _advanced(session, language)
     exchange = "US"
@@ -419,6 +444,7 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
         exchange=exchange,
         asset_types=asset_types,
         market=market,
+        instrument_status=instrument_status,
         max_estimated_gb=max_gb,
         parallel=parallel,
         workers=workers,
@@ -442,6 +468,8 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
         ",".join(asset_types),
         "--market",
         parameters["market"],
+        "--instrument-status",
+        instrument_status,
         mode_flag,
         "--workers",
         parameters["workers"],

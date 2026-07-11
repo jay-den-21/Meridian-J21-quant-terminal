@@ -482,6 +482,11 @@ def ingest_daily(
         help="Comma-separated asset types to write: stock,etf,fund.",
     ),
     market: str = typer.Option("US", "--market", help="Internal market code to match instruments."),
+    instrument_status: str = typer.Option(
+        "active",
+        "--instrument-status",
+        help="Instrument universe used for identity resolution: active or all.",
+    ),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
@@ -495,6 +500,9 @@ def ingest_daily(
         if not parsed_symbols:
             raise typer.BadParameter("symbols must contain at least one symbol when provided")
     parsed_asset_types = _parse_asset_types(asset_types, supported=BULK_ASSET_TYPES)
+    parsed_instrument_status = instrument_status.strip().lower()
+    if parsed_instrument_status not in {"active", "all"}:
+        raise typer.BadParameter("instrument-status must be active or all")
 
     output_mode = _parse_output_format(output)
     try:
@@ -504,6 +512,7 @@ def ingest_daily(
             symbols=parsed_symbols,
             market=market,
             asset_types=parsed_asset_types,
+            instrument_status=parsed_instrument_status,
             reporter=CliProgressReporter(stderr=output_mode == "json"),
             override_source="cli",
         )
@@ -533,6 +542,11 @@ def ingest_daily_range(
         help="Comma-separated asset types to write: stock,etf,fund.",
     ),
     market: str = typer.Option("US", "--market", help="Internal market code to match instruments."),
+    instrument_status: str = typer.Option(
+        "active",
+        "--instrument-status",
+        help="Instrument universe used for identity resolution: active or all.",
+    ),
     bytes_per_row: int = typer.Option(
         600,
         "--bytes-per-row",
@@ -600,6 +614,9 @@ def ingest_daily_range(
 
     parsed_from, parsed_to = _parse_date_range(date_from, date_to)
     parsed_asset_types = _parse_asset_types(asset_types, supported=BULK_ASSET_TYPES)
+    parsed_instrument_status = instrument_status.strip().lower()
+    if parsed_instrument_status not in {"active", "all"}:
+        raise typer.BadParameter("instrument-status must be active or all")
     if not yes:
         if not dry_run:
             raise typer.BadParameter("--execute requires --yes")
@@ -613,6 +630,7 @@ def ingest_daily_range(
             exchange=exchange,
             asset_types=parsed_asset_types,
             market=market,
+            instrument_status=parsed_instrument_status,
             bytes_per_row=bytes_per_row,
             max_estimated_gb=max_estimated_gb,
             parallel=parallel,
@@ -641,6 +659,7 @@ def ingest_daily_range(
         f"max_api_calls={parameters['max_api_calls']} "
         f"parallel={str(parameters['parallel']).lower()} workers={parameters['workers']} "
         f"max_requests_per_minute={parameters['max_requests_per_minute']}"
+        f" instrument_status={parameters['instrument_status']}"
     )
     if result.status == "dry_run":
         typer.echo("dry-run only; rerun with --execute --yes to ingest this range")
@@ -653,6 +672,8 @@ def ingest_daily_range(
         f"rows_inserted={result.rows_inserted} rows_rejected={result.rows_rejected} "
         f"unmatched={result.rows_unmatched} http_requests={result.api_calls} "
         f"api_call_cost_estimate={preflight.estimated_api_calls} "
+        f"api_units_consumed={result.metrics.get('api_units_consumed', 0)} "
+        f"api_units_remaining={result.metrics.get('api_units_remaining', 0)} "
         f"completed_days={result.work_units_completed} failed_days={result.work_units_failed}"
     )
 

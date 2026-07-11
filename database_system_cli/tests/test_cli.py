@@ -268,6 +268,18 @@ def test_daily_range_refuses_api_budget_before_api_key(
     assert "estimated EODHD API calls 100 exceed max-api-calls 99" in result.output
 
 
+def test_bulk_daily_commands_expose_point_in_time_instrument_scope() -> None:
+    runner = CliRunner()
+
+    daily = runner.invoke(app, ["ingest", "daily", "--help"])
+    daily_range = runner.invoke(app, ["ingest", "daily-range", "--help"])
+
+    assert daily.exit_code == 0
+    assert "--instrument-status" in daily.output
+    assert daily_range.exit_code == 0
+    assert "--instrument-status" in daily_range.output
+
+
 def test_cli_registers_delisted_instruments_ingest_command() -> None:
     result = CliRunner().invoke(app, ["ingest", "delisted-instruments", "--help"])
 

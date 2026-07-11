@@ -524,6 +524,7 @@ class FakeBulkConnection:
                 "currency": "USD",
             },
         ]
+        self.select_count = 0
 
     def execute(self, statement):
         self.statements.append(statement)
@@ -531,7 +532,10 @@ class FakeBulkConnection:
         if table is ingestion_task_run:
             return FakeResult(inserted_primary_key=(555,))
         if table is None:
-            return FakeHistorySelectResult(self.instrument_rows)
+            self.select_count += 1
+            return FakeHistorySelectResult(
+                self.instrument_rows if self.select_count == 1 else []
+            )
         return FakeResult()
 
 
@@ -556,6 +560,7 @@ class FakeBulkClient:
             payload=[
                 {
                     "code": "AAPL",
+                    "type": "Common Stock",
                     "date": "2023-01-03",
                     "open": "100",
                     "high": "101",
@@ -566,6 +571,7 @@ class FakeBulkClient:
                 },
                 {
                     "code": "SPY",
+                    "type": "ETF",
                     "date": "2023-01-03",
                     "open": "300",
                     "high": "301",
@@ -576,6 +582,7 @@ class FakeBulkClient:
                 },
                 {
                     "code": "UNKNOWN",
+                    "type": "Common Stock",
                     "date": "2023-01-03",
                     "open": "10",
                     "high": "11",
@@ -656,6 +663,7 @@ def test_load_bulk_daily_prices_uses_one_api_call_and_split_table_upserts() -> N
     assert statement_tables == [
         ingestion_task_run,
         api_call_log,
+        None,
         None,
         stock_daily_price,
         etf_daily_price,

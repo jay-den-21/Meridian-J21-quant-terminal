@@ -19,6 +19,10 @@ DEFAULT_CHUNK_SIZE = 10_000
 SAMPLE_MODULUS = 997
 COPYABLE_STATUSES = {"copying", "copied", "verification_failed"}
 FINALIZABLE_STATUSES = {"verified", "finalizing"}
+TARGET_SECONDARY_INDEXES = {
+    "ix_fund_daily_price_symbol_date": ("symbol", "trade_date"),
+    "ix_fund_daily_price_trade_date": ("trade_date",),
+}
 
 PRICE_COPY_COLUMNS = (
     "instrument_id",
@@ -171,6 +175,7 @@ def copy_fund_daily_prices(
     elif backup_file is not None:
         raise ValueError("backup_file is only accepted when creating a new split run")
 
+    _prepare_target_for_copy(engine)
     chunks_completed = 0
     while max_chunks is None or chunks_completed < max_chunks:
         with engine.begin() as connection:
@@ -237,6 +242,7 @@ def verify_fund_daily_prices(
     run_id: int,
 ) -> FundSplitVerification:
     """Verify pre-finalize copy invariants or post-finalize conservation invariants."""
+    _restore_target_indexes(engine)
     with engine.begin() as connection:
         run = _load_run(connection, run_id=run_id, for_update=True)
         if run["status"] == "completed":
@@ -439,6 +445,47 @@ def _require_copy_ready(plan: FundSplitPlan) -> None:
         raise RuntimeError("fund_daily_price must be empty before starting a new split run")
     if plan.target_non_fund_rows:
         raise RuntimeError("fund_daily_price contains non-Fund instruments")
+
+
+def _prepare_target_for_copy(engine: Engine) -> None:
+    """Drop rebuildable non-unique indexes while the maintenance-window copy runs."""
+    with engine.begin() as connection:
+        for index_name in TARGET_SECONDARY_INDEXES:
+            if _index_exists(connection, index_name):
+                connection.execute(
+                    text(f"ALTER TABLE us_share.fund_daily_price DROP INDEX {index_name}")
+                )
+
+
+def _restore_target_indexes(engine: Engine) -> None:
+    """Restore the canonical Fund table indexes before verification can pass."""
+    with engine.begin() as connection:
+        for index_name, columns in TARGET_SECONDARY_INDEXES.items():
+            if _index_exists(connection, index_name):
+                continue
+            column_sql = ", ".join(columns)
+            connection.execute(
+                text(
+                    f"CREATE INDEX {index_name} "
+                    f"ON us_share.fund_daily_price ({column_sql})"
+                )
+            )
+
+
+def _index_exists(connection: Connection, index_name: str) -> bool:
+    return bool(
+        _scalar(
+            connection,
+            """
+            SELECT COUNT(*)
+            FROM information_schema.statistics
+            WHERE table_schema = 'us_share'
+              AND table_name = 'fund_daily_price'
+              AND index_name = :index_name
+            """,
+            {"index_name": index_name},
+        )
+    )
 
 
 def _create_split_run(

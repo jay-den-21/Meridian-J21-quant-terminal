@@ -101,6 +101,8 @@ def test_copy_stops_at_max_chunks_and_preserves_resume_checkpoint(
     engine = FakeEngine()
     run = _run_record()
     monkeypatch.setattr(migration, "_load_run", lambda *args, **kwargs: run)
+    prepared: list[bool] = []
+    monkeypatch.setattr(migration, "_prepare_target_for_copy", lambda engine: prepared.append(True))
     monkeypatch.setattr(migration, "_next_source_id", lambda *args, **kwargs: 25)
     monkeypatch.setattr(migration, "_copy_source_range", lambda *args, **kwargs: 10)
 
@@ -114,6 +116,7 @@ def test_copy_stops_at_max_chunks_and_preserves_resume_checkpoint(
     assert result.status == "copying"
     assert result.chunks_completed == 1
     assert engine.begin_count == 1
+    assert prepared == [True]
 
 
 def test_finalize_resume_does_not_reapply_pre_delete_fingerprint_gate(

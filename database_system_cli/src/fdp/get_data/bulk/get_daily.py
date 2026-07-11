@@ -25,6 +25,8 @@ DEFAULT_MARKET = "US"
 DEFAULT_ASSET_TYPES = US_BULK_EOD_ASSET_TYPES
 DEFAULT_SYMBOLS: tuple[str, ...] = ()
 DEFAULT_TRADE_DATE: date | None = None
+DEFAULT_INSTRUMENT_STATUS = "active"
+SUPPORTED_INSTRUMENT_STATUSES = {"active", "all"}
 
 
 class BulkDailyJob:
@@ -41,6 +43,7 @@ class BulkDailyJob:
         symbols: list[str] | None = None,
         asset_types: list[str] | None = None,
         market: str | None = None,
+        instrument_status: str | None = None,
         override_source: str = "python",
     ) -> JobPreflight:
         parameters, sources = self._resolve(
@@ -49,6 +52,7 @@ class BulkDailyJob:
             symbols=symbols,
             asset_types=asset_types,
             market=market,
+            instrument_status=instrument_status,
             override_source=override_source,
         )
         symbol_filter = parameters["symbols"]
@@ -81,6 +85,7 @@ class BulkDailyJob:
         symbols: list[str] | None = None,
         asset_types: list[str] | None = None,
         market: str | None = None,
+        instrument_status: str | None = None,
         runtime: JobRuntime | None = None,
         reporter: ProgressReporter | None = None,
         override_source: str = "python",
@@ -94,6 +99,7 @@ class BulkDailyJob:
             symbols=symbols,
             asset_types=asset_types,
             market=market,
+            instrument_status=instrument_status,
             override_source=override_source,
         )
         parameters = active_preflight.parameters
@@ -108,6 +114,7 @@ class BulkDailyJob:
                 symbols=parameters["symbols"] or None,
                 market=parameters["market"],
                 asset_types=parameters["asset_types"],
+                instrument_status=parameters["instrument_status"],
             )
         failed = 1 if result.status == "failed" else 0
         active_reporter.on_event(
@@ -166,12 +173,16 @@ class BulkDailyJob:
         symbols: list[str] | None,
         asset_types: list[str] | None,
         market: str | None,
+        instrument_status: str | None,
         override_source: str,
     ) -> tuple[dict[str, object], dict[str, str]]:
         resolved_assets = [value.lower() for value in (asset_types or DEFAULT_ASSET_TYPES)]
         unsupported = set(resolved_assets) - SUPPORTED_BULK_ASSET_TYPES
         if unsupported:
             raise ValueError(f"unsupported bulk asset type(s): {', '.join(sorted(unsupported))}")
+        resolved_status = (instrument_status or DEFAULT_INSTRUMENT_STATUS).lower()
+        if resolved_status not in SUPPORTED_INSTRUMENT_STATUSES:
+            raise ValueError("instrument_status must be active or all")
         normalized_symbols = normalize_symbols(symbols or list(DEFAULT_SYMBOLS))
         parameters = {
             "exchange": (exchange or DEFAULT_EXCHANGE).upper(),
@@ -179,6 +190,7 @@ class BulkDailyJob:
             "symbols": normalized_symbols,
             "asset_types": resolved_assets,
             "market": (market or DEFAULT_MARKET).upper(),
+            "instrument_status": resolved_status,
             "source": "eodhd",
         }
         return parameters, {
@@ -187,5 +199,8 @@ class BulkDailyJob:
             "symbols": override_source if symbols is not None else "job_default",
             "asset_types": override_source if asset_types is not None else "job_default",
             "market": override_source if market is not None else "job_default",
+            "instrument_status": (
+                override_source if instrument_status is not None else "job_default"
+            ),
             "source": "job_default",
         }

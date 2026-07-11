@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy.engine import Connection
 
 from fdp.sources.eodhd.client import EodhdClient
+from fdp.sources.eodhd.identity import DatedInstrumentIdentityResolver
 from fdp.sources.eodhd.ingest.common import (
     InstrumentStatus,
     create_task_run,
@@ -14,7 +15,6 @@ from fdp.sources.eodhd.ingest.common import (
     historical_price_status,
     index_instrument_rows,
     load_active_instruments,
-    load_active_instruments_for_market,
     load_active_instruments_by_ids,
     load_active_instruments_by_provider_symbols,
     normalize_provider_symbols,
@@ -224,12 +224,13 @@ def load_bulk_daily_prices(
     symbols: list[str] | None = None,
     market: str = "US",
     asset_types: list[str] | None = None,
+    instrument_status: InstrumentStatus = "active",
 ) -> BulkDailyPriceLoadResult:
-    """Load one-day bulk EOD prices for active instruments.
+    """Load one-day bulk EOD prices through point-in-time instrument identity.
 
     Input: EODHD exchange, optional trade date, optional symbols, and market scope.
     Output: `BulkDailyPriceLoadResult` with API, match, parse, and write counts.
-    Flow: bulk API -> active instrument map -> parse EOD rows -> split-table upsert.
+    Flow: bulk API -> dated identifier history/current identity -> parse -> split-table upsert.
     """
     normalized_exchange = exchange.strip().upper()
     normalized_asset_types = asset_types or ["stock", "etf", "fund"]
@@ -238,7 +239,7 @@ def load_bulk_daily_prices(
         connection,
         market=market,
         job_name="eodhd_bulk_daily_price",
-        target_table="stock_daily_price,etf_daily_price,fund_daily_price",
+        target_table=",".join(f"{asset_type}_daily_price" for asset_type in normalized_asset_types),
         date_from=trade_date,
         date_to=trade_date,
     )
@@ -283,16 +284,12 @@ def load_bulk_daily_prices(
             status_code=response.status_code,
         )
 
-    instruments = load_active_instruments_for_market(
+    identity_resolver = DatedInstrumentIdentityResolver.from_connection(
         connection,
         market=market,
         asset_types=normalized_asset_types,
+        instrument_status=instrument_status,
     )
-    rows_by_provider_symbol = {
-        str(row["provider_symbol"]).upper(): row
-        for row in instruments
-    }
-    rows_by_symbol = {str(row["symbol"]).upper(): row for row in instruments}
 
     accepted_by_asset_type: dict[str, list[dict[str, object]]] = {}
     unmatched_observations: list[dict[str, object]] = []
@@ -315,7 +312,28 @@ def load_bulk_daily_prices(
             continue
 
         provider_symbol = _bulk_row_provider_symbol(symbol, exchange=normalized_exchange)
-        instrument_row = rows_by_provider_symbol.get(provider_symbol) or rows_by_symbol.get(symbol)
+        try:
+            observed_trade_date = _bulk_row_trade_date(
+                row,
+                fallback_trade_date=trade_date,
+            )
+        except ValueError as exc:
+            rejected_rows.append(
+                RejectedDailyPriceRow(
+                    index=index,
+                    provider_symbol=provider_symbol,
+                    reason=str(exc),
+                    row=row,
+                )
+            )
+            continue
+
+        resolution = identity_resolver.resolve(
+            provider_symbol=provider_symbol,
+            trade_date=observed_trade_date,
+            eodhd_type=_first_present(row, "type", "Type"),
+        )
+        instrument_row = resolution.instrument
         if instrument_row is None:
             try:
                 unmatched_observations.append(
@@ -327,6 +345,7 @@ def load_bulk_daily_prices(
                         symbol=symbol,
                         provider_symbol=provider_symbol,
                         fallback_trade_date=trade_date,
+                        reason=resolution.reason or "unresolved_instrument_identity",
                     )
                 )
             except ValueError as exc:
@@ -346,8 +365,8 @@ def load_bulk_daily_prices(
         parsed_rows = parse_daily_price_rows(
             [row],
             instrument_id=instrument_row["instrument_id"],
-            symbol=instrument_row["symbol"],
-            provider_symbol=instrument_row["provider_symbol"],
+            symbol=symbol,
+            provider_symbol=provider_symbol,
             currency=instrument_row["currency"],
         )
         rejected_rows.extend(parsed_rows.rejected)
@@ -688,6 +707,7 @@ def _bulk_unmatched_observation_row(
     symbol: str,
     provider_symbol: str,
     fallback_trade_date: date | None,
+    reason: str,
 ) -> dict[str, object]:
     """Build one raw unmatched observation row for later classification."""
     observed_at = now_utc()
@@ -711,7 +731,7 @@ def _bulk_unmatched_observation_row(
         "classification_status": "unresolved",
         "classified_asset_type": None,
         "matched_instrument_id": None,
-        "reason": "unmatched_active_instrument",
+        "reason": reason,
         "source": "EODHD",
         "first_seen_at": observed_at,
         "last_seen_at": observed_at,
@@ -795,7 +815,7 @@ def _bulk_daily_price_status(
     """Derive bulk daily task status and compact error message."""
     problems: list[str] = []
     if unmatched_rows:
-        problems.append(f"{unmatched_rows} EODHD bulk row(s) did not match active instruments")
+        problems.append(f"{unmatched_rows} EODHD bulk row(s) had unresolved instrument identity")
     if rejected_rows:
         problems.append(f"{rejected_rows} invalid EODHD bulk price row(s) rejected")
 

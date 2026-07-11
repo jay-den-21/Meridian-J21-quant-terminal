@@ -1,7 +1,7 @@
 """add durable state for the operator-controlled ETF/Fund price split
 
-Revision ID: 0013_fund_daily_price_split_run
-Revises: 0012_canonical_asset_daily_tables
+Revision ID: 0013_fund_split_run
+Revises: 0012_asset_daily_tables
 Create Date: 2026-07-11
 """
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0013_fund_daily_price_split_run"
-down_revision: str | None = "0012_canonical_asset_daily_tables"
+revision: str = "0013_fund_split_run"
+down_revision: str | None = "0012_asset_daily_tables"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
