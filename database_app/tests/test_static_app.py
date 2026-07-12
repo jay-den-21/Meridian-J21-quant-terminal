@@ -37,13 +37,15 @@ def test_advanced_filter_can_leave_preset_mode_explicitly() -> None:
     assert "state.draft.pool.source = \"asset_type\";" in script
 
 
-def test_csv_export_defers_object_url_revocation() -> None:
+def test_csv_export_uses_server_side_full_result_and_defers_url_revocation() -> None:
     script = _app_js()
 
-    assert "function buildCsvText(rows)" in script
-    assert "function downloadCsvText(csvText)" in script
+    assert "state.executionExportId = result.export_id" in script
+    assert "fetch(`/api/exports/${encodeURIComponent(state.executionExportId)}.csv`)" in script
+    assert "function downloadBlob(blob, filename)" in script
     assert "window.setTimeout(() => {" in script
     assert "URL.revokeObjectURL(objectUrl);" in script
+    assert "function buildCsvText(rows)" not in script
 
 
 def test_import_tickers_resolves_against_database_instead_of_regex_only() -> None:
@@ -73,4 +75,32 @@ def test_intraday_time_helper_is_loaded_and_applies_to_request_params() -> None:
     assert 'America/New_York (U.S. Eastern Time)' in index
     assert 'state.draft.params[paramName] = value;' in script
     assert 'convertLocalDateTimeToUnix(localValues[side], US_EASTERN_TIME_ZONE)' in script
-    assert 'self.path == "/static/timezone.js"' in SERVER_PY.read_text(encoding="utf-8")
+    assert 'path == "/static/timezone.js"' in SERVER_PY.read_text(encoding="utf-8")
+
+
+def test_instrument_catalog_asset_and_toolbar_contract() -> None:
+    script = _app_js()
+    index = INDEX_HTML.read_text(encoding="utf-8")
+    server = SERVER_PY.read_text(encoding="utf-8")
+
+    assert index.index('data-endpoint="exchange_symbol_list"') < index.index('data-endpoint="historical_eod"')
+    assert "Instrument Universe" in index
+    assert "Instrument Search" in index
+    assert index.index('/static/instrument_catalog.js') < index.index('/static/app.js')
+    assert 'path == "/static/instrument_catalog.js"' in server
+    assert 'path == "/api/instrument-catalog/menu"' in server
+    assert 'path == "/api/instrument-catalog/exchanges"' in server
+    assert "Load EODHD exchanges (1 API call)" in script
+    assert 'exchangeSelect = document.createElement("select")' in script
+    assert 'id = "catalog_exchange"' in script
+    assert 'type = "text"' not in script.split("function renderCatalogParameterStep", 1)[1].split(
+        "function catalogReadOnlyField", 1
+    )[0]
+
+
+def test_preview_help_explains_full_export_semantics() -> None:
+    index = INDEX_HTML.read_text(encoding="utf-8")
+
+    assert "Preview rows only controls the on-screen table" in index
+    assert "does not spend another EODHD API call" in index
+    assert 'class="info-button"' in index

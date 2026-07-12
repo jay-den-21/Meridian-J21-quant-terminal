@@ -89,7 +89,7 @@ Supported endpoints are registry-driven in `src/eodhd_codegen_app/endpoints.py` 
 | `splits` | `/api/splits/{provider_symbol}` | JSON / CSV | Historical splits |
 | `technical` | `/api/technical/{provider_symbol}` | JSON / CSV | EODHD technical indicators |
 | `screener` | `/api/screener` | JSON | Stock market screener |
-| `exchange_symbol_list` | `/api/exchange-symbol-list/{exchange}` | JSON | Exchange symbol list |
+| `exchange_symbol_list` | `/api/exchange-symbol-list/{exchange}` | JSON / CSV | Controlled multi-asset instrument directory |
 | `instrument_search` | `/api/search/{query_string}` | JSON | Active instrument lookup |
 | `exchanges_list` | `/api/exchanges-list/` | JSON | Supported exchanges |
 | `exchange_details` | `/api/v2/exchange-details/{exchange}` | JSON | Trading hours and holidays |
@@ -106,13 +106,22 @@ Official evidence is documented in `docs/OFFICIAL_ENDPOINTS.md`.
 
 ## Stock Workflow
 
-The main screen shows five P0 function cards:
+The main screen shows six P0 function cards:
 
+- `Instrument Universe / 证券目录`
 - `Historical Price / 历史行情`
 - `Bulk Last-Day EOD / 批量日终行情`
 - `Latest Snapshot / 最新快照`
 - `Intraday Bars / 分钟线`
-- `Instrument Lookup / 证券搜索`
+- `Instrument Search / 证券搜索`
+
+Instrument Universe has its own wizard:
+
+- `Asset Class / 资产类别`: Stocks, ETFs, Funds, Indices, Forex, Crypto, Government Bonds, or Reference Rates / Benchmarks.
+- `Venue & Options / 市场与参数`: choose only DB/EODHD directory venues or a controlled virtual venue; there is no free-text exchange input.
+- `Review / 确认`: review format, active/delisted mode, preview size, and the one-call estimate.
+
+Opening this wizard reads local DB facets/counts only. Global exchanges load only after `Load EODHD exchanges (1 API call)` is clicked, and the result is cached for the server process. `INDX` lists index instruments only; constituent membership requires a separate Fundamentals/Marketplace source.
 
 Clicking a function opens a floating 3-step wizard:
 
@@ -125,7 +134,7 @@ Notes:
 - Draft wizard edits do not change the main screen until Confirm.
 - Execute API always uses the last confirmed request.
 - Previous Execute results stay visible after a new Confirm and are marked as previous/stale until Execute runs again.
-- Pool Resources do not spend EODHD API calls. Execute API and Instrument Lookup still use the stored Login / Config token.
+- Pool Resources do not spend EODHD API calls. Execute API and Instrument Search still use the stored Login / Config token.
 - Default stock candidates are active US common stocks on NYSE/NASDAQ/AMEX/ARCA/NYSE ARCA/BATS.
 - `Index Assets` are DB index instruments only, not index constituents. Sectors are disabled until a sector/industry taxonomy or membership source is added.
 - The app does not label S&P/MSCI/broker/申万-style industry or index pools unless there is an official/authorized constituent source.
@@ -166,7 +175,9 @@ Bulk mode is intentionally restricted to `/api/eod-bulk-last-day/{exchange}`. Th
 
 ## Export
 
-CSV export is implemented in the browser from the last returned result rows. Browser payloads are capped at 5000 rows to keep the app responsive; the preview table itself uses the selected preview row limit.
+The browser receives only the selected preview rows. After a successful Execute, the server retains the full result from that same execution and returns an opaque export id. `Export CSV` downloads that snapshot without another EODHD request. A full result above 250,000 rows or 64 MiB fails explicitly instead of being silently truncated; the server keeps only the latest successful snapshot for the current process.
+
+CSV uses UTF-8 BOM, the complete field union, quoting, and spreadsheet formula-injection mitigation. Preview rows default to 50 and are capped at 500, but do not limit the CSV row count.
 
 Excel export is P1. P0 avoids `openpyxl`, `xlsxwriter`, Pandas, or a browser spreadsheet library because CSV covers the immediate research workflow without adding runtime dependencies.
 

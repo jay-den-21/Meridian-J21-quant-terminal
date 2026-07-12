@@ -56,6 +56,10 @@
             <span>Click a function to configure</span>
           </div>
           <div class="function-toolbar" id="function_toolbar">
+            <button type="button" class="function-card" data-endpoint="exchange_symbol_list">
+              <strong>Instrument Universe</strong>
+              <span>证券目录</span>
+            </button>
             <button type="button" class="function-card active" data-endpoint="historical_eod">
               <strong>Historical Price</strong>
               <span>历史行情</span>
@@ -73,7 +77,7 @@
               <span>分钟线</span>
             </button>
             <button type="button" class="function-card" data-endpoint="instrument_search">
-              <strong>Instrument Lookup</strong>
+              <strong>Instrument Search</strong>
               <span>证券搜索</span>
             </button>
           </div>
@@ -223,7 +227,16 @@
               <select id="wizard_fmt"></select>
             </div>
             <div class="field">
-              <label for="wizard_preview_limit">Preview rows</label>
+              <div class="field-label-row">
+                <label for="wizard_preview_limit">Preview rows</label>
+                <span class="info-control">
+                  <button type="button" class="info-button" aria-label="Explain preview and CSV export">!</button>
+                  <span class="info-tooltip" role="tooltip">
+                    Preview rows only controls the on-screen table. Export CSV downloads all rows from the same
+                    executed request and does not spend another EODHD API call.
+                  </span>
+                </span>
+              </div>
               <input id="wizard_preview_limit" type="number" min="1" max="500" value="50">
             </div>
           </div>
@@ -257,6 +270,7 @@
     </div>
 
     <script src="/static/timezone.js"></script>
+    <script src="/static/instrument_catalog.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

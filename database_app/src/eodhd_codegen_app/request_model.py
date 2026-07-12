@@ -12,7 +12,7 @@ from eodhd_codegen_app.endpoints import ParamSpec, SUPPORTED_ENDPOINTS, get_endp
 MAX_HISTORICAL_RANGE_DAYS = 3660
 MAX_BULK_RANGE_DAYS = 31
 MAX_PREVIEW_LIMIT = 500
-ASSET_TYPES = {"equity"}
+ASSET_TYPES = {"equity", "instrument"}
 
 SYMBOL_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,39}$")
 EXCHANGE_RE = re.compile(r"^[A-Z0-9][A-Z0-9 _-]{0,19}$")
@@ -141,6 +141,8 @@ def validate_payload(payload: Mapping[str, Any]) -> ApiRequest:
         values["exchange"] = exchange
 
     _validate_endpoint_rules(endpoint, values)
+    if endpoint == "exchange_symbol_list" and asset != "instrument":
+        raise ValidationError("exchange_symbol_list requires asset=instrument")
     return ApiRequest(
         endpoint=endpoint,
         asset=asset,
@@ -254,6 +256,52 @@ def _validate_endpoint_rules(endpoint: str, values: dict[str, Any]) -> None:
         date_to = values.get("date_to")
         if date_from is not None and date_to is not None and date_from > date_to:
             raise ValidationError("date_from must be earlier than or equal to date_to")
+
+    elif endpoint == "exchange_symbol_list":
+        _validate_catalog_mapping(values)
+
+
+def _validate_catalog_mapping(values: dict[str, Any]) -> None:
+    catalog_asset = str(values.get("catalog_asset", ""))
+    exchange = str(values.get("exchange", ""))
+    type_filter = str(values.get("type_filter", "all"))
+    fixed_exchanges = {
+        "index": "INDX",
+        "forex": "FOREX",
+        "crypto": "CC",
+        "government_bond": "GBOND",
+        "benchmark": "MONEY",
+    }
+    virtual_exchanges = {*fixed_exchanges.values(), "EUFUND"}
+
+    expected_exchange = fixed_exchanges.get(catalog_asset)
+    if expected_exchange is not None:
+        if exchange != expected_exchange:
+            raise ValidationError(f"{catalog_asset} requires exchange={expected_exchange}")
+        if type_filter != "all":
+            raise ValidationError(f"{catalog_asset} requires type_filter=all")
+        return
+
+    if catalog_asset == "fund" and exchange == "EUFUND":
+        if type_filter != "all":
+            raise ValidationError("EUFUND requires type_filter=all")
+        return
+
+    if exchange in virtual_exchanges:
+        raise ValidationError(f"{catalog_asset} does not support exchange={exchange}")
+
+    if catalog_asset == "stock":
+        allowed = {"stock", "common_stock", "preferred_stock"}
+        if type_filter not in allowed:
+            raise ValidationError("stock type_filter must be stock, common_stock, or preferred_stock")
+        return
+
+    expected_types = {"etf": "etf", "fund": "fund"}
+    expected_type = expected_types.get(catalog_asset)
+    if expected_type is None:
+        raise ValidationError("unsupported catalog_asset")
+    if type_filter != expected_type:
+        raise ValidationError(f"{catalog_asset} requires type_filter={expected_type}")
 
 
 def _require_date_range(values: dict[str, Any], *, max_days: int, endpoint: str) -> None:
@@ -380,7 +428,18 @@ def _exchange(raw: str) -> str:
 
 def _choice(value: str, allowed: Mapping[str, Any] | set[str], field_name: str) -> str:
     normalized = value.strip()
-    if field_name in {"endpoint", "asset", "fmt", "period", "order", "adjustment", "interval", "function"}:
+    if field_name in {
+        "endpoint",
+        "asset",
+        "fmt",
+        "period",
+        "order",
+        "adjustment",
+        "interval",
+        "function",
+        "catalog_asset",
+        "type_filter",
+    }:
         normalized = normalized.lower()
     if normalized not in allowed:
         allowed_text = ", ".join(sorted(allowed))

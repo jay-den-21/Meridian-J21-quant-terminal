@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from pprint import pformat
 from textwrap import indent
 from urllib.parse import quote, urlencode
 
@@ -131,8 +132,8 @@ def build_urls(request: ApiRequest, *, api_token: str = PUBLIC_TOKEN_PLACEHOLDER
     if request.endpoint == "exchange_symbol_list":
         params = {
             "api_token": api_token,
-            "fmt": "json",
-            "delisted": "1" if values.get("delisted") else "0",
+            "fmt": request.fmt,
+            "delisted": "1" if values.get("delisted") else None,
         }
         if values.get("type_filter") != "all":
             params["type"] = values["type_filter"]
@@ -449,14 +450,14 @@ def _local_proxy_python(request: ApiRequest, *, app_base_url: str) -> str:
         "preview_limit": request.preview_limit,
         "params": request.as_public_dict()["params"],
     }
-    payload_json = indent(json.dumps(payload, indent=4), "    ").strip()
+    payload_python = indent(pformat(payload, sort_dicts=False, width=100), "    ").strip()
     base_url_json = json.dumps(app_base_url)
     return f"""import requests
 
 # Uses the token saved in this local app's Login / Config.
 # Keep the local EODHD Code Generator app running at app_base_url.
 app_base_url = {base_url_json}
-payload = {payload_json}
+payload = {payload_python}
 
 check = requests.post(f"{{app_base_url}}/api/generate", json=payload, timeout=30)
 check.raise_for_status()

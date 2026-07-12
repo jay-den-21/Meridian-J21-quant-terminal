@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -12,6 +13,12 @@ from eodhd_codegen_app.client import MAX_EXECUTION_HTTP_REQUESTS, EodhdExecution
 from eodhd_codegen_app.codegen import build_urls, generate_snippets
 from eodhd_codegen_app.cost import estimate_api_cost
 from eodhd_codegen_app.endpoints import endpoint_payload, inventory_payload
+from eodhd_codegen_app.execution_export import ExecutionExportStore, csv_bytes, export_filename
+from eodhd_codegen_app.instrument_catalog import (
+    ExchangeDirectoryCache,
+    catalog_menu_payload,
+    load_eodhd_exchange_directory,
+)
 from eodhd_codegen_app.request_model import ValidationError, validate_payload
 from eodhd_codegen_app.token_store import TokenStore, TokenStoreError
 from eodhd_codegen_app.universe import load_universe, menu_payload, resolve_universe_symbols
@@ -19,60 +26,79 @@ from eodhd_codegen_app.universe import load_universe, menu_payload, resolve_univ
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 JSON_CONTENT_TYPES = {"application/json", "application/json; charset=utf-8"}
+EXPORT_PATH_RE = re.compile(r"^/api/exports/([A-Za-z0-9_-]{20,80})\.csv$")
 
 
 class CodegenRequestHandler(BaseHTTPRequestHandler):
     client = EodhdHttpClient()
     token_store = TokenStore()
+    catalog_cache = ExchangeDirectoryCache()
+    export_store = ExecutionExportStore()
 
     def do_GET(self) -> None:
-        if self.path == "/" or self.path == "/index.html":
+        path = urlparse(self.path).path
+        if path == "/" or path == "/index.html":
             self._send_static("index.html", "text/html; charset=utf-8")
             return
-        if self.path == "/static/styles.css":
+        if path == "/static/styles.css":
             self._send_static("styles.css", "text/css; charset=utf-8")
             return
-        if self.path == "/static/app.js":
+        if path == "/static/app.js":
             self._send_static("app.js", "application/javascript; charset=utf-8")
             return
-        if self.path == "/static/timezone.js":
+        if path == "/static/timezone.js":
             self._send_static("timezone.js", "application/javascript; charset=utf-8")
             return
-        if self.path == "/api/endpoints":
+        if path == "/static/instrument_catalog.js":
+            self._send_static("instrument_catalog.js", "application/javascript; charset=utf-8")
+            return
+        if path == "/api/endpoints":
             self._send_json({"endpoints": endpoint_payload(), "inventory_only": inventory_payload()})
             return
-        if self.path == "/api/config":
+        if path == "/api/config":
             self._handle_config_status()
             return
-        if self.path == "/api/universe/menu":
+        if path == "/api/universe/menu":
             self._send_json(menu_payload())
+            return
+        if path == "/api/instrument-catalog/menu":
+            self._send_json(catalog_menu_payload(cache=self.catalog_cache))
+            return
+        export_match = EXPORT_PATH_RE.fullmatch(path)
+        if export_match:
+            if self._guard_local_read_request():
+                self._handle_export(export_match.group(1))
             return
         self._send_json({"error": "not found"}, status=404)
 
     def do_POST(self) -> None:
         if not self._guard_side_effect_request(require_json=True):
             return
-        if self.path == "/api/generate":
+        path = urlparse(self.path).path
+        if path == "/api/generate":
             self._handle_generate()
             return
-        if self.path == "/api/execute":
+        if path == "/api/execute":
             self._handle_execute()
             return
-        if self.path == "/api/config/token":
+        if path == "/api/config/token":
             self._handle_config_set_token()
             return
-        if self.path == "/api/universe/load":
+        if path == "/api/universe/load":
             self._handle_universe_load()
             return
-        if self.path == "/api/universe/resolve":
+        if path == "/api/universe/resolve":
             self._handle_universe_resolve()
+            return
+        if path == "/api/instrument-catalog/exchanges":
+            self._handle_instrument_catalog_exchanges()
             return
         self._send_json({"error": "not found"}, status=404)
 
     def do_DELETE(self) -> None:
         if not self._guard_side_effect_request(require_json=False):
             return
-        if self.path == "/api/config/token":
+        if urlparse(self.path).path == "/api/config/token":
             self._handle_config_delete_token()
             return
         self._send_json({"error": "not found"}, status=404)
@@ -136,19 +162,45 @@ class CodegenRequestHandler(BaseHTTPRequestHandler):
                 return
             api_key = self.token_store.resolve_token()
             result = self.client.execute(api_request, api_key=api_key)
+            export_snapshot = self.export_store.replace(api_request, result.rows)
             self._send_json(
                 {
                     "request": api_request.as_public_dict(),
                     "cost": cost.as_dict(),
-                    "result": result.as_dict(),
+                    "result": result.as_dict(export_id=export_snapshot.export_id),
                 }
             )
         except ValidationError as exc:
             self._send_json({"error": str(exc)}, status=400)
-        except EodhdExecutionError as exc:
+        except (EodhdExecutionError, TokenStoreError) as exc:
             self._send_json({"error": str(exc)}, status=502)
         except json.JSONDecodeError:
             self._send_json({"error": "request body must be JSON"}, status=400)
+
+    def _handle_instrument_catalog_exchanges(self) -> None:
+        try:
+            self._read_json()
+            result = load_eodhd_exchange_directory(
+                api_key=self.token_store.resolve_token(),
+                client=self.client,
+                cache=self.catalog_cache,
+            )
+            self._send_json(result)
+        except (EodhdExecutionError, TokenStoreError) as exc:
+            self._send_json({"error": str(exc)}, status=502)
+        except json.JSONDecodeError:
+            self._send_json({"error": "request body must be JSON"}, status=400)
+
+    def _handle_export(self, export_id: str) -> None:
+        snapshot = self.export_store.get(export_id)
+        if snapshot is None:
+            self._send_json({"error": "export is unavailable or no longer current"}, status=404)
+            return
+        self._send_bytes(
+            csv_bytes(snapshot),
+            content_type="text/csv; charset=utf-8",
+            filename=export_filename(snapshot),
+        )
 
     def _handle_config_status(self) -> None:
         try:
@@ -231,6 +283,17 @@ class CodegenRequestHandler(BaseHTTPRequestHandler):
 
         return True
 
+    def _guard_local_read_request(self) -> bool:
+        host = self.headers.get("Host", "")
+        if not is_allowed_local_host(host):
+            self._send_json({"error": "host is not allowed"}, status=403)
+            return False
+        origin = self.headers.get("Origin", "")
+        if origin and not is_allowed_local_origin(origin):
+            self._send_json({"error": "origin is not allowed"}, status=403)
+            return False
+        return True
+
     def _send_static(self, filename: str, content_type: str) -> None:
         static_file = files("eodhd_codegen_app").joinpath("static", filename)
         body = static_file.read_bytes()
@@ -246,6 +309,16 @@ class CodegenRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_bytes(self, body: bytes, *, content_type: str, filename: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(body)

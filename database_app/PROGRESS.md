@@ -26,6 +26,19 @@ Completed:
   - Exchange trading hours/holidays
   - US symbol change history
   - ID mapping
+- Added standalone Instrument Universe / 证券目录 workflow:
+  - New function card immediately left of Historical Price; the former Instrument Lookup card is now Instrument Search.
+  - Independent Asset Class, Venue & Options, and Review wizard steps.
+  - Controlled Stocks, ETFs, Funds, Indices, Forex, Crypto, Government Bonds, and Reference Rates / Benchmarks mappings.
+  - DB-only menu facets/counts on wizard open; no EODHD call until the user explicitly loads the exchange directory.
+  - Explicit `/exchanges-list/` load with server-side token, process cache, DB/EODHD deduplication, and DB venues first.
+  - Index instruments through `INDX`; index constituents remain disabled and require Fundamentals/Marketplace data.
+  - JSON/CSV generation and execution for `exchange_symbol_list` without a hard-coded JSON format.
+- Replaced preview-backed pseudo-full export with same-execution server export for all endpoints:
+  - `/api/execute` returns preview rows, full row count, and an opaque export id.
+  - The server retains the latest successful full result; `GET /api/exports/{execution_id}.csv` does not call EODHD again.
+  - Full responses above 250,000 rows or 64 MiB fail explicitly instead of truncating silently.
+  - CSV uses UTF-8 BOM, complete field union, quoting, and spreadsheet formula-injection mitigation.
 - Added inventory-only documentation for:
   - Fundamentals
   - Calendar/news
@@ -140,7 +153,7 @@ Completed:
   - DB table/query failures return explicit unavailable payloads instead of raw server errors.
   - Pool Browser guards against stale async load responses and hidden stale exchange state.
 - Fixed v0.6 CSV export issue:
-  - Browser CSV export now builds CSV text before download and delays object URL revocation to avoid 0-byte/empty downloads.
+  - Browser CSV export built CSV text before download and delayed object URL revocation to avoid 0-byte/empty downloads. Superseded by the server-backed same-execution export contract above.
   - Historical EOD CSV execution has explicit parser coverage.
   - CSV parser tolerates leading BOM/blank whitespace in upstream CSV bodies.
 - Fixed v0.6 symbol identity and import validation issues:
@@ -170,6 +183,43 @@ Completed:
 Validation latest run:
 
 ```text
+Instrument Universe branch final validation (2026-07-13)
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src ../database_system_cli/.venv/bin/python -m pytest -q
+107 passed
+
+PYTHONDONTWRITEBYTECODE=1 ../database_system_cli/.venv/bin/ruff check --no-cache src tests
+All checks passed
+
+node --check instrument_catalog.js/timezone.js/app.js
+passed
+
+node --test tests/test_timezone_tools.js tests/test_instrument_catalog_tools.js
+11 passed
+
+PYTHONDONTWRITEBYTECODE=1 database_system_cli/.venv/bin/python -m pytest -q tests/test_site_boundaries.py
+5 passed
+
+ruff check --no-cache database_app/src database_app/tests tests/test_site_boundaries.py
+All checks passed
+
+PROJECT.html stdlib HTML parse
+passed
+
+git diff --check and untracked-file whitespace scan
+passed
+
+Browser smoke on http://127.0.0.1:8011/
+verified six-card order; Instrument Universe is first; Instrument Search remains; opening the wizard makes no EODHD call; local DB facets are explicit; Stocks defaults to type=stock; virtual INDX is excluded from ordinary exchanges; INDX review/generation remains fixed and constituents-disabled; desktop and 390px layouts have no horizontal overflow.
+
+Loopback HTTP smoke
+GET /api/instrument-catalog/menu returned DB status, eight controlled categories, no virtual venues in the ordinary exchange list, and an unloaded EODHD cache. POST /api/generate for Crypto + CSV returned /exchange-symbol-list/CC?fmt=csv and token-safe Python/curl/JavaScript without executing EODHD.
+
+Independent evaluator/fix loop
+fixed aggregate 64 MiB enforcement, raw/URL-encoded token redaction in successful rows, CSV header/leading-whitespace formula injection, strict stock type mapping, virtual-venue leakage, and invalid JSON booleans in generated local-proxy Python.
+
+No real Execute or explicit EODHD exchange-directory load was run during final verification; those paths are covered with controlled fake transports to avoid spending the user's API quota.
+
+Earlier release validation:
 ../database_system_cli/.venv/bin/python -m pytest -q
 81 passed
 
@@ -206,7 +256,7 @@ GET /api/endpoints returned 200 and contained historical_eod; no __pycache__ dir
 site/index.html link audit
 10 local refs checked; missing=[].
 
-In-app browser smoke on http://127.0.0.1:8010/
+Earlier v0.5 in-app browser smoke on http://127.0.0.1:8010/
 status Ready; no task tabs or old Stocks workspace; function toolbar shows five P0 cards; DB-backed import resolves exact active DB symbols and rejects unknown/guessed aliases; Confirm generates /eod URLs; opening Intraday then closing does not change the confirmed Historical request; double-clicking an imported candidate toggles selection.
 
 Intraday helper smoke on a random loopback port
@@ -237,8 +287,8 @@ Not started:
 
 - FastAPI + Jinja2 migration.
 - Excel `.xlsx` export.
-- Multi-asset support beyond reserved UI buttons.
-- Server-side streaming export for very large exchange-wide responses.
+- Multi-asset price/analytics functions beyond the Instrument Universe catalog.
+- Streaming or persistent export beyond the bounded latest-success in-process snapshot.
 - Shared package extraction with `database_system_cli`.
 - Real EODHD execution smoke with a user-provided `EODHD_API_KEY`.
 - Real official index constituents universe; current Index Assets are index instruments, not constituent memberships.

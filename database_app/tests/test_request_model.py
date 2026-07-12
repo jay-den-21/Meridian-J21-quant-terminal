@@ -266,3 +266,94 @@ def test_bulk_date_range_boundaries() -> None:
                 },
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("catalog_asset", "exchange", "type_filter"),
+    [
+        ("stock", "NASDAQ", "common_stock"),
+        ("etf", "NYSE", "etf"),
+        ("fund", "LSE", "fund"),
+        ("fund", "EUFUND", "all"),
+        ("index", "INDX", "all"),
+        ("forex", "FOREX", "all"),
+        ("crypto", "CC", "all"),
+        ("government_bond", "GBOND", "all"),
+        ("benchmark", "MONEY", "all"),
+    ],
+)
+def test_instrument_catalog_accepts_official_asset_mappings(
+    catalog_asset: str,
+    exchange: str,
+    type_filter: str,
+) -> None:
+    request = validate_payload(
+        {
+            "asset": "instrument",
+            "endpoint": "exchange_symbol_list",
+            "params": {
+                "catalog_asset": catalog_asset,
+                "exchange": exchange,
+                "type_filter": type_filter,
+                "delisted": False,
+            },
+        }
+    )
+
+    assert request.asset == "instrument"
+    assert request.value("catalog_asset") == catalog_asset
+    assert request.exchange == exchange
+
+
+def test_instrument_catalog_rejects_inconsistent_mappings() -> None:
+    with pytest.raises(ValidationError, match="index requires exchange=INDX"):
+        validate_payload(
+            {
+                "asset": "instrument",
+                "endpoint": "exchange_symbol_list",
+                "params": {
+                    "catalog_asset": "index",
+                    "exchange": "NASDAQ",
+                    "type_filter": "all",
+                },
+            }
+        )
+
+    with pytest.raises(ValidationError, match="etf requires type_filter=etf"):
+        validate_payload(
+            {
+                "asset": "instrument",
+                "endpoint": "exchange_symbol_list",
+                "params": {
+                    "catalog_asset": "etf",
+                    "exchange": "NASDAQ",
+                    "type_filter": "all",
+                },
+            }
+        )
+
+    with pytest.raises(ValidationError, match="stock type_filter"):
+        validate_payload(
+            {
+                "asset": "instrument",
+                "endpoint": "exchange_symbol_list",
+                "params": {
+                    "catalog_asset": "stock",
+                    "exchange": "NASDAQ",
+                    "type_filter": "all",
+                },
+            }
+        )
+
+    with pytest.raises(ValidationError, match="requires asset=instrument"):
+        validate_payload(
+            {
+                "asset": "equity",
+                "endpoint": "exchange_symbol_list",
+                "params": {
+                    "catalog_asset": "stock",
+                    "exchange": "NASDAQ",
+                    "type_filter": "stock",
+                },
+            }
+        )

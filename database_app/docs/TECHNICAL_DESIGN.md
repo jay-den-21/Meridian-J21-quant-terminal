@@ -1,12 +1,13 @@
 # EODHD Code Generator App Technical Design
 
-This document describes the implementation under `database_app/`. The app is a lightweight EODHD API playground and code generator for small equity research queries. It is intentionally separate from `database_system_cli/`.
+This document describes the implementation under `database_app/`. The app is a lightweight EODHD API playground and code generator for small research queries. It is intentionally separate from `database_system_cli/`.
 
 ## Design Goals
 
 - Keep the app independent from the database ingestion system.
 - Use endpoint registry data rather than per-endpoint hardcoded pages.
 - Add a stock workflow that loads a universe, lets users select or paste-match symbols, and then maps the selection into endpoint params.
+- Add a standalone multi-asset Instrument Universe workflow without coupling catalog rows to price requests.
 - Generate copyable EODHD direct URLs, Python `requests`, curl, and JavaScript `fetch` snippets.
 - Execute whitelisted EODHD endpoints for interactive preview.
 - Read the real API token from the local app token store first; `EODHD_API_KEY` is only a fallback for scripted runs.
@@ -20,7 +21,7 @@ This document describes the implementation under `database_app/`. The app is a l
 - No database persistence.
 - No authentication layer.
 - No `.xlsx` export in the current implementation.
-- No complete multi-asset implementation beyond reserved UI buttons.
+- No complete multi-asset price/analytics implementation; multi-asset support is limited to the Instrument Universe catalog.
 - No import from `database_system_cli`; future sharing should be done through an explicit shared package.
 
 ## Runtime Architecture
@@ -30,8 +31,11 @@ Browser UI
   |
   | GET /, /static/*
   | GET /api/endpoints
+  | GET /api/instrument-catalog/menu
+  | POST /api/instrument-catalog/exchanges
   | POST /api/generate
   | POST /api/execute
+  | GET /api/exports/{execution_id}.csv
   v
 ThreadingHTTPServer
   |
@@ -40,10 +44,13 @@ ThreadingHTTPServer
   +-- cost.py           -> estimate API-call cost and require bulk confirmation
   +-- codegen.py        -> generate token-safe URLs and code snippets
   +-- client.py         -> execute real EODHD requests with server-resolved token
+  +-- execution_export.py -> retain one successful full result and serialize safe CSV
+  +-- instrument_catalog.py -> catalog mapping, DB facets, EODHD exchange cache
   +-- token_store.py    -> local app config/environment fallback token status/save/delete
   +-- universe.py       -> exchange and screener universe loading
   +-- server.py         -> route handling and loopback/JSON side-effect guards
-  +-- static/app.js     -> stock workflow, dynamic form renderer, copy button, preview, CSV export
+  +-- static/instrument_catalog.js -> pure catalog draft/menu/mapping logic
+  +-- static/app.js     -> workflows, dynamic form renderer, code tabs, preview, export trigger
 ```
 
 The frontend never receives the real API token. Generated snippets use placeholders:
@@ -83,6 +90,8 @@ database_app/
     codegen.py
     cost.py
     endpoints.py
+    execution_export.py
+    instrument_catalog.py
     request_model.py
     server.py
     token_store.py
@@ -90,6 +99,7 @@ database_app/
     static/
       index.html
       styles.css
+      instrument_catalog.js
       timezone.js
       app.js
   tests/
@@ -97,6 +107,9 @@ database_app/
     test_codegen.py
     test_cost.py
     test_endpoint_registry.py
+    test_execution_export.py
+    test_instrument_catalog.py
+    test_instrument_catalog_tools.js
     test_request_model.py
     test_server_security.py
     test_token_store.py
@@ -134,6 +147,16 @@ The browser calls `/api/endpoints`, builds the endpoint dropdown and parameter f
 
 This keeps the UI maintainable as endpoints are added.
 
+### Instrument Catalog Contract
+
+Opening Instrument Universe calls `GET /api/instrument-catalog/menu`. That route reads only local DB facets/counts and the current in-process exchange cache; it never calls EODHD. Fixed catalog categories remain available when the DB is unavailable, and the response carries the explicit DB status/reason.
+
+The browser has no free-text exchange input. Selectable stock/ETF/fund venues come from the local DB plus the process cache. Reserved virtual venues (`INDX`, `FOREX`, `CC`, `GBOND`, `MONEY`, `EUFUND`) are excluded from that ordinary exchange list and are applied only by their controlled asset mapping. Stocks default to `type=stock`; ETFs and exchange-listed funds require `type=etf` and `type=fund` respectively.
+
+`POST /api/instrument-catalog/exchanges` is the only route that loads `/exchanges-list/`. It requires the server-side token, uses a lock-protected single-flight cache, and reports whether the response used the cache and how many API calls were made. DB and EODHD rows are deduplicated by uppercase exchange code, with DB-backed venues shown first in the browser.
+
+`INDX` lists index instruments only. Index constituent membership stays disabled because it requires Fundamentals or another authorized constituents source.
+
 ### Intraday Time Input Contract
 
 The Intraday wizard accepts helper date/time values through seconds and always interprets them in the IANA `America/New_York` zone. Browser/computer local timezone is ignored. `Intl.DateTimeFormat` resolves EST or EDT for the selected date, and the frontend writes the resulting UTC-based UNIX timestamp seconds into the existing `from_timestamp` and `to_timestamp` fields.
@@ -162,11 +185,14 @@ POST /api/execute
   -> build real EODHD URL server-side
   -> urllib request
   -> parse JSON or CSV response
-  -> cap returned rows
-  -> return preview/export rows without token or real URL
+  -> reject responses above 64 MiB or 250,000 rows
+  -> retain all rows in the latest-success export store
+  -> return preview rows, full row count, and an opaque export id
 ```
 
 If both the local app token and `EODHD_API_KEY` fallback are missing, the server returns an explicit error. There is no silent fallback to a demo token.
+
+`GET /api/exports/{execution_id}.csv` serializes the retained rows from that exact successful execution. It does not call EODHD again. The process keeps only the latest successful snapshot; a failed execution does not replace it, and all ids expire on server restart.
 
 ### Token Config
 
@@ -281,6 +307,7 @@ The request validator rejects unsupported input before URL generation or executi
 - Search query longer than 80 characters.
 - Screener filters that are not a JSON array.
 - Preview limits outside 1 to 500.
+- Catalog asset/venue/type mismatches, reserved virtual venues in ordinary exchange selection, or exchanges absent from the merged menu.
 - Bulk/high-call execution without `confirm_cost=true`.
 - Local preview execution above 50 generated HTTP requests.
 
@@ -296,11 +323,11 @@ These rules are app-level guardrails for small manual research usage. They are n
 - JSON dicts with a `data` list into the `data` rows, which fits APIs such as ID mapping.
 - Nested dict/list cell values into JSON strings so the browser table and CSV export do not render `[object Object]`.
 
-The server caps returned rows at 5000 to keep the browser responsive and caps local preview execution at 50 generated HTTP requests. The preview table uses the user-selected preview row limit. When execution fails, the frontend clears the previous rows, resets preview metadata, and disables CSV export so users do not accidentally export stale data.
+The browser receives only the user-selected preview rows (default 50, maximum 500). The server retains the complete parsed response up to 250,000 rows or 64 MiB and caps local execution at 50 generated HTTP requests. When execution fails, the frontend clears the failed preview state and does not replace the latest successful export snapshot.
 
 ## CSV Export
 
-Browser export uses the last returned row set and writes a CSV file client-side. Export values are quoted, and values beginning with `=`, `+`, `-`, or `@` are prefixed to reduce spreadsheet formula injection risk when opened in Excel-like tools. Generated URL/Python/curl/JavaScript snippets can be copied from the active tab through the `Copy active` button.
+The browser downloads `GET /api/exports/{execution_id}.csv`; it does not construct a pseudo-full CSV from preview rows. The server writes UTF-8 BOM CSV, computes the field union over all retained rows, quotes values, and prefixes values beginning with `=`, `+`, `-`, or `@` to reduce spreadsheet formula injection risk. Generated URL/Python/curl/JavaScript snippets can be copied from the active tab through the `Copy active` button.
 
 Excel `.xlsx` export is P1. CSV covers the current research workflow without adding runtime dependencies.
 
@@ -330,6 +357,8 @@ Current test coverage includes:
 - Token store env/keychain behavior.
 - Local side-effect request guards.
 - Universe menu/load normalization.
+- Instrument catalog mappings, DB/EODHD exchange deduplication, explicit-load cache behavior, and unavailable DB/token paths.
+- Latest-success full export retention, opaque ids, full field union, response-size limits, and CSV formula-injection defense.
 - API cost estimation.
 - Request validation and endpoint boundary checks.
 - Required params not silently filled from UI defaults.

@@ -263,3 +263,80 @@ def test_live_ohlcv_urls_are_chunked_at_twenty_symbols() -> None:
     assert "s=S1.US" in urls[0]
     assert urls[1].startswith("https://eodhd.com/api/real-time/S20.US?")
     assert "chunk_size = 20" in snippets["python_symbol_loop"]
+
+
+def test_instrument_catalog_codegen_uses_selected_format_and_delisted_mode() -> None:
+    active_request = validate_payload(
+        {
+            "asset": "instrument",
+            "endpoint": "exchange_symbol_list",
+            "fmt": "csv",
+            "params": {
+                "catalog_asset": "stock",
+                "exchange": "NASDAQ",
+                "type_filter": "common_stock",
+                "delisted": False,
+            },
+        }
+    )
+    active_url = build_urls(active_request)[0]
+
+    assert active_url.startswith("https://eodhd.com/api/exchange-symbol-list/NASDAQ?")
+    assert "fmt=csv" in active_url
+    assert "type=common_stock" in active_url
+    assert "delisted=" not in active_url
+    assert "csv.DictReader" in generate_snippets(active_request)["python_requests"]
+
+    delisted_request = validate_payload(
+        {
+            "asset": "instrument",
+            "endpoint": "exchange_symbol_list",
+            "params": {
+                "catalog_asset": "index",
+                "exchange": "INDX",
+                "type_filter": "all",
+                "delisted": True,
+            },
+        }
+    )
+
+    assert "delisted=1" in build_urls(delisted_request)[0]
+
+    snippets = generate_snippets(delisted_request)
+    compile(snippets["local_proxy_python"], "<local_proxy_python>", "exec")
+    assert '"delisted": false' not in snippets["local_proxy_python"]
+    assert "'delisted': True" in snippets["local_proxy_python"]
+
+
+def test_all_instrument_catalog_categories_generate_code() -> None:
+    mappings = (
+        ("stock", "NASDAQ", "stock"),
+        ("etf", "NYSE", "etf"),
+        ("fund", "EUFUND", "all"),
+        ("index", "INDX", "all"),
+        ("forex", "FOREX", "all"),
+        ("crypto", "CC", "all"),
+        ("government_bond", "GBOND", "all"),
+        ("benchmark", "MONEY", "all"),
+    )
+
+    for catalog_asset, exchange, type_filter in mappings:
+        request = validate_payload(
+            {
+                "asset": "instrument",
+                "endpoint": "exchange_symbol_list",
+                "params": {
+                    "catalog_asset": catalog_asset,
+                    "exchange": exchange,
+                    "type_filter": type_filter,
+                    "delisted": False,
+                },
+            }
+        )
+        snippets = generate_snippets(request)
+
+        assert f"/exchange-symbol-list/{exchange}?" in snippets["direct_urls"][0]
+        assert "requests.get" in snippets["python_requests"]
+        assert "curl --fail" in snippets["curl"]
+        assert "await fetch" in snippets["javascript_fetch"]
+        compile(snippets["local_proxy_python"], "<local_proxy_python>", "exec")
