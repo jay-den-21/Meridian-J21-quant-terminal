@@ -83,6 +83,105 @@ def test_eodhd_client_fetches_user_api_usage_object() -> None:
     assert response.payload[0]["apiRequests"] == 123
 
 
+def test_eodhd_client_fetches_paginated_id_mappings() -> None:
+    requested_urls: list[str] = []
+    payload = {
+        "meta": {"total": 1, "limit": 1000, "offset": 0},
+        "data": [{"symbol": "AAPL.US", "isin": "US0378331005"}],
+        "links": {"next": None},
+    }
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        requested_urls.append(request.full_url)
+        return FakeResponse(payload)
+
+    client = EodhdClient(api_key="test-token", transport=fake_transport)
+    response = client.get_id_mappings(
+        filter_type="ex",
+        filter_value="us",
+        limit=1000,
+        offset=0,
+    )
+    parsed_url = urlparse(requested_urls[0])
+    query = parse_qs(parsed_url.query)
+
+    assert parsed_url.path == "/api/id-mapping"
+    assert query["filter[ex]"] == ["US"]
+    assert query["page[limit]"] == ["1000"]
+    assert query["page[offset]"] == ["0"]
+    assert query["api_token"] == ["test-token"]
+    assert response.success is True
+    assert response.rows_returned == 1
+    assert response.payload == payload
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"filter_type": "name", "filter_value": "Apple"}, "unsupported ID Mapping filter"),
+        ({"filter_type": "symbol", "filter_value": ""}, "filter value must not be empty"),
+        (
+            {"filter_type": "symbol", "filter_value": "AAPL.US", "limit": 1001},
+            "page limit must be between 1 and 1000",
+        ),
+        (
+            {"filter_type": "symbol", "filter_value": "AAPL.US", "offset": -1},
+            "page offset must be non-negative",
+        ),
+    ],
+)
+def test_eodhd_client_rejects_invalid_id_mapping_options(
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    client = EodhdClient(
+        api_key="test-token",
+        transport=lambda request, timeout: (_ for _ in ()).throw(
+            AssertionError("transport must not run")
+        ),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        client.get_id_mappings(**kwargs)
+
+
+def test_eodhd_client_id_mapping_retries_consume_hard_budget() -> None:
+    calls = 0
+    budget = WeightedApiBudget(2)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise URLError("temporary disconnect")
+        return FakeResponse(
+            {
+                "meta": {"total": 0, "limit": 1000, "offset": 0},
+                "data": [],
+                "links": {"next": None},
+            }
+        )
+
+    client = EodhdClient(
+        api_key="test-token",
+        max_retries=1,
+        retry_delay_seconds=0,
+        transport=fake_transport,
+        sleeper=lambda seconds: None,
+        api_budget=budget,
+    )
+
+    response = client.get_id_mappings(
+        filter_type="symbol",
+        filter_value="AAPL.US",
+    )
+
+    assert response.success is True
+    assert response.retry_count == 1
+    assert calls == 2
+    assert budget.snapshot().consumed == 2
+
+
 def test_eodhd_client_fetches_delisted_exchange_symbols() -> None:
     requested_urls: list[str] = []
 

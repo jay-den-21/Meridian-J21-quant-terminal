@@ -19,6 +19,7 @@ from fdp.get_data import (
     EtfDailyJob,
     FundDailyJob,
     HistoricalDailyJob,
+    IdentifierMappingJob,
     IndexDailyJob,
     JobPreflight,
     JobResult,
@@ -27,6 +28,10 @@ from fdp.get_data import (
     StockDailyJob,
 )
 from fdp.get_data.historical.get_index_daily import DEFAULT_PROVIDER_SYMBOLS
+from fdp.get_data.reference import (
+    DEFAULT_MAX_API_CALLS as ID_MAPPING_DEFAULT_MAX_API_CALLS,
+)
+from fdp.get_data.reference import DEFAULT_PAGE_LIMIT as ID_MAPPING_DEFAULT_PAGE_LIMIT
 from fdp.get_data.registry import INGEST_JOB_DEFINITIONS
 from fdp.menu.i18n import Language, tr
 from fdp.menu.progress import TqdmProgressReporter
@@ -317,6 +322,95 @@ def _run_calendar(session: PromptSession, language: Language) -> None:
             date_from=date_from,
             date_to=date_to,
             market=market,
+            runtime=runtime,
+            reporter=reporter,
+            override_source="menu",
+            preflight=preflight,
+        ),
+    )
+
+
+def _run_id_mappings(session: PromptSession, language: Language) -> None:
+    scope = session.select(
+        tr(language, "mapping_scope"),
+        [
+            (tr(language, "mapping_exchange"), "exchange"),
+            (tr(language, "mapping_symbols"), "symbols"),
+        ],
+        default="exchange",
+    )
+    if scope is None:
+        raise MenuCancelled
+    exchange = "US" if scope == "exchange" else None
+    symbols = None
+    if scope == "symbols":
+        symbols = _csv(_text(session, tr(language, "provider_symbols"), default="AAPL.US"))
+
+    page_limit = ID_MAPPING_DEFAULT_PAGE_LIMIT
+    start_offset = 0
+    max_api_calls = ID_MAPPING_DEFAULT_MAX_API_CALLS
+    max_requests_per_minute = None
+    if _advanced(session, language):
+        page_limit = _int_value(
+            session,
+            tr(language, "page_limit"),
+            default=ID_MAPPING_DEFAULT_PAGE_LIMIT,
+        )
+        if page_limit > 1000:
+            raise ValueError("page limit must be less than or equal to 1000")
+        if scope == "exchange":
+            start_offset = _nonnegative_int(
+                session,
+                tr(language, "start_offset"),
+                default=0,
+            )
+        max_api_calls = _int_value(
+            session,
+            tr(language, "max_calls"),
+            default=ID_MAPPING_DEFAULT_MAX_API_CALLS,
+        )
+        max_requests_per_minute = _int_value(
+            session,
+            tr(language, "max_rpm"),
+            default=1000,
+        )
+        if max_requests_per_minute > 1000:
+            raise ValueError("max requests per minute must be less than or equal to 1000")
+
+    runtime = JobRuntime.from_env()
+    job = IdentifierMappingJob()
+    preflight = job.preflight(
+        exchange=exchange,
+        symbols=symbols,
+        page_limit=page_limit,
+        start_offset=start_offset,
+        max_api_calls=max_api_calls,
+        max_requests_per_minute=max_requests_per_minute,
+        runtime=runtime,
+        override_source="menu",
+    )
+    args: list[Any] = ["ingest", "id-mappings"]
+    if exchange is not None:
+        args.extend(["--exchange", exchange, "--start-offset", start_offset])
+    else:
+        args.extend(["--symbols", ",".join(symbols or [])])
+    args.extend(["--page-limit", page_limit, "--max-api-calls", max_api_calls])
+    if max_requests_per_minute is not None:
+        args.extend(["--max-requests-per-minute", max_requests_per_minute])
+    command = _command(*args)
+    _confirm_and_run(
+        session,
+        language,
+        preflight,
+        command,
+        lambda reporter: job.run(
+            exchange=exchange,
+            symbols=symbols,
+            page_limit=page_limit,
+            start_offset=start_offset,
+            max_api_calls=max_api_calls,
+            max_requests_per_minute=max_requests_per_minute,
+            execute=True,
             runtime=runtime,
             reporter=reporter,
             override_source="menu",
@@ -721,6 +815,21 @@ def _int_value(session: PromptSession, message: str, *, default: int) -> int:
         typer.echo("value must be positive", err=True)
 
 
+def _nonnegative_int(session: PromptSession, message: str, *, default: int) -> int:
+    while True:
+        raw = session.text(message, default=str(default))
+        if raw is None:
+            raise MenuCancelled
+        try:
+            value = int(raw)
+        except ValueError:
+            typer.echo("value must be an integer", err=True)
+            continue
+        if value >= 0:
+            return value
+        typer.echo("value must be non-negative", err=True)
+
+
 def _optional_int(session: PromptSession, message: str) -> int | None:
     while True:
         raw = session.text(message, default="")
@@ -767,5 +876,6 @@ JOB_HANDLERS: dict[str, Callable[[PromptSession, Language], None]] = {
     "bulk_daily": _run_bulk_daily,
     "daily_range": _run_daily_range,
     "market_calendar": _run_calendar,
+    "id_mappings": _run_id_mappings,
     "bulk_unmatched": _run_bulk_unmatched,
 }

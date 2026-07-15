@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -360,6 +361,61 @@ def test_cli_registers_delisted_instruments_ingest_command() -> None:
     assert result.exit_code == 0
     assert "--market" in result.output
     assert "--source" in result.output
+
+
+def test_cli_registers_id_mapping_ingest_command() -> None:
+    result = CliRunner().invoke(app, ["ingest", "id-mappings", "--help"])
+
+    assert result.exit_code == 0
+    assert "--exchange" in result.output
+    assert "--symbols" in result.output
+    assert "--start-offset" in result.output
+    assert "--max-api-calls" in result.output
+
+
+def test_id_mapping_cli_passes_symbol_scope_to_shared_job_as_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, **kwargs):
+        captured.update(kwargs)
+        return cli_module.JobResult(
+            job="ingest.id_mappings",
+            status="success",
+            run_id=44,
+            parameters={"scope": "symbols", "symbols": ["AAPL.US", "MSFT.US"]},
+            parameter_sources={"scope": "cli", "symbols": "cli"},
+            rows_fetched=2,
+            rows_matched=2,
+            rows_inserted=10,
+            api_calls=3,
+            work_units_total=2,
+            work_units_completed=2,
+        )
+
+    monkeypatch.setattr(cli_module.IdentifierMappingJob, "run", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "ingest",
+            "id-mappings",
+            "--symbols",
+            "AAPL.US,MSFT.US",
+            "--max-api-calls",
+            "2",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["job"] == "ingest.id_mappings"
+    assert captured["exchange"] is None
+    assert captured["symbols"] == ["AAPL.US", "MSFT.US"]
+    assert captured["max_api_calls"] == 2
+    assert captured["execute"] is True
+    assert captured["override_source"] == "cli"
 
 
 def test_cli_history_supports_include_inactive_flag() -> None:

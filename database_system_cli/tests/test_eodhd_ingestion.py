@@ -318,15 +318,6 @@ def _identifier_history_statement(connection: FakeReconcileConnection):
     )
 
 
-def _identifier_history_delete_statement(connection: FakeReconcileConnection):
-    return next(
-        statement
-        for statement in connection.statements
-        if getattr(statement, "table", None) is instrument_identifier_history
-        and getattr(statement, "is_delete", False)
-    )
-
-
 def _identifier_history_instrument_ids(statement) -> set[int]:
     params = statement.compile(dialect=mysql.dialect()).params
     return {
@@ -342,15 +333,6 @@ def _identifier_history_id_values(statement) -> set[str]:
         value
         for key, value in params.items()
         if key.startswith("id_value")
-    }
-
-
-def _identifier_history_valid_to_values(statement) -> set[date]:
-    params = statement.compile(dialect=mysql.dialect()).params
-    return {
-        value
-        for key, value in params.items()
-        if key.startswith("valid_to")
     }
 
 
@@ -386,7 +368,6 @@ def test_reconcile_symbol_changes_updates_when_new_provider_is_same_instrument()
         None,
         instrument,
         instrument_identifier_history,
-        instrument_identifier_history,
     ]
 
 
@@ -406,11 +387,8 @@ def test_reconcile_symbol_changes_appends_history_when_old_ticker_is_reused() ->
         None,
         None,
         instrument_identifier_history,
-        instrument_identifier_history,
     ]
     assert instrument not in statement_tables
-    delete_statement = _identifier_history_delete_statement(connection)
-    assert _identifier_history_valid_to_values(delete_statement) == {date(2022, 6, 8)}
     history_statement = _identifier_history_statement(connection)
     assert _identifier_history_instrument_ids(history_statement) == {20}
     assert _identifier_history_id_values(history_statement) == {"FB", "FB.US", "META", "META.US"}
@@ -431,7 +409,6 @@ def test_reconcile_symbol_changes_appends_history_when_database_was_built_after_
     assert statement_tables == [
         None,
         None,
-        instrument_identifier_history,
         instrument_identifier_history,
     ]
     assert instrument not in statement_tables

@@ -11,6 +11,7 @@ from fdp.storage import (
     fund_daily_price,
     fund_daily_price_split_run,
     fund_instrument,
+    identifier_mapping_unmatched_observation,
     index_daily_price,
     index_instrument,
     instrument,
@@ -45,6 +46,7 @@ def test_initial_metadata_contains_project_tables() -> None:
     assert f"{SYSTEM_SCHEMA}.quarantine_plan" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.quarantined_daily_price_row" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.bulk_unmatched_daily_price_observation" in metadata.tables
+    assert f"{SYSTEM_SCHEMA}.identifier_mapping_unmatched_observation" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.fund_daily_price_split_run" in metadata.tables
     assert fund_daily_price_split_run.schema == SYSTEM_SCHEMA
 
@@ -102,14 +104,50 @@ def test_identifier_history_supports_symbol_and_provider_symbol_history() -> Non
         "id_type",
         "id_value",
         "valid_from",
+        "valid_from_key",
         "valid_to",
         "source",
         "created_at",
         "updated_at",
     }
     assert expected_columns.issubset(instrument_identifier_history.c.keys())
-    assert {"instrument_id", "id_type", "id_value", "valid_from", "source"} in [
+    assert {"instrument_id", "id_type", "id_value", "valid_from_key", "source"} in [
         set(constraint.columns.keys()) for constraint in instrument_identifier_history.constraints
+    ]
+    assert "ix_identifier_history_instrument" in {
+        index.name for index in instrument_identifier_history.indexes
+    }
+
+
+def test_identifier_mapping_unmatched_observation_preserves_reconciliation_evidence() -> None:
+    expected_columns = {
+        "observation_id",
+        "last_run_id",
+        "market",
+        "provider_symbol",
+        "isin",
+        "figi",
+        "lei",
+        "cusip",
+        "cik",
+        "raw_payload",
+        "mapping_fingerprint",
+        "reason",
+        "candidate_instrument_ids",
+        "resolution_status",
+        "resolved_instrument_id",
+        "source",
+        "first_seen_at",
+        "last_seen_at",
+        "resolved_at",
+        "created_at",
+        "updated_at",
+    }
+
+    assert expected_columns == set(identifier_mapping_unmatched_observation.c.keys())
+    assert {"source", "mapping_fingerprint"} in [
+        set(constraint.columns.keys())
+        for constraint in identifier_mapping_unmatched_observation.constraints
     ]
 
 

@@ -12,6 +12,11 @@ from fdp.sources.eodhd.ingest.daily import (
     load_stock_daily_prices,
 )
 from fdp.sources.eodhd.ingest.delisted import load_delisted_instruments
+from fdp.sources.eodhd.ingest.id_mapping import (
+    IdentifierMappingPageResult,
+    IdentifierMappingResolver,
+    process_identifier_mapping_page,
+)
 from fdp.sources.eodhd.ingest.instruments import load_exchange_symbols, reconcile_symbol_changes
 from fdp.sources.eodhd.ingest.models import (
     DEFAULT_INDEX_PROVIDER_SYMBOLS,
@@ -35,6 +40,8 @@ __all__ = [
     "DelistedInstrumentLoadResult",
     "HistoricalDailyPriceLoadResult",
     "HistoricalDailyPriceUnitResult",
+    "IdentifierMappingPageResult",
+    "IdentifierMappingResolver",
     "InstrumentLoadResult",
     "MarketCalendarLoadResult",
     "load_exchange_symbols",
@@ -48,5 +55,6 @@ __all__ = [
     "load_index_daily_prices",
     "load_market_calendar",
     "load_stock_daily_prices",
+    "process_identifier_mapping_page",
     "reconcile_symbol_changes",
 ]

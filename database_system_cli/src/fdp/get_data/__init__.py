@@ -12,6 +12,7 @@ from fdp.get_data.historical import (
 )
 from fdp.get_data.instruments import ActiveInstrumentsJob, DelistedInstrumentsJob
 from fdp.get_data.reconcile import BulkUnmatchedReconcileJob
+from fdp.get_data.reference import IdentifierMappingJob
 from fdp.get_data.runtime import JobRuntime
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "FundDailyJob",
     "HistoricalDailyJob",
     "IndexDailyJob",
+    "IdentifierMappingJob",
     "JobPreflight",
     "JobResult",
     "JobRuntime",

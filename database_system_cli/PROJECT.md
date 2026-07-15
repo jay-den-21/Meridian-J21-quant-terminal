@@ -28,6 +28,7 @@
 - 按 provider symbol 拉取常用市场指数的历史日频 OHLCV，用于 benchmark/market regime 研究。
 - 使用 EODHD Bulk EOD 做每日盘后增量更新。
 - 拉取 EODHD delisted/inactive stock+ETF+Fund universe，并把生命周期状态写入 `instrument` 和 `instrument_lifecycle_event`。
+- 通过 EODHD ID Mapping 获取无有效期的 CUSIP/ISIN/FIGI/LEI/CIK crosswalk，严格匹配后写入 identifier history。
 - 将结构化数据写入 MySQL。
 - 使用唯一键 upsert 防止重复写入。
 - 将任务运行状态、API 调用摘要、质量检查结果写入 `system` schema。
@@ -212,6 +213,7 @@ instrument_id
 id_type
 id_value
 valid_from
+valid_from_key
 valid_to
 source
 created_at
@@ -231,7 +233,11 @@ instrument_id | id_type         | id_value | valid_from | valid_to   | source
 规则：
 
 - `ticker` 和 `provider_symbol` 变化必须写入本表。
-- 后续可扩展保存 `cusip`、`isin`、`figi`、`lei`、`cik` 等 ID mapping 校验结果。
+- `cusip`、`isin`、`figi`、`lei`、`cik` 通过 EODHD ID Mapping 校验后按独立 row 保存。
+- ID Mapping 不提供有效日期，因此 crosswalk observation 的 `valid_from/valid_to` 保持 `NULL`，不能当成 current-only 或 PIT history。
+- 同一 instrument/id_type 可以保留多个 validated undated alias；CUSIP/ISIN/FIGI 可能随历史事件变化，CIK/LEI 还可能是 issuer-level 标识，不能无依据只保留第一值。
+- `valid_from_key` 是 MySQL generated column，只用于让 `valid_from=NULL` 的唯一键真正幂等；业务查询继续使用 `valid_from`。
+- ID Mapping 只能通过 exact current provider symbol 或唯一 historical provider-symbol owner 定位已有 `instrument_id`；禁止按 name 或外部 ID 猜 merge。
 - `instrument` ingestion 必须优先使用 EODHD `symbol-change-history` 做显式 rename reconcile，不能主要靠猜 candidate。
 - 如果 rename 后的新 `provider_symbol` 已经对应另一个 `instrument_id`，不得 silent merge；后续应作为质量问题处理。
 
@@ -390,7 +396,36 @@ updated_at
 - `classification_status = route_failed` 表示转写时 OHLCV 校验失败或字段不足。
 - `COUNT(*)` 统计的是全部历史 observations，可能包含大量 `resolved` rows；统计当前 backlog 必须显式过滤 `classification_status`。
 
-### 5.5c `app_log` snapshot tables
+### 5.5c `system.identifier_mapping_unmatched_observation`
+
+该表保留不能安全 enrich canonical identifier history 的 EODHD ID Mapping 行，包括
+missing instrument、historical symbol ambiguity 和字段校验失败。严格匹配到同一 instrument
+的多个 validated undated alias 不是冲突，全部保留在 identifier history。
+
+```text
+observation_id
+last_run_id
+market
+provider_symbol
+isin/figi/lei/cusip/cik
+raw_payload
+mapping_fingerprint
+reason
+candidate_instrument_ids
+resolution_status
+resolved_instrument_id
+source
+first_seen_at/last_seen_at/resolved_at
+created_at/updated_at
+```
+
+规则：
+
+- `source + mapping_fingerprint` 唯一，重复同步只刷新最近观察和 resolution evidence。
+- pending row 不得自动创建 instrument，也不得仅凭 CIK/LEI/ISIN/CUSIP/FIGI 合并 instrument。
+- 后续 instrument master 补全并可严格匹配时，可标为 `resolved`，但 raw evidence 保留。
+
+### 5.5d `app_log` snapshot tables
 
 `app_log` 是 app/API 查询响应日志层，不是 canonical market data schema。`us_share` 只保留 `instrument`、identifier history、market calendar、lifecycle event 和正式价格表；API playground、instrument search、screener、quote、live OHLCV、websocket event 这类临时查询产物不继续放在 `us_share`。
 
@@ -627,6 +662,26 @@ CLI/menu explicit value > Python Job module default > ValueError
 - 写入 `us_share.instrument`。
 - 使用 upsert，重复执行不得产生重复标的。
 
+### 6.1b Load security ID mappings
+
+```text
+CLI/menu/Python -> IdentifierMappingJob preflight
+User API allowance check
+GET /api/id-mapping by US exchange or explicit provider symbols
+validate mapping envelope and identifier checksums
+resolve exact current provider_symbol, then unique historical owner
+matched identifiers -> instrument_identifier_history
+unresolved/ambiguous/invalid rows -> system staging
+finish task/API audit and return next_offset when budget-stopped
+```
+
+exchange full sync 使用 offset pagination；small smoke/repair 使用 explicit symbols。每个 mapping
+request 和 retry 都在发送前扣 1 个 hard-budget unit；另有一次 audited User API allowance
+preflight。该 endpoint 没有有效期，所以只提供 undated crosswalk aliases，不会补写虚构的
+current flag 或 historical interval。
+完成全部远端分页但仍有待 reconcile 行时，状态为 `partial_failed` 且 `next_offset=NULL`；
+这代表 reconciliation backlog，不代表 pagination 未完成。只有非空 `next_offset` 才需要续跑。
+
 ### 6.2 Delisted instrument lifecycle
 
 退市标的不是通过 ticker 猜测合并，而是从 EODHD delisted symbol list 拉取。
@@ -825,6 +880,9 @@ route；`current_active` 是当前状态，`price_observed` 不是 PIT universe�
 ```bash
 poetry run j21 menu
 poetry run j21 ingest instruments --market US --source eodhd
+poetry run j21 ingest id-mappings --exchange US --dry-run
+poetry run j21 ingest id-mappings --symbols AAPL.US,MSFT.US --max-api-calls 2
+poetry run j21 ingest id-mappings --exchange US --page-limit 1000 --start-offset 0 --max-api-calls 200
 poetry run j21 ingest history --market US --symbols AAPL,MSFT,SPY --asset-types stock,etf --from 2006-01-01 --to 2026-01-01
 poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --include-inactive
 poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --instrument-status inactive
@@ -899,6 +957,8 @@ if still invalid:
 - repair CLI 列出 plan 后要求人工确认。
 - `get_daily_prices(..., adjusted=True/False)` 返回不同价格口径。
 - `j21 ingest delisted-instruments` 幂等写入 inactive instruments 和 lifecycle events。
+- ID Mapping parser 覆盖 ISIN/FIGI/LEI/CUSIP checksum、CIK leading zero、malformed row 和 pagination envelope。
+- `j21 ingest id-mappings` 覆盖 scope 互斥、no-call dry-run、hard retry budget、resume offset、operator cancellation、重复写幂等和 unmatched/invalid staging。
 - `j21 ingest history --instrument-status inactive` 能只按 inactive symbol 写入对应 split daily table，避免重复请求 active instrument。
 - Bulk EOD unmatched rows 能写入 staging 表，重跑不覆盖已分类状态。
 - Bulk historical tests 覆盖 source-date identifier、FB/META reused ticker、missing Type、alias shadowing、inactive/all 和 ambiguity。
@@ -931,6 +991,10 @@ point-in-time universe membership。
 ## 11. 官方参考资料
 
 - EODHD Historical / Market Data: https://eodhd.com/
+- EODHD ID Mapping API: https://eodhd.com/financial-apis/id-mapping-api-cusip-isin-figi-lei-cik-%E2%86%94-symbol
+- EODHD API Limits: https://eodhd.com/financial-apis/api-limits
+- EODHD User API: https://eodhd.com/financial-apis/user-api
+- OpenFIGI Check-Digit Calculation: https://www.openfigi.com/docs/figi-check-digit.pdf
 - EODHD Trading Hours and Holidays: https://eodhd.com/financial-apis/exchanges-api-trading-hours-and-stock-market-holidays
 - EODHD OpenAPI: https://github.com/EodHistoricalData/eodhd-openapi
 - Nasdaq 2012 Market Holiday Schedule: https://www.nasdaqtrader.com/TraderNews.aspx?id=dn2011-011

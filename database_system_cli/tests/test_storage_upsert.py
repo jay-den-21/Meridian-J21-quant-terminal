@@ -10,6 +10,7 @@ from fdp.storage.upsert import (
     build_forex_daily_price_upsert,
     build_fund_daily_price_upsert,
     build_identifier_history_upsert,
+    build_identifier_mapping_unmatched_upsert,
     build_index_daily_price_upsert,
     build_instrument_upsert,
     build_instrument_lifecycle_event_upsert,
@@ -93,6 +94,33 @@ def test_identifier_history_upsert_updates_valid_to() -> None:
     assert "ON DUPLICATE KEY UPDATE" in sql
     assert "valid_to = VALUES(valid_to)" in sql
     assert "updated_at = CURRENT_TIMESTAMP" in sql
+
+
+def test_identifier_mapping_unmatched_upsert_keeps_first_seen_identity() -> None:
+    statement = build_identifier_mapping_unmatched_upsert(
+        {
+            "last_run_id": 1,
+            "market": "US",
+            "provider_symbol": "UNKNOWN.US",
+            "isin": "US0378331005",
+            "raw_payload": "{}",
+            "mapping_fingerprint": "f" * 64,
+            "reason": "missing_instrument",
+            "resolution_status": "pending",
+            "source": "EODHD_ID_MAPPING",
+        }
+    )
+
+    sql = str(statement.compile(dialect=mysql.dialect()))
+    update_clause = sql.split("ON DUPLICATE KEY UPDATE", maxsplit=1)[1]
+
+    assert "INSERT INTO `system`.identifier_mapping_unmatched_observation" in sql
+    assert "last_run_id = VALUES(last_run_id)" in update_clause
+    assert "reason = VALUES(reason)" in update_clause
+    assert "last_seen_at = CURRENT_TIMESTAMP" in update_clause
+    assert "last_seen_at = VALUES(last_seen_at)" not in update_clause
+    assert "first_seen_at" not in update_clause
+    assert "mapping_fingerprint" not in update_clause
 
 
 def test_lifecycle_event_upsert_targets_source_event_key() -> None:

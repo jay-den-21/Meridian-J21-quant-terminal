@@ -40,6 +40,59 @@ The command uses EODHD symbol-change history before the current exchange list.
 It writes canonical instruments and identifier history; it does not guess rename
 relationships.
 
+## Security ID Mapping
+
+Plan a full US crosswalk sync without calling EODHD or writing the database:
+
+```bash
+poetry run j21 ingest id-mappings --exchange US --dry-run
+```
+
+Run a small targeted smoke or repair request:
+
+```bash
+poetry run j21 ingest id-mappings \
+  --symbols AAPL.US,MSFT.US \
+  --max-api-calls 2
+```
+
+Run or resume the paginated US exchange feed:
+
+```bash
+poetry run j21 ingest id-mappings \
+  --exchange US \
+  --page-limit 1000 \
+  --start-offset 0 \
+  --max-api-calls 200
+```
+
+Exactly one of `--exchange` and `--symbols` is required. Exchange mode is the
+normal full-sync path; symbol mode is for small smoke tests and repairs.
+`--start-offset` is exchange-only. Every mapping request and retry consumes one
+unit from `--max-api-calls`; a separate audited User API preflight verifies the
+real account allowance. If the hard budget stops pagination, the result reports
+`metrics.next_offset` for the next command.
+
+Status and pagination are separate signals. A completed exchange feed may
+return `partial_failed` when some rows require reconciliation; in that case
+`metrics.next_offset` is null. A non-null `next_offset` means the remote pages
+are incomplete and gives the exact resume position.
+
+Validated CUSIP, ISIN, FIGI, LEI, and CIK values enrich the already resolved
+`instrument_id` in `us_share.instrument_identifier_history`. Resolution uses an
+exact current provider symbol, then one unique historical provider-symbol owner;
+it never guesses by company name or merges instruments from an external ID.
+Unresolved, ambiguous, or malformed rows remain in
+`system.identifier_mapping_unmatched_observation`.
+
+The provider response has no effective-date fields. These mappings therefore
+keep `valid_from` and `valid_to` null and are undated aliases, not current-only
+or PIT identifier history. Multiple validated values for one instrument/type
+are preserved because the provider does not identify which value is current.
+The official endpoint, fields, filters, 1000-row maximum, pagination shape, and
+one-call request cost are documented by
+[EODHD ID Mapping API](https://eodhd.com/financial-apis/id-mapping-api-cusip-isin-figi-lei-cik-%E2%86%94-symbol).
+
 ## Historical Stock, ETF, And Fund EOD
 
 Load a small explicit symbol set:

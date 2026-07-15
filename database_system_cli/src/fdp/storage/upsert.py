@@ -14,6 +14,7 @@ from fdp.storage.tables import (
     etf_daily_price,
     forex_daily_price,
     fund_daily_price,
+    identifier_mapping_unmatched_observation,
     index_daily_price,
     instrument,
     instrument_identifier_history,
@@ -66,7 +67,7 @@ def build_mysql_upsert(
     statement = insert(table).values(rows)
     update_values = {}
     for column_name in update_columns:
-        if column_name == "updated_at" and column_name not in row_keys:
+        if column_name in {"last_seen_at", "updated_at"} and column_name not in row_keys:
             update_values[column_name] = func.current_timestamp()
             continue
         update_values[column_name] = getattr(statement.inserted, column_name)
@@ -110,6 +111,37 @@ def build_identifier_history_upsert(rows: Row | Sequence[Row]) -> Insert:
         rows,
         update_columns=[
             "valid_to",
+            "updated_at",
+        ],
+    )
+
+
+def build_identifier_mapping_unmatched_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for unresolved EODHD ID Mapping observations.
+
+    Input: normalized source rows keyed by source and mapping fingerprint.
+    Output: MySQL upsert that refreshes current resolution evidence.
+    Flow: unresolved mapping -> stable fingerprint -> pending/resolved observation.
+    """
+    return build_mysql_upsert(
+        identifier_mapping_unmatched_observation,
+        rows,
+        update_columns=[
+            "last_run_id",
+            "market",
+            "provider_symbol",
+            "isin",
+            "figi",
+            "lei",
+            "cusip",
+            "cik",
+            "raw_payload",
+            "reason",
+            "candidate_instrument_ids",
+            "resolution_status",
+            "resolved_instrument_id",
+            "last_seen_at",
+            "resolved_at",
             "updated_at",
         ],
     )
