@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
+from fdp.assets import CANONICAL_ASSET_TYPES
 from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.identity import (
     DatedInstrumentIdentityResolver,
@@ -43,6 +44,10 @@ from fdp.storage.upsert import (
 
 BULK_DAILY_UPSERT_CHUNK_SIZE = 1000
 BULK_OBSERVATION_UPSERT_CHUNK_SIZE = 1000
+_BULK_DAILY_ASSET_WRITE_RANK = {
+    asset_type: rank
+    for rank, asset_type in enumerate(CANONICAL_ASSET_TYPES)
+}
 
 
 @dataclass(frozen=True)
@@ -974,8 +979,22 @@ def _upsert_bulk_observations(
         if classified
         else build_bulk_unmatched_daily_price_observation_upsert
     )
-    for start in range(0, len(observations), BULK_OBSERVATION_UPSERT_CHUNK_SIZE):
-        connection.execute(builder(observations[start:start + BULK_OBSERVATION_UPSERT_CHUNK_SIZE]))
+    ordered_observations = sorted(
+        observations,
+        key=lambda row: (
+            str(row.get("source") or ""),
+            str(row.get("provider_symbol") or ""),
+            str(row.get("trade_date") or ""),
+        ),
+    )
+    for start in range(0, len(ordered_observations), BULK_OBSERVATION_UPSERT_CHUNK_SIZE):
+        connection.execute(
+            builder(
+                ordered_observations[
+                    start:start + BULK_OBSERVATION_UPSERT_CHUNK_SIZE
+                ]
+            )
+        )
 
 
 def _bulk_row_trade_date(
@@ -1038,7 +1057,26 @@ def _upsert_daily_price_chunks(
 ) -> int:
     """Write accepted rows to split daily price tables in bounded chunks."""
     rows_inserted = 0
-    for asset_type, rows in accepted_by_asset_type.items():
+    ordered_asset_types = sorted(
+        accepted_by_asset_type,
+        key=lambda asset_type: (
+            _BULK_DAILY_ASSET_WRITE_RANK.get(
+                asset_type,
+                len(CANONICAL_ASSET_TYPES),
+            ),
+            asset_type,
+        ),
+    )
+    for asset_type in ordered_asset_types:
+        # Concurrent date jobs must acquire natural-key locks in the same order.
+        rows = sorted(
+            accepted_by_asset_type[asset_type],
+            key=lambda row: (
+                int(row["instrument_id"]),
+                str(row.get("trade_date") or ""),
+                str(row.get("provider_symbol") or ""),
+            ),
+        )
         for start in range(0, len(rows), BULK_DAILY_UPSERT_CHUNK_SIZE):
             chunk = rows[start:start + BULK_DAILY_UPSERT_CHUNK_SIZE]
             connection.execute(build_daily_price_upsert(asset_type, chunk))

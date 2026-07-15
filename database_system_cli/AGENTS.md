@@ -62,6 +62,8 @@ EODHD `provider_symbol` 必须保留，例如 `AAPL.US`。标准 `symbol` 也必
 - AI agent 负责在用户执行前给出精确 CLI 命令、日期范围、API-call 预算、预期写入表和失败处理方式。
 - 用户执行后，AI agent 负责读取 CLI 输出、任务日志或数据库，说明具体验证了哪些表、哪些行数、哪些缺失/重复/异常。
 - 只有当用户明确说“你帮我跑”或同等授权时，AI agent 才能代跑大规模真实 ingest。
+- EODHD 的 `/user` 配额读数可能在额度重置后短暂显示旧值，并在下一次低成本认证请求后恢复正常；这是已观察到的供应商计量异常，不应当作保证行为。
+- 当配额读数与重置时间或用户后台明显矛盾时，只允许做一次低成本探针并重新查询 `/user`，记录前后 `apiRequests`、`dailyRateLimit`、`extraLimit` 和 `apiRequestsDate`。禁止循环触发，也禁止在刷新后的可用额度确认前启动高成本 ingest。
 
 ## 数据拉取双入口
 

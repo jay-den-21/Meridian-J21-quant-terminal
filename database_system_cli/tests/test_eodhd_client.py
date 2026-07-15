@@ -1,6 +1,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from http.client import IncompleteRead, RemoteDisconnected
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
 
@@ -319,6 +320,72 @@ def test_eodhd_client_retries_transient_failures_with_progress() -> None:
     assert [event.kind for event in events] == ["request", "retry", "request", "success"]
     assert events[1].endpoint == "/exchange-symbol-list/US"
     assert "temporary disconnect" in events[1].error_message
+
+
+def test_eodhd_client_retries_truncated_response_body() -> None:
+    events = []
+    calls = 0
+    budget = WeightedApiBudget(200)
+
+    class TruncatedResponse(FakeResponse):
+        def read(self) -> bytes:
+            raise IncompleteRead(b"partial", 10)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return TruncatedResponse([])
+        return FakeResponse([])
+
+    client = EodhdClient(
+        api_key="test-token",
+        max_retries=1,
+        retry_delay_seconds=0,
+        transport=fake_transport,
+        sleeper=lambda seconds: None,
+        api_budget=budget,
+        progress_callback=events.append,
+    )
+
+    response = client.get_bulk_eod("US", trade_date=date(2014, 10, 23))
+
+    assert response.success is True
+    assert response.retry_count == 1
+    assert calls == 2
+    assert budget.snapshot().consumed == 200
+    assert [event.kind for event in events] == ["request", "retry", "request", "success"]
+
+
+def test_eodhd_client_retries_remote_disconnect() -> None:
+    events = []
+    calls = 0
+    budget = WeightedApiBudget(200)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RemoteDisconnected("Remote end closed connection without response")
+        return FakeResponse([])
+
+    client = EodhdClient(
+        api_key="test-token",
+        max_retries=1,
+        retry_delay_seconds=0,
+        transport=fake_transport,
+        sleeper=lambda seconds: None,
+        api_budget=budget,
+        progress_callback=events.append,
+    )
+
+    response = client.get_bulk_eod("US", trade_date=date(2016, 9, 16))
+
+    assert response.success is True
+    assert response.retry_count == 1
+    assert calls == 2
+    assert budget.snapshot().consumed == 200
+    assert [event.kind for event in events] == ["request", "retry", "request", "success"]
 
 
 def test_eodhd_client_default_retry_policy_matches_runtime_default() -> None:

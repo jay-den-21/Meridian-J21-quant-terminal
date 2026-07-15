@@ -384,9 +384,11 @@ updated_at
 - `classification_status = shadowed` 表示同一 instrument/date 的低优先级 old/current alias，原始行保留但不覆盖 dated winner。
 - `classification_status = ambiguous` 表示多个 identity owner 或无法唯一选出 dated winner。
 - `classification_status = invalid_price` 表示 identity 可判定但 OHLCV 不合法，不能写 canonical 表。
+- `classification_status = resolved` 表示该 observation 后续已严格匹配并写入 canonical 表；作为审计历史继续保留，不代表仍待处理。
 - `classification_status = non_price_asset` 表示 preferred、notes、bond、warrant 等当前没有 canonical price table 的资产；Fund 已有正式表，不属于此类。
 - `classification_status = routed` 表示已转入对应 split daily price table。
 - `classification_status = route_failed` 表示转写时 OHLCV 校验失败或字段不足。
+- `COUNT(*)` 统计的是全部历史 observations，可能包含大量 `resolved` rows；统计当前 backlog 必须显式过滤 `classification_status`。
 
 ### 5.5c `app_log` snapshot tables
 
@@ -688,6 +690,35 @@ EODHD 限额规则：
 - Bulk EOD 全 exchange 一次请求按 100 API calls 估算。
 - User API preflight 核对 remote allowance；thread-safe ledger 在每次 attempt 前扣 weighted units，retry 也计费。
 - 超过 `--max-api-calls` 或 `--max-estimated-gb` 时，命令必须在调用 EODHD 之前拒绝执行。
+
+截至 `2026-07-12`，近期因子研究优先窗口 `2022-08-08..2026-07-06` 已完成
+`instrument-status=all` Bulk recovery：980/980 个交易日、48,191,634 条 source rows、
+46,958,823 条 matched rows、98,000 weighted API units、0 failed days、0 retries。
+数据库逐日验收确认 Stock/ETF/Fund canonical 与 unmatched staging 在 980 天均有数据，
+三个价格表的 table/master mismatch 为 0，并保留唯一
+`(instrument_id, trade_date)` 索引。当前物理行数为 Stock `17,063,497`、ETF
+`4,127,506`、Fund `25,587,451`、staging `1,550,792`；尚待后续额度日恢复的
+pre-staging 缺口此前是 `2014-09-18..2022-08-05` 共 1,985 个交易日。
+
+截至 `2026-07-14`，该旧窗口又完成连续前缀 `2014-09-18..2018-08-08`：
+980/980 个交易日、44,389,798 条 source rows、43,220,825 次 canonical upsert
+effects、99,800 weighted API units。数据库物理验收为 Stock `14,226,096`、ETF
+`1,767,338`、Fund `27,260,645`、staging `1,168,973`；三类表均覆盖全部
+980 天，table/master mismatch 为 0，联合唯一索引仍有效。完成该批后，2,986 个
+受影响交易日已恢复 1,981 个，剩余窗口为 `2018-08-09..2022-08-05` 共 1,005 天。
+
+截至 `2026-07-15`，剩余窗口已分两批闭合。`2018-08-09..2022-03-30`
+完成 917/917 天，run IDs `6009..6925`，取得 45,485,986 条 source rows、
+44,146,515 次 canonical upsert effects；917 次成功请求加 7 次 retry 共消耗
+92,400 weighted API units。`2022-03-31..2022-08-05` 完成 88/88 天，
+run IDs `6927..7014`，取得 4,506,354 条 source rows、4,329,704 次 canonical
+upsert effects 和 176,650 条 staging observations；88 次请求消耗 8,800 units，
+0 retry、0 failed day。
+
+最终审计确认：原先缺失 post-staging evidence 的 2,986/2,986 个交易日已全部重跑，
+`system.bulk_unmatched_daily_price_observation` 也覆盖全部 2,986 天。每个批次均有
+Stock、ETF、Fund 和 staging 数据；三张 canonical 表的 table/master mismatch 为 0，
+并由 `(instrument_id, trade_date)` 联合唯一索引阻止重复自然键。
 
 Bulk unmatched 后处理流程：
 

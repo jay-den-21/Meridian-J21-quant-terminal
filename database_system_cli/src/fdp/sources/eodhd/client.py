@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from http.client import IncompleteRead, RemoteDisconnected
 from time import perf_counter, sleep
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -487,7 +488,13 @@ class EodhdClient:
                     body=_read_http_error_body(exc),
                 )
                 retry_status_code = last_status_code
-            except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+            except (
+                URLError,
+                TimeoutError,
+                IncompleteRead,
+                RemoteDisconnected,
+                json.JSONDecodeError,
+            ) as exc:
                 last_error = str(exc)
                 retry_status_code = None
             except ValueError as exc:

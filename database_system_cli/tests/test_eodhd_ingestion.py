@@ -6,6 +6,10 @@ from sqlalchemy.dialects import mysql
 
 from fdp.sources.eodhd.client import EodhdApiResponse
 from fdp.sources.eodhd.identity import InstrumentIdentityResolution
+from fdp.sources.eodhd.ingest.daily import (
+    _upsert_bulk_observations,
+    _upsert_daily_price_chunks,
+)
 from fdp.sources.eodhd.ingestion import (
     SYMBOL_CHANGE_HISTORY_START,
     load_bulk_daily_prices,
@@ -22,6 +26,7 @@ from fdp.storage.tables import (
     api_call_log,
     bulk_unmatched_daily_price_observation,
     etf_daily_price,
+    fund_daily_price,
     index_daily_price,
     ingestion_task_run,
     instrument,
@@ -773,6 +778,75 @@ def test_load_bulk_daily_prices_uses_one_api_call_and_split_table_upserts() -> N
         etf_daily_price,
         bulk_unmatched_daily_price_observation,
         ingestion_task_run,
+    ]
+
+
+def test_bulk_upserts_use_deterministic_table_and_natural_key_order() -> None:
+    connection = FakeConnection()
+    base_row = {
+        "symbol": "TEST",
+        "provider_symbol": "TEST.US",
+        "trade_date": date(2023, 1, 3),
+        "open": 1,
+        "high": 1,
+        "low": 1,
+        "close": 1,
+        "adjusted_close": 1,
+        "volume": 1,
+        "currency": "USD",
+        "source": "EODHD",
+        "source_updated_at": None,
+    }
+
+    rows_inserted = _upsert_daily_price_chunks(
+        connection,
+        {
+            "fund": [{**base_row, "instrument_id": 30}],
+            "stock": [
+                {**base_row, "instrument_id": 20},
+                {**base_row, "instrument_id": 10},
+            ],
+            "etf": [{**base_row, "instrument_id": 25}],
+        },
+    )
+
+    assert rows_inserted == 4
+    assert [statement.table for statement in connection.statements] == [
+        stock_daily_price,
+        etf_daily_price,
+        fund_daily_price,
+    ]
+    stock_params = connection.statements[0].compile(dialect=mysql.dialect()).params
+    assert [stock_params["instrument_id_m0"], stock_params["instrument_id_m1"]] == [
+        10,
+        20,
+    ]
+
+
+def test_bulk_observation_upserts_use_deterministic_unique_key_order() -> None:
+    connection = FakeConnection()
+
+    _upsert_bulk_observations(
+        connection,
+        [
+            {
+                "source": "EODHD",
+                "provider_symbol": "Z.US",
+                "trade_date": date(2023, 1, 4),
+            },
+            {
+                "source": "EODHD",
+                "provider_symbol": "A.US",
+                "trade_date": date(2023, 1, 3),
+            },
+        ],
+        classified=False,
+    )
+
+    params = connection.statements[0].compile(dialect=mysql.dialect()).params
+    assert [params["provider_symbol_m0"], params["provider_symbol_m1"]] == [
+        "A.US",
+        "Z.US",
     ]
 
 
