@@ -117,6 +117,11 @@ def test_every_registered_ingest_job_has_a_menu_handler() -> None:
     assert set(menu_module.JOB_HANDLERS) == registered
 
 
+def test_every_menu_registered_ingest_job_factory_constructs() -> None:
+    for definition in menu_module.INGEST_JOB_DEFINITIONS:
+        assert definition.factory() is not None
+
+
 def test_menu_closes_progress_reporter_when_job_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

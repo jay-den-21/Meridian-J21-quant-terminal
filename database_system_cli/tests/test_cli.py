@@ -94,6 +94,31 @@ def test_cli_registers_indices_ingest_command() -> None:
     assert "--to" in result.output
 
 
+def test_cli_indices_executes_the_index_daily_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run(self, **kwargs):
+        calls.append(kwargs)
+        return JobResult(
+            job="ingest.indices",
+            status="success",
+            run_id=2,
+            parameters={"asset_types": ["index"]},
+            parameter_sources={},
+            work_units_total=4,
+            work_units_completed=4,
+        )
+
+    monkeypatch.setattr(cli_module.IndexDailyJob, "run", fake_run)
+    result = CliRunner().invoke(
+        app,
+        ["ingest", "indices", "--from", "2024-01-01", "--to", "2024-01-05"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["override_source"] == "cli"
+
+
 def test_cli_registers_calendar_ingest_command() -> None:
     result = CliRunner().invoke(app, ["ingest", "calendar", "--help"])
 

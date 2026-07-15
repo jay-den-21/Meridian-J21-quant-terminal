@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from fdp.assets import US_BULK_EOD_ASSET_TYPES
+from fdp.assets import HISTORICAL_EOD_ASSET_TYPES, US_BULK_EOD_ASSET_TYPES
 from fdp.get_data.contracts import (
     JobFailure,
     JobPreflight,
@@ -44,7 +44,7 @@ class ResolvedHistoricalOptions:
 
 
 class HistoricalDailyJob:
-    """Shared stock/ETF/Fund historical EOD job used by all entrypoints."""
+    """Shared stock/ETF/Fund/index historical EOD job used by all entrypoints."""
 
     job_key = "ingest.history"
     job_module = "fdp.get_data.historical.base"
@@ -61,7 +61,7 @@ class HistoricalDailyJob:
         default_instrument_status: InstrumentStatus = "active",
         job_module: str | None = None,
     ) -> None:
-        unsupported = set(asset_types) - set(US_BULK_EOD_ASSET_TYPES)
+        unsupported = set(asset_types) - set(HISTORICAL_EOD_ASSET_TYPES)
         if unsupported:
             raise ValueError(
                 f"unsupported historical asset type(s): {', '.join(sorted(unsupported))}"

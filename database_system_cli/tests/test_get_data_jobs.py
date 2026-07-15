@@ -8,7 +8,7 @@ import fdp.get_data.historical.base as historical_module
 from fdp.config import EodhdRuntimeConfig
 from fdp.get_data.bulk import BulkDailyJob, DailyRangeJob
 from fdp.get_data.contracts import NullProgressReporter
-from fdp.get_data.historical import HistoricalDailyJob, StockDailyJob
+from fdp.get_data.historical import HistoricalDailyJob, IndexDailyJob, StockDailyJob
 from fdp.get_data.runtime import JobRuntime
 from fdp.sources.eodhd.ingest import (
     BulkDailyPriceLoadResult,
@@ -74,6 +74,24 @@ def test_bulk_daily_default_routes_stock_etf_and_fund_tables() -> None:
         "etf_daily_price",
         "fund_daily_price",
     ]
+
+
+def test_index_daily_job_accepts_index_as_a_historical_asset_type() -> None:
+    runtime = JobRuntime(
+        engine=FakeEngine(),
+        config=EodhdRuntimeConfig(),
+        injected_client=object(),
+    )
+
+    preflight = IndexDailyJob().preflight(
+        date_from=date(2024, 1, 1),
+        date_to=date(2024, 1, 5),
+        runtime=runtime,
+    )
+
+    assert preflight.target_tables == ["index_daily_price"]
+    assert preflight.parameters["asset_types"] == ["index"]
+    assert preflight.estimated_api_calls == 4
 
 
 def test_historical_job_resolves_canonical_and_provider_symbols_from_instrument_master(
