@@ -108,7 +108,12 @@ class BulkUnmatchedReconcileJob:
                 market=market.upper(),
                 limit=limit,
             )
-        unresolved = result.needs_instrument + result.non_price_asset + result.unknown
+        unresolved = (
+            result.ambiguous
+            + result.needs_instrument
+            + result.non_price_asset
+            + result.unknown
+        )
         return JobResult(
             job=f"{self.job_key}.classify",
             status="success",

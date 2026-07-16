@@ -10,7 +10,10 @@ from sqlalchemy.sql.dml import Insert
 
 from fdp.storage.tables import (
     bulk_unmatched_daily_price_observation,
+    crypto_daily_price,
     etf_daily_price,
+    forex_daily_price,
+    fund_daily_price,
     index_daily_price,
     instrument,
     instrument_identifier_history,
@@ -162,6 +165,15 @@ def build_etf_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
     )
 
 
+def build_fund_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.fund_daily_price`."""
+    return build_mysql_upsert(
+        fund_daily_price,
+        rows,
+        update_columns=DAILY_PRICE_UPDATE_COLUMNS,
+    )
+
+
 def build_index_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
     """Build the upsert for `us_share.index_daily_price`.
 
@@ -174,6 +186,44 @@ def build_index_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
         rows,
         update_columns=DAILY_PRICE_UPDATE_COLUMNS,
     )
+
+
+def build_forex_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.forex_daily_price`."""
+    return build_mysql_upsert(
+        forex_daily_price,
+        rows,
+        update_columns=DAILY_PRICE_UPDATE_COLUMNS,
+    )
+
+
+def build_crypto_daily_price_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build the upsert for `us_share.crypto_daily_price`."""
+    return build_mysql_upsert(
+        crypto_daily_price,
+        rows,
+        update_columns=DAILY_PRICE_UPDATE_COLUMNS,
+    )
+
+
+DAILY_PRICE_UPSERT_BUILDERS = {
+    "stock": build_stock_daily_price_upsert,
+    "etf": build_etf_daily_price_upsert,
+    "fund": build_fund_daily_price_upsert,
+    "index": build_index_daily_price_upsert,
+    "forex": build_forex_daily_price_upsert,
+    "crypto": build_crypto_daily_price_upsert,
+}
+
+
+def build_daily_price_upsert(asset_type: str, rows: Row | Sequence[Row]) -> Insert:
+    """Build a daily-price upsert for one canonical asset type."""
+    try:
+        builder = DAILY_PRICE_UPSERT_BUILDERS[asset_type]
+    except KeyError as exc:
+        supported = ", ".join(DAILY_PRICE_UPSERT_BUILDERS)
+        raise ValueError(f"unsupported daily-price asset type {asset_type!r}: {supported}") from exc
+    return builder(rows)
 
 
 def build_market_calendar_upsert(rows: Row | Sequence[Row]) -> Insert:
@@ -219,6 +269,36 @@ def build_bulk_unmatched_daily_price_observation_upsert(rows: Row | Sequence[Row
             "volume",
             "currency",
             "raw_payload",
+            "last_seen_at",
+            "updated_at",
+        ],
+    )
+
+
+def build_classified_bulk_observation_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Upsert deterministic duplicate/ambiguity classifications from the ingest batch."""
+    return build_mysql_upsert(
+        bulk_unmatched_daily_price_observation,
+        rows,
+        update_columns=[
+            "run_id",
+            "market",
+            "exchange",
+            "symbol",
+            "name",
+            "eodhd_type",
+            "open",
+            "high",
+            "low",
+            "close",
+            "adjusted_close",
+            "volume",
+            "currency",
+            "raw_payload",
+            "classification_status",
+            "classified_asset_type",
+            "matched_instrument_id",
+            "reason",
             "last_seen_at",
             "updated_at",
         ],

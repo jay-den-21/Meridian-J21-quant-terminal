@@ -22,15 +22,37 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 # Repository Governance
 
-This repository has four sibling components with independent ownership:
+This repository has five sibling components with independent ownership:
 
 - `database_system_cli/`: database ingestion, validation, repair, and research read layer.
 - `database_app/`: local EODHD API code generator and API playground.
 - `personal_site/`: Jayden21 personal homepage only.
 - `j21_terminal/`: Meridian landing page and J21 terminal prototype only.
+- `research_terminal/`: localhost-only read-only FastAPI/React research visualization.
 
 Do not put new app work into `database_system_cli/` unless the user explicitly asks to extend the database CLI. Do not let `database_app/` write database schemas, migrations, or ingestion data.
 Do not place personal-profile or terminal frontend code under `database_app/`. Cross-product navigation must use links between the sibling roots rather than embedding one product's views or assets inside another.
+Do not let `research_terminal/` execute ingest/repair/migration or arbitrary SQL; it may only read canonical/audit data and display inert CLI suggestions.
+
+## Scoped Context Routing
+
+Instructions are cumulative. Before editing a path, read this file, the subproject
+`AGENTS.md`, and the nearest deeper `AGENTS.md`. A deeper file adds local ownership
+rules; it never overrides repository boundaries or secret-handling rules.
+
+| Working path | Required context |
+| --- | --- |
+| `database_system_cli/**` | `database_system_cli/AGENTS.md` and its scoped routing table |
+| `database_app/**` | `database_app/AGENTS.md` |
+| `personal_site/**` | this file |
+| `j21_terminal/**` | this file |
+| `research_terminal/**` | `research_terminal/AGENTS.md` |
+| `.trellis/**`, `.agents/**`, `.codex/**` | this file and `.trellis/workflow.md` |
+
+The current CLI code-flow and path ownership map live in
+`database_system_cli/docs/architecture.md` with a paired human-readable HTML file.
+Do not infer cross-layer behavior from directory names alone; trace the implementation
+from that map and verify changed call sites in code.
 
 ## Source Of Truth
 

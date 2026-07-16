@@ -1,9 +1,13 @@
 import json
+from dataclasses import asdict
 from datetime import date
+from pathlib import Path
 
 import typer
 from sqlalchemy import create_engine
+from typer.main import get_command
 
+from fdp.assets import CANONICAL_ASSET_TYPES, US_BULK_EOD_ASSET_TYPES
 from fdp.get_data import (
     ActiveInstrumentsJob,
     BulkDailyJob,
@@ -11,6 +15,7 @@ from fdp.get_data import (
     DailyRangeJob,
     DelistedInstrumentsJob,
     EtfDailyJob,
+    FundDailyJob,
     HistoricalDailyJob,
     IndexDailyJob,
     MarketCalendarJob,
@@ -18,6 +23,14 @@ from fdp.get_data import (
 )
 from fdp.get_data.contracts import JobResult, ProgressEvent
 from fdp.get_data.reporting import format_eodhd_event
+from fdp.migrate import (
+    copy_fund_daily_prices,
+    finalize_fund_daily_prices,
+    plan_daily_price_asset_type_reconcile,
+    plan_fund_daily_prices,
+    reconcile_daily_price_asset_types,
+    verify_fund_daily_prices,
+)
 from fdp.bulk_unmatched import (
     list_bulk_unmatched_observations,
     summarize_bulk_unmatched_observations,
@@ -28,6 +41,7 @@ from fdp.config import (
     eodhd_api_key_from_env,
     eodhd_runtime_config_from_env,
 )
+from fdp.docs_staleness import validate_docs_staleness
 from fdp.repair import (
     confirm_repair_plan,
     create_missing_daily_price_repair_plans,
@@ -43,13 +57,21 @@ from fdp.quarantine import (
     list_quarantine_plans,
     preview_quarantine_plan_source_rows,
 )
-from fdp.research import DailyPriceReader
+from fdp.research import (
+    DailyPriceReader,
+    required_technical_validation_units,
+    validate_technical_indicators,
+)
 from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.ingest import (
     DEFAULT_INDEX_PROVIDER_SYMBOLS,
     SYMBOL_CHANGE_HISTORY_START,
 )
-from fdp.sources.eodhd.retry import EodhdApiEvent, EodhdRequestRateLimiter
+from fdp.sources.eodhd.retry import (
+    EodhdApiEvent,
+    EodhdRequestRateLimiter,
+    WeightedApiBudget,
+)
 from fdp.quality.validation import validate_daily_prices
 from fdp.storage.schema import ensure_runtime_schemas
 
@@ -59,15 +81,19 @@ validate_app = typer.Typer(help="Validate stored market data quality.")
 repair_app = typer.Typer(help="Create and manage human-confirmed repair plans.")
 quarantine_app = typer.Typer(help="Create and manage human-confirmed quarantine plans.")
 research_app = typer.Typer(help="Read stored database data for research code.")
+migrate_app = typer.Typer(help="Run operator-controlled resumable data migrations.")
 bulk_unmatched_app = typer.Typer(help="Inspect and classify Bulk EOD unmatched rows.")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(validate_app, name="validate")
 app.add_typer(repair_app, name="repair")
 app.add_typer(quarantine_app, name="quarantine")
 app.add_typer(research_app, name="research")
+app.add_typer(migrate_app, name="migrate")
 research_app.add_typer(bulk_unmatched_app, name="bulk-unmatched")
 
-DAILY_PRICE_ASSET_TYPES = {"stock", "etf", "index"}
+DAILY_PRICE_ASSET_TYPES = {"stock", "etf", "fund", "index"}
+HISTORICAL_ASSET_TYPES = set(US_BULK_EOD_ASSET_TYPES)
+BULK_ASSET_TYPES = set(US_BULK_EOD_ASSET_TYPES)
 QUARANTINE_DAILY_PRICE_ISSUE_TYPES = {
     "duplicate_key",
     "invalid_ohlcv",
@@ -111,6 +137,187 @@ def terminal_menu() -> None:
         run_terminal_menu()
     except RuntimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+
+@validate_app.command("docs-staleness")
+def validate_documentation_staleness(
+    root: Path = typer.Option(
+        Path("."),
+        "--root",
+        help="Repository root or database_system_cli directory.",
+    ),
+) -> None:
+    """Verify CLI tutorial coverage and managed Markdown/HTML mirrors."""
+    try:
+        report = validate_docs_staleness(root, get_command(app))
+    except (OSError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="--root") from exc
+
+    typer.echo(
+        f"docs-staleness status={'current' if report.is_current else 'stale'} "
+        f"documented={len(report.documented_leaf_routes)} "
+        f"actual={len(report.actual_leaf_routes)}"
+    )
+    for label, values in (
+        ("missing route", report.missing_routes),
+        ("unknown route", report.unknown_routes),
+        ("stale HTML", report.stale_html_pairs),
+    ):
+        for value in values:
+            typer.echo(f"{label}: {value}")
+    if not report.is_current:
+        raise typer.Exit(code=1)
+
+
+@migrate_app.command("daily-price-asset-types")
+def migrate_daily_price_asset_types(
+    phase: str = typer.Option(..., "--phase", help="Migration phase: plan or execute."),
+    chunk_size: int = typer.Option(1_000, "--chunk-size", help="Rows per transaction."),
+    max_chunks: int | None = typer.Option(
+        None,
+        "--max-chunks",
+        help="Optional global chunk cap for a controlled resumable run.",
+    ),
+    execute: bool = typer.Option(False, "--execute", help="Required for the execute phase."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm source-row deletion after copy/verify."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Reconcile physical daily tables after canonical instrument type corrections."""
+    normalized_phase = phase.strip().lower()
+    if normalized_phase not in {"plan", "execute"}:
+        raise typer.BadParameter("phase must be plan or execute")
+    if chunk_size <= 0:
+        raise typer.BadParameter("chunk-size must be positive")
+    if max_chunks is not None and max_chunks <= 0:
+        raise typer.BadParameter("max-chunks must be positive")
+    if normalized_phase == "execute" and not (execute and yes):
+        raise typer.BadParameter("execute phase requires --execute --yes")
+
+    engine = create_engine(database_url_from_env())
+    try:
+        if normalized_phase == "plan":
+            with engine.connect() as connection:
+                ensure_runtime_schemas(connection)
+                plan = plan_daily_price_asset_type_reconcile(connection)
+            payload = {
+                "phase": "plan",
+                "total_rows": plan.total_rows,
+                "groups": [asdict(group) for group in plan.groups],
+            }
+        else:
+            with engine.connect() as connection:
+                ensure_runtime_schemas(connection)
+            result = reconcile_daily_price_asset_types(
+                engine,
+                chunk_size=chunk_size,
+                max_chunks=max_chunks,
+            )
+            payload = {"phase": "execute", **asdict(result)}
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    if as_json:
+        typer.echo(json.dumps(payload, default=_json_cli_default, indent=2))
+        return
+    typer.echo(
+        "daily-price-asset-types "
+        + " ".join(f"{key}={value}" for key, value in payload.items() if key != "groups")
+    )
+    for group in payload.get("groups", []):
+        typer.echo(
+            f"  {group['source_asset_type']} -> {group['target_asset_type']}: "
+            f"rows={group['rows_count']} instruments={group['instruments_count']}"
+        )
+
+
+@migrate_app.command("fund-daily-price")
+def migrate_fund_daily_price(
+    phase: str = typer.Option(
+        ...,
+        "--phase",
+        help="Migration phase: plan, copy, verify, or finalize.",
+    ),
+    run_id: int | None = typer.Option(
+        None,
+        "--run-id",
+        help="Existing split run id for resume, verify, or finalize.",
+    ),
+    backup_file: Path | None = typer.Option(
+        None,
+        "--backup-file",
+        help="Absolute .sql or .sql.gz backup path; required for a new copy run.",
+    ),
+    chunk_size: int = typer.Option(
+        10_000,
+        "--chunk-size",
+        help="Maximum Fund source rows per transaction.",
+    ),
+    max_chunks: int | None = typer.Option(
+        None,
+        "--max-chunks",
+        help="Optional chunk cap for a controlled partial/resume run.",
+    ),
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help="Required for copy and finalize.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Confirm copy or destructive finalize."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Plan, copy, verify, or finalize the physical ETF/Fund table split."""
+    normalized_phase = phase.strip().lower()
+    if normalized_phase not in {"plan", "copy", "verify", "finalize"}:
+        raise typer.BadParameter("phase must be plan, copy, verify, or finalize")
+    if run_id is not None and run_id <= 0:
+        raise typer.BadParameter("run-id must be positive")
+    if chunk_size <= 0:
+        raise typer.BadParameter("chunk-size must be positive")
+    if max_chunks is not None and max_chunks <= 0:
+        raise typer.BadParameter("max-chunks must be positive")
+    if normalized_phase in {"copy", "finalize"} and not (execute and yes):
+        raise typer.BadParameter(f"{normalized_phase} requires --execute --yes")
+    if normalized_phase in {"verify", "finalize"} and run_id is None:
+        raise typer.BadParameter(f"{normalized_phase} requires --run-id")
+
+    engine = create_engine(database_url_from_env())
+    try:
+        if normalized_phase == "plan":
+            with engine.connect() as connection:
+                ensure_runtime_schemas(connection)
+                result = plan_fund_daily_prices(connection)
+        elif normalized_phase == "copy":
+            result = copy_fund_daily_prices(
+                engine,
+                backup_file=backup_file,
+                run_id=run_id,
+                chunk_size=chunk_size,
+                max_chunks=max_chunks,
+            )
+        elif normalized_phase == "verify":
+            result = verify_fund_daily_prices(engine, run_id=run_id)
+        else:
+            result = finalize_fund_daily_prices(
+                engine,
+                run_id=run_id,
+                chunk_size=chunk_size,
+                max_chunks=max_chunks,
+            )
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        engine.dispose()
+
+    payload = asdict(result)
+    if as_json:
+        typer.echo(json.dumps(payload, default=_json_cli_default, sort_keys=True))
+        return
+    typer.echo(f"fund-daily-price phase={normalized_phase}")
+    for key, value in payload.items():
+        if isinstance(value, dict):
+            typer.echo(f"  {key}={json.dumps(value, sort_keys=True)}")
+        else:
+            typer.echo(f"  {key}={value}")
 
 
 @ingest_app.command("instruments")
@@ -170,9 +377,9 @@ def ingest_history(
     ),
     market: str = typer.Option("US", "--market", help="Market code to ingest."),
     asset_types: str = typer.Option(
-        "stock,etf",
+        "stock,etf,fund",
         "--asset-types",
-        help="Comma-separated historical asset types: stock,etf.",
+        help="Comma-separated historical asset types: stock,etf,fund.",
     ),
     instrument_status: str = typer.Option(
         "active",
@@ -199,7 +406,7 @@ def ingest_history(
     parsed_to = _parse_optional_date(date_to, field_name="to")
     if parsed_from is not None and parsed_to is not None and parsed_to < parsed_from:
         raise typer.BadParameter("to must be greater than or equal to from")
-    parsed_asset_types = _parse_asset_types(asset_types, supported={"stock", "etf"})
+    parsed_asset_types = _parse_asset_types(asset_types, supported=HISTORICAL_ASSET_TYPES)
     resolved_instrument_status = _resolve_history_instrument_status(
         instrument_status=instrument_status,
         include_inactive=include_inactive,
@@ -208,6 +415,8 @@ def ingest_history(
         job = StockDailyJob()
     elif parsed_asset_types == ["etf"]:
         job = EtfDailyJob()
+    elif parsed_asset_types == ["fund"]:
+        job = FundDailyJob()
     else:
         job = HistoricalDailyJob(asset_types=tuple(parsed_asset_types))
     output_mode = _parse_output_format(output)
@@ -371,11 +580,16 @@ def ingest_daily(
         help="Optional comma-separated symbols; omitted means entire exchange bulk request.",
     ),
     asset_types: str = typer.Option(
-        "stock,etf",
+        "stock,etf,fund",
         "--asset-types",
-        help="Comma-separated asset types to write: stock,etf.",
+        help="Comma-separated asset types to write: stock,etf,fund.",
     ),
     market: str = typer.Option("US", "--market", help="Internal market code to match instruments."),
+    instrument_status: str = typer.Option(
+        "active",
+        "--instrument-status",
+        help="Instrument universe used for identity resolution: active or all.",
+    ),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
@@ -388,7 +602,10 @@ def ingest_daily(
         parsed_symbols = [symbol.strip() for symbol in symbols.split(",") if symbol.strip()]
         if not parsed_symbols:
             raise typer.BadParameter("symbols must contain at least one symbol when provided")
-    parsed_asset_types = _parse_asset_types(asset_types, supported={"stock", "etf"})
+    parsed_asset_types = _parse_asset_types(asset_types, supported=BULK_ASSET_TYPES)
+    parsed_instrument_status = instrument_status.strip().lower()
+    if parsed_instrument_status not in {"active", "all"}:
+        raise typer.BadParameter("instrument-status must be active or all")
 
     output_mode = _parse_output_format(output)
     try:
@@ -398,6 +615,7 @@ def ingest_daily(
             symbols=parsed_symbols,
             market=market,
             asset_types=parsed_asset_types,
+            instrument_status=parsed_instrument_status,
             reporter=CliProgressReporter(stderr=output_mode == "json"),
             override_source="cli",
         )
@@ -422,11 +640,16 @@ def ingest_daily_range(
     date_to: str = typer.Option(..., "--to", help="End calendar date in YYYY-MM-DD format."),
     exchange: str = typer.Option("US", "--exchange", help="EODHD bulk exchange code."),
     asset_types: str = typer.Option(
-        "stock,etf",
+        "stock,etf,fund",
         "--asset-types",
-        help="Comma-separated asset types to write: stock,etf.",
+        help="Comma-separated asset types to write: stock,etf,fund.",
     ),
     market: str = typer.Option("US", "--market", help="Internal market code to match instruments."),
+    instrument_status: str = typer.Option(
+        "active",
+        "--instrument-status",
+        help="Instrument universe used for identity resolution: active or all.",
+    ),
     bytes_per_row: int = typer.Option(
         600,
         "--bytes-per-row",
@@ -493,7 +716,10 @@ def ingest_daily_range(
         raise typer.BadParameter("max-api-calls must be positive")
 
     parsed_from, parsed_to = _parse_date_range(date_from, date_to)
-    parsed_asset_types = _parse_asset_types(asset_types, supported={"stock", "etf"})
+    parsed_asset_types = _parse_asset_types(asset_types, supported=BULK_ASSET_TYPES)
+    parsed_instrument_status = instrument_status.strip().lower()
+    if parsed_instrument_status not in {"active", "all"}:
+        raise typer.BadParameter("instrument-status must be active or all")
     if not yes:
         if not dry_run:
             raise typer.BadParameter("--execute requires --yes")
@@ -507,6 +733,7 @@ def ingest_daily_range(
             exchange=exchange,
             asset_types=parsed_asset_types,
             market=market,
+            instrument_status=parsed_instrument_status,
             bytes_per_row=bytes_per_row,
             max_estimated_gb=max_estimated_gb,
             parallel=parallel,
@@ -535,6 +762,7 @@ def ingest_daily_range(
         f"max_api_calls={parameters['max_api_calls']} "
         f"parallel={str(parameters['parallel']).lower()} workers={parameters['workers']} "
         f"max_requests_per_minute={parameters['max_requests_per_minute']}"
+        f" instrument_status={parameters['instrument_status']}"
     )
     if result.status == "dry_run":
         typer.echo("dry-run only; rerun with --execute --yes to ingest this range")
@@ -547,6 +775,8 @@ def ingest_daily_range(
         f"rows_inserted={result.rows_inserted} rows_rejected={result.rows_rejected} "
         f"unmatched={result.rows_unmatched} http_requests={result.api_calls} "
         f"api_call_cost_estimate={preflight.estimated_api_calls} "
+        f"api_units_consumed={result.metrics.get('api_units_consumed', 0)} "
+        f"api_units_remaining={result.metrics.get('api_units_remaining', 0)} "
         f"completed_days={result.work_units_completed} failed_days={result.work_units_failed}"
     )
 
@@ -556,9 +786,9 @@ def ingest_bulk_unmatched_route(
     date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
     date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
     asset_types: str = typer.Option(
-        "stock,etf,index",
+        "stock,etf,fund,index",
         "--asset-types",
-        help="Comma-separated asset types to route: stock,etf,index.",
+        help="Comma-separated asset types to route: stock,etf,fund,index.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to route."),
     dry_run: bool = typer.Option(
@@ -608,9 +838,9 @@ def validate_daily_price(
     date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
     date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
     asset_types: str = typer.Option(
-        "stock,etf,index",
+        "stock,etf,fund,index",
         "--asset-types",
-        help="Comma-separated asset types to validate: stock,etf,index.",
+        help="Comma-separated US asset types to validate: stock,etf,fund,index.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to validate."),
 ) -> None:
@@ -648,9 +878,9 @@ def repair_plan_daily_price(
     date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
     date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
     asset_types: str = typer.Option(
-        "stock,etf,index",
+        "stock,etf,fund,index",
         "--asset-types",
-        help="Comma-separated asset types to plan: stock,etf,index.",
+        help="Comma-separated US asset types to plan: stock,etf,fund,index.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to repair."),
 ) -> None:
@@ -811,9 +1041,9 @@ def quarantine_plan_daily_price(
         ),
     ),
     asset_types: str = typer.Option(
-        "stock,etf,index",
+        "stock,etf,fund,index",
         "--asset-types",
-        help="Comma-separated asset types to plan: stock,etf,index.",
+        help="Comma-separated US asset types to plan: stock,etf,fund,index.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to quarantine."),
 ) -> None:
@@ -1060,6 +1290,7 @@ def research_bulk_unmatched_classify(
     typer.echo(
         "bulk-unmatched classify "
         f"scanned={metrics['scanned']} matched={metrics['matched']} "
+        f"ambiguous={metrics['ambiguous']} "
         f"needs_instrument={metrics['needs_instrument']} "
         f"non_price_asset={metrics['non_price_asset']} unknown={metrics['unknown']}"
     )
@@ -1081,7 +1312,7 @@ def research_daily_prices(
     asset_type: str = typer.Option(
         "stock",
         "--asset-type",
-        help="Asset type to read: stock, etf, or index.",
+        help="Asset type to read: stock, etf, fund, index, forex, or crypto.",
     ),
     market: str = typer.Option("US", "--market", help="Market code to read."),
     adjusted: bool = typer.Option(
@@ -1124,6 +1355,95 @@ def research_daily_prices(
     _print_daily_price_rows(rows, limit=limit)
 
 
+@research_app.command("technical-validate")
+def research_technical_validate(
+    symbols: str = typer.Option(
+        "AAPL.US,META.US,SPY.US",
+        "--symbols",
+        help="Comma-separated canonical provider symbols.",
+    ),
+    date_from: str = typer.Option(..., "--from", help="Start date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End date in YYYY-MM-DD format."),
+    max_api_units: int = typer.Option(
+        200,
+        "--max-api-units",
+        help="Hard weighted-unit budget; this diagnostic never permits more than 200.",
+    ),
+    tolerance: float = typer.Option(
+        0.0002,
+        "--tolerance",
+        help="Maximum absolute error after provider four-decimal rounding.",
+    ),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Compare local SMA20/EMA20/RSI14 with a bounded EODHD Technical sample."""
+    parsed_symbols = [symbol.strip().upper() for symbol in symbols.split(",") if symbol.strip()]
+    if not parsed_symbols:
+        raise typer.BadParameter("symbols must contain at least one provider symbol")
+    if max_api_units <= 0 or max_api_units > 200:
+        raise typer.BadParameter("max-api-units must be between 1 and 200")
+    if tolerance < 0:
+        raise typer.BadParameter("tolerance must be non-negative")
+    normalized_output = output.strip().lower()
+    if normalized_output not in {"text", "json"}:
+        raise typer.BadParameter("output must be text or json")
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    required_units = required_technical_validation_units(len(parsed_symbols))
+    if required_units > max_api_units:
+        raise typer.BadParameter(
+            f"technical validation requires {required_units} units for {len(parsed_symbols)} "
+            f"symbols, exceeding max-api-units={max_api_units}"
+        )
+
+    budget = WeightedApiBudget(max_api_units)
+    client = _eodhd_client(
+        eodhd_api_key_from_env(),
+        api_budget=budget,
+        progress_to_stderr=normalized_output == "json",
+    )
+    engine = create_engine(database_url_from_env())
+    with engine.connect() as connection:
+        try:
+            comparisons = validate_technical_indicators(
+                connection,
+                client,
+                provider_symbols=parsed_symbols,
+                date_from=parsed_from,
+                date_to=parsed_to,
+                tolerance=tolerance,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
+    payload = {
+        "status": "pass" if all(row.status == "pass" for row in comparisons) else "mismatch",
+        "date_from": parsed_from,
+        "date_to": parsed_to,
+        "tolerance": tolerance,
+        "api_units_required": required_units,
+        "api_budget": asdict(budget.snapshot()),
+        "comparisons": [row.to_dict() for row in comparisons],
+    }
+    if normalized_output == "json":
+        typer.echo(json.dumps(payload, default=_json_cli_default, indent=2))
+    else:
+        typer.echo(
+            f"technical-validate status={payload['status']} symbols={len(parsed_symbols)} "
+            f"comparisons={len(comparisons)} api_units={budget.snapshot().consumed}/{max_api_units}"
+        )
+        typer.echo(
+            "provider_symbol\tasset_type\tindicator\tperiod\tstatus\toverlap\tmax_abs_error"
+        )
+        for row in comparisons:
+            error = "" if row.max_absolute_error is None else f"{row.max_absolute_error:.8f}"
+            typer.echo(
+                f"{row.provider_symbol}\t{row.asset_type}\t{row.local_field}\t{row.period}\t"
+                f"{row.status}\t{row.overlapping_rows}\t{error}"
+            )
+    if payload["status"] != "pass":
+        raise typer.Exit(code=1)
+
+
 def _parse_date_range(date_from: str, date_to: str) -> tuple[date, date]:
     """Parse and validate an inclusive CLI date range."""
     try:
@@ -1153,7 +1473,7 @@ def _parse_asset_types(asset_types: str, *, supported: set[str] | None = None) -
     parsed = [asset_type.strip().lower() for asset_type in asset_types.split(",") if asset_type.strip()]
     if not parsed:
         raise typer.BadParameter("asset-types must contain at least one asset type")
-    supported_asset_types = supported or {"stock", "etf", "index"}
+    supported_asset_types = supported or set(CANONICAL_ASSET_TYPES)
     unsupported = [asset_type for asset_type in parsed if asset_type not in supported_asset_types]
     if unsupported:
         expected = ",".join(sorted(supported_asset_types))
@@ -1374,6 +1694,8 @@ def _eodhd_client(
     max_retries: int | None = None,
     retry_delay_seconds: int | None = None,
     max_requests_per_minute: int | None = None,
+    api_budget: WeightedApiBudget | None = None,
+    progress_to_stderr: bool = False,
 ) -> EodhdClient:
     """Build the CLI EODHD client with visible progress and retry messages."""
     runtime_config = eodhd_runtime_config_from_env()
@@ -1384,13 +1706,21 @@ def _eodhd_client(
         max_retries=max_retries or runtime_config.max_retries,
         retry_delay_seconds=retry_delay_seconds or runtime_config.retry_delay_seconds,
         rate_limiter=rate_limiter,
-        progress_callback=_echo_eodhd_event,
+        api_budget=api_budget,
+        progress_callback=(
+            _echo_eodhd_event_stderr if progress_to_stderr else _echo_eodhd_event
+        ),
     )
 
 
 def _echo_eodhd_event(event: EodhdApiEvent) -> None:
     """Print EODHD request progress without exposing API keys."""
     typer.echo(_format_eodhd_event(event))
+
+
+def _echo_eodhd_event_stderr(event: EodhdApiEvent) -> None:
+    """Print EODHD progress to stderr so JSON stdout remains machine-readable."""
+    typer.echo(_format_eodhd_event(event), err=True)
 
 
 def _format_eodhd_event(event: EodhdApiEvent) -> str:

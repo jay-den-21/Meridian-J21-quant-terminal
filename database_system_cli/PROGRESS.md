@@ -90,6 +90,32 @@ Completed:
 - Historical stock/ETF Job execution now resolves canonical/provider symbols through the instrument master, commits each symbol independently under one aggregate task run, preserves completed work on cancellation/failure, and stops on fatal auth/entitlement, DB, or repeated global transient failures
 - Terminal menu and shared Job verification covers non-TTY rejection, default-cancel behavior, JSON output, parameter precedence, API-budget preflight, isolated symbol failure, fatal stop, and parent-run finalization
 - Shared Job/menu quality gate passes 136 tests plus Ruff/compileall; a real-DB `daily-range --dry-run` for `2024-01-02` resolved 1 trading day, 45,848 estimated rows, 0.03 GB, and 100 estimated API-call cost without calling EODHD or writing data
+- Scoped maintainer/agent context is now defined at the docs, shared Job, terminal menu, EODHD provider, storage, Alembic, quality, repair, quarantine, and research boundaries; parent `AGENTS.md` files provide deterministic routing, and `docs/architecture.md/.html` trace the current executable flows with Mermaid diagrams and exact code paths
+- Canonical asset model now keeps `stock/etf/fund/index/forex/crypto`; EODHD Fund/Mutual Fund is no longer collapsed into ETF, and `fund_instrument`/`fund_daily_price` are managed at Alembic head `0014_fund_compact_swap`.
+- Real ETF/Fund split completed from a verified 2.6 GiB compressed backup (SHA-256 `b32c4cc054e5a36aa73bdbaeee0867c7bba04c2fddff8f39c7f86c3e1801b1aa`): ETF `7,100,821` + Fund `56,464,163` = source `63,564,984`, with 0 duplicate natural keys, 0 cross-type rows, and matching sampled checksum; `OPTIMIZE TABLE` was not run.
+- Historical Bulk identity matching now uses source-date identifier history before current provider symbols, treats missing historical `Type` as unavailable only for a unique identity, stages lower old/current aliases as `shadowed`, and preserves ambiguous/invalid/unresolved raw rows.
+- Approved four-worker `instrument-status=all` Bulk backfill completed for `2010-09-30..2014-08-15`: 979/979 work units, 0 failed days, 0 retries, 33,729,043 source rows, 33,289,082 canonical matched rows processed, 236,312 unmatched rows, 173,525 shadowed aliases, and 98,001 task units including User API preflight.
+- Post-backfill verification passed: stock `12,031,361`, ETF `1,200,695`, and Fund `20,096,562` rows in `2010-09-30..2014-08-18`; all three cover both endpoints, retain unique `(instrument_id, trade_date)` indexes, and have 0 cross-table type contamination.
+- Recent-first historical Bulk recovery completed for factor research over `2022-08-08..2026-07-06`: 980/980 trading days, run IDs `4046..5025`, 48,191,634 source rows, 46,958,823 matched rows, 98,000 weighted API units, 0 failed days, and 0 retries.
+- Post-recovery DB verification passed for all 980 dates: Stock `17,063,497`, ETF `4,127,506`, Fund `25,587,451`, and Bulk staging `1,550,792` physical rows; every date has all three canonical asset classes plus staging, table/master mismatch counts are 0, and all canonical tables retain unique `(instrument_id, trade_date)` indexes.
+- Historical Bulk recovery added a verified continuous prefix `2014-09-18..2018-08-08`: 980/980 dates, run IDs `5026..6007`, 44,389,798 source rows, 43,220,825 canonical upsert effects, and an exact 99,800 weighted units across 980 successes, 16 successful internal retries, and 2 pre-fix terminal transport failures.
+- Post-recovery verification passed for the older prefix: Stock `14,226,096`, ETF `1,767,338`, Fund `27,260,645`, and staging `1,168,973` physical rows; every table covers all 980 dates, table/master mismatch counts are 0, and canonical natural-key unique indexes remain present.
+- Historical Bulk recovery continued through `2018-08-09..2022-03-30`: 917/917 dates, run IDs `6009..6925`, 45,485,986 source rows, 44,146,515 canonical upsert effects, and 92,400 weighted units across 917 successful calls plus 7 retries. All four destinations cover every date and Stock/ETF/Fund table-master mismatch counts are 0.
+- The final `2022-03-31..2022-08-05` continuation completed 88/88 dates with run IDs `6927..7014`, 4,506,354 source rows, 4,329,704 canonical upsert effects, 176,650 staged observations, 8,800 weighted units, 0 retries, and 0 failed dates.
+- Historical Bulk unmatched recovery is complete for all 2,986/2,986 affected trading dates in `2014-08-19..2026-07-06`. Post-staging run evidence and durable staging rows cover every date; canonical natural-key indexes remain present and all verified Stock/ETF/Fund table-master mismatch counts are 0.
+- The `2014-08-18` observation spike was verified as retained audit history: 39,585 rows are already `resolved`; only 558 are non-resolved (345 unknown, 1 ambiguous, 210 shadowed, 2 invalid), matching adjacent-day levels.
+- Historical calendar audit found EODHD omitted three official closures. Nasdaq/SEC-backed US overrides now mark `2012-01-02` and Sandy `2012-10-29/30` non-trading; 49 canonical rows were archived into quarantine, deleted, and all 49 linked issues resolved. `2012-07-03` early-close data was retained.
+- Local adjusted/raw indicators now calculate SMA20/50/200, EMA20, Bollinger20/2, RSI14, MACD12/26/9, Volume SMA20, and annualized 20-day volatility without materializing indicator tables.
+- `j21 research technical-validate` provides a 200-unit hard-capped EODHD parity diagnostic. AAPL/META/SPY SMA20/EMA20/RSI14 used 45 units; all 9 comparisons passed with maximum absolute error about `0.00005`.
+- New sibling `research_terminal/` is operational: GET-only FastAPI/SQLAlchemy backend, React/TypeScript/ECharts Overview/Security/Funds/Data Health views, stock/ETF candles, Fund NAV line, safe CSV, PNG, and no ingest/repair HTTP route.
+- Terminal verification passes 22 backend tests, frontend Vitest/build, npm audit with 0 vulnerabilities, and 8 Playwright desktop/mobile tests with real AAPL/VFINX data, nonblank canvas pixels, and no global horizontal overflow.
+- Final database CLI suite passes 202 tests plus Ruff and compileall; Alembic code and live DB both report the single `0014_fund_compact_swap` head.
+- Final cross-table audit found 871 rows for 22 instruments that were written as stock before later
+  metadata corrected them to ETF. New `j21 migrate daily-price-asset-types` plan/execute workflow
+  copies, verifies, and transactionally deletes drift rows; a 100-row smoke plus 771-row completion
+  moved all rows with no target conflicts, and the final global mismatch plan is 0.
+- Daily quality validation now reports future table/master drift as `asset_type_mismatch` and points
+  to the reconcile workflow instead of quarantining valid prices.
 
 Not started:
 
@@ -101,6 +127,6 @@ Not started:
 - decide the next delisted-date source: EODHD Fundamentals/Corporate Actions, Nasdaq/FINRA lists, or manual enrichment, because the EODHD delisted symbol list does not expose delist dates
 - plan point-in-time universe membership so active-only backtests can be clearly separated from survivorship-bias-aware research
 - extend delisted historical backfill in small, budgeted batches after date-source and universe policy are settled
-- run a small real-date smoke after applying migration `0009_bulk_unmatched`: one-day `j21 ingest daily --date ...`, then `bulk-unmatched summary/list/classify`, dry-run route, and `validate daily-price`
-- after small smoke passes, user can run larger `daily-range`; Codex/AI should verify row counts, duplicate `(instrument_id, trade_date)`, unmatched status distribution, and route candidates after the user-run ingest
-- use `poetry run j21 menu` for the next user-operated small ingest smoke, review its preflight/equivalent command, then compare the resulting `ingestion_task_run` with the same deterministic CLI workflow
+- reconcile the recent factor-window staging backlog by reason: `1,132,723 unresolved`, `100,088 ambiguous`, `785 invalid_price`, and `317,196 shadowed`; do not auto-route without strict identity evidence
+- create a dedicated MySQL SELECT-only account for `research_terminal`; the application SQL guard remains defense-in-depth, not the only permission boundary
+- decide whether to persist exact/periodic table statistics for Terminal Overview instead of using labeled InnoDB estimates

@@ -1,12 +1,19 @@
 """EODHD historical daily price ingest workflows."""
 
 import json
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
+from fdp.assets import CANONICAL_ASSET_TYPES
 from fdp.sources.eodhd.client import EodhdClient
+from fdp.sources.eodhd.identity import (
+    DatedInstrumentIdentityResolver,
+    InstrumentIdentityResolution,
+)
 from fdp.sources.eodhd.ingest.common import (
     InstrumentStatus,
     create_task_run,
@@ -14,7 +21,6 @@ from fdp.sources.eodhd.ingest.common import (
     historical_price_status,
     index_instrument_rows,
     load_active_instruments,
-    load_active_instruments_for_market,
     load_active_instruments_by_ids,
     load_active_instruments_by_provider_symbols,
     normalize_provider_symbols,
@@ -28,20 +34,30 @@ from fdp.sources.eodhd.ingest.models import (
     HistoricalDailyPriceUnitResult,
 )
 from fdp.sources.eodhd.prices import RejectedDailyPriceRow, parse_daily_price_rows
+from fdp.storage.tables import bulk_unmatched_daily_price_observation
 from fdp.storage.upsert import (
     build_bulk_unmatched_daily_price_observation_upsert,
-    build_etf_daily_price_upsert,
-    build_index_daily_price_upsert,
+    build_classified_bulk_observation_upsert,
+    build_daily_price_upsert,
     build_instrument_upsert,
-    build_stock_daily_price_upsert,
 )
 
-PRICE_UPSERT_BUILDERS = {
-    "stock": build_stock_daily_price_upsert,
-    "etf": build_etf_daily_price_upsert,
-    "index": build_index_daily_price_upsert,
-}
 BULK_DAILY_UPSERT_CHUNK_SIZE = 1000
+BULK_OBSERVATION_UPSERT_CHUNK_SIZE = 1000
+_BULK_DAILY_ASSET_WRITE_RANK = {
+    asset_type: rank
+    for rank, asset_type in enumerate(CANONICAL_ASSET_TYPES)
+}
+
+
+@dataclass(frozen=True)
+class _ResolvedBulkCandidate:
+    index: int
+    row: dict[str, object]
+    symbol: str
+    provider_symbol: str
+    trade_date: date
+    resolution: InstrumentIdentityResolution
 
 
 def load_historical_daily_prices(
@@ -68,11 +84,11 @@ def load_historical_daily_prices(
         date_from=date_from,
         date_to=date_to,
         market=market,
-        asset_types=["stock", "etf"],
+        asset_types=["stock", "etf", "fund"],
         include_inactive=include_inactive,
         instrument_status=instrument_status,
         job_name="eodhd_historical_daily_price",
-        target_table="stock_daily_price,etf_daily_price",
+        target_table="stock_daily_price,etf_daily_price,fund_daily_price",
     )
 
 
@@ -140,6 +156,33 @@ def load_etf_daily_prices(
     )
 
 
+def load_fund_daily_prices(
+    connection: Connection,
+    client: EodhdClient,
+    *,
+    symbols: list[str],
+    date_from: date,
+    date_to: date,
+    market: str = "US",
+    include_inactive: bool = False,
+    instrument_status: InstrumentStatus = "active",
+) -> HistoricalDailyPriceLoadResult:
+    """Load historical daily EOD prices for Fund symbols only."""
+    return _load_symbol_daily_prices(
+        connection,
+        client,
+        symbols=symbols,
+        date_from=date_from,
+        date_to=date_to,
+        market=market,
+        asset_types=["fund"],
+        include_inactive=include_inactive,
+        instrument_status=instrument_status,
+        job_name="eodhd_fund_daily_price",
+        target_table="fund_daily_price",
+    )
+
+
 def load_daily_prices_for_instrument_ids(
     connection: Connection,
     client: EodhdClient,
@@ -150,7 +193,9 @@ def load_daily_prices_for_instrument_ids(
     market: str = "US",
     asset_types: list[str] | None = None,
     job_name: str = "eodhd_repair_daily_price",
-    target_table: str = "stock_daily_price,etf_daily_price,index_daily_price",
+    target_table: str = (
+        "stock_daily_price,etf_daily_price,fund_daily_price,index_daily_price"
+    ),
 ) -> HistoricalDailyPriceLoadResult:
     """Load historical daily prices for exact database instrument ids.
 
@@ -202,21 +247,23 @@ def load_bulk_daily_prices(
     symbols: list[str] | None = None,
     market: str = "US",
     asset_types: list[str] | None = None,
+    instrument_status: InstrumentStatus = "active",
+    identity_resolver: DatedInstrumentIdentityResolver | None = None,
 ) -> BulkDailyPriceLoadResult:
-    """Load one-day bulk EOD prices for active instruments.
+    """Load one-day bulk EOD prices through point-in-time instrument identity.
 
     Input: EODHD exchange, optional trade date, optional symbols, and market scope.
     Output: `BulkDailyPriceLoadResult` with API, match, parse, and write counts.
-    Flow: bulk API -> active instrument map -> parse EOD rows -> split-table upsert.
+    Flow: bulk API -> dated identifier history/current identity -> parse -> split-table upsert.
     """
     normalized_exchange = exchange.strip().upper()
-    normalized_asset_types = asset_types or ["stock", "etf"]
+    normalized_asset_types = asset_types or ["stock", "etf", "fund"]
     normalized_symbols = normalize_symbols(symbols or [])
     run_id = create_task_run(
         connection,
         market=market,
         job_name="eodhd_bulk_daily_price",
-        target_table="stock_daily_price,etf_daily_price",
+        target_table=",".join(f"{asset_type}_daily_price" for asset_type in normalized_asset_types),
         date_from=trade_date,
         date_to=trade_date,
     )
@@ -257,26 +304,24 @@ def load_bulk_daily_prices(
             api_calls=1,
             rejected_rows=[],
             unmatched_rows=0,
+            shadowed_rows=0,
             error_message=response.error_message,
             status_code=response.status_code,
         )
 
-    instruments = load_active_instruments_for_market(
+    active_identity_resolver = identity_resolver or DatedInstrumentIdentityResolver.from_connection(
         connection,
         market=market,
         asset_types=normalized_asset_types,
+        instrument_status=instrument_status,
     )
-    rows_by_provider_symbol = {
-        str(row["provider_symbol"]).upper(): row
-        for row in instruments
-    }
-    rows_by_symbol = {str(row["symbol"]).upper(): row for row in instruments}
 
     accepted_by_asset_type: dict[str, list[dict[str, object]]] = {}
     unmatched_observations: list[dict[str, object]] = []
+    classified_observations: list[dict[str, object]] = []
+    resolved_candidates: list[_ResolvedBulkCandidate] = []
     rejected_rows: list[RejectedDailyPriceRow] = []
     unmatched_rows = 0
-    rows_matched = 0
 
     for index, row in enumerate(response.payload):
         try:
@@ -293,20 +338,45 @@ def load_bulk_daily_prices(
             continue
 
         provider_symbol = _bulk_row_provider_symbol(symbol, exchange=normalized_exchange)
-        instrument_row = rows_by_provider_symbol.get(provider_symbol) or rows_by_symbol.get(symbol)
+        try:
+            observed_trade_date = _bulk_row_trade_date(
+                row,
+                fallback_trade_date=trade_date,
+            )
+        except ValueError as exc:
+            rejected_rows.append(
+                RejectedDailyPriceRow(
+                    index=index,
+                    provider_symbol=provider_symbol,
+                    reason=str(exc),
+                    row=row,
+                )
+            )
+            continue
+
+        resolution = active_identity_resolver.resolve(
+            provider_symbol=provider_symbol,
+            trade_date=observed_trade_date,
+            eodhd_type=_first_present(row, "type", "Type"),
+        )
+        instrument_row = resolution.instrument
         if instrument_row is None:
             try:
-                unmatched_observations.append(
-                    _bulk_unmatched_observation_row(
-                        row,
-                        run_id=run_id,
-                        market=market,
-                        exchange=normalized_exchange,
-                        symbol=symbol,
-                        provider_symbol=provider_symbol,
-                        fallback_trade_date=trade_date,
-                    )
+                observation = _bulk_unmatched_observation_row(
+                    row,
+                    run_id=run_id,
+                    market=market,
+                    exchange=normalized_exchange,
+                    symbol=symbol,
+                    provider_symbol=provider_symbol,
+                    fallback_trade_date=trade_date,
+                    reason=_identity_resolution_reason(resolution),
                 )
+                if _requires_authoritative_ambiguity(resolution):
+                    observation["classification_status"] = "ambiguous"
+                    classified_observations.append(observation)
+                else:
+                    unmatched_observations.append(observation)
             except ValueError as exc:
                 rejected_rows.append(
                     RejectedDailyPriceRow(
@@ -320,22 +390,120 @@ def load_bulk_daily_prices(
             unmatched_rows += 1
             continue
 
-        rows_matched += 1
+        resolved_candidates.append(
+            _ResolvedBulkCandidate(
+                index=index,
+                row=row,
+                symbol=symbol,
+                provider_symbol=provider_symbol,
+                trade_date=observed_trade_date,
+                resolution=resolution,
+            )
+        )
+
+    selected_candidates, shadowed_candidates = _select_preferred_bulk_candidates(
+        resolved_candidates
+    )
+    ambiguous_alias_rows = sum(
+        classification_status == "ambiguous"
+        for _, classification_status, _ in shadowed_candidates
+    )
+    shadowed_alias_rows = sum(
+        classification_status == "shadowed"
+        for _, classification_status, _ in shadowed_candidates
+    )
+    unmatched_rows += ambiguous_alias_rows
+
+    existing_staged_keys = _existing_staged_observation_keys(
+        connection,
+        market=market,
+        exchange=normalized_exchange,
+        candidates=selected_candidates,
+    )
+    for candidate, classification_status, reason in shadowed_candidates:
+        instrument_row = candidate.resolution.instrument
+        if instrument_row is None:  # The selector only receives resolved candidates.
+            raise RuntimeError("resolved Bulk candidate lost its instrument")
+        classified_observations.append(
+            _bulk_unmatched_observation_row(
+                candidate.row,
+                run_id=run_id,
+                market=market,
+                exchange=normalized_exchange,
+                symbol=candidate.symbol,
+                provider_symbol=candidate.provider_symbol,
+                fallback_trade_date=trade_date,
+                reason=reason,
+                classification_status=classification_status,
+                classified_asset_type=str(instrument_row["asset_type"]),
+                matched_instrument_id=int(instrument_row["instrument_id"]),
+            )
+        )
+
+    for candidate in selected_candidates:
+        instrument_row = candidate.resolution.instrument
+        if instrument_row is None:  # The selector only receives resolved candidates.
+            raise RuntimeError("resolved Bulk candidate lost its instrument")
         parsed_rows = parse_daily_price_rows(
-            [row],
+            [candidate.row],
             instrument_id=instrument_row["instrument_id"],
-            symbol=instrument_row["symbol"],
-            provider_symbol=instrument_row["provider_symbol"],
+            symbol=candidate.symbol,
+            provider_symbol=candidate.provider_symbol,
             currency=instrument_row["currency"],
         )
         rejected_rows.extend(parsed_rows.rejected)
         if parsed_rows.accepted:
             asset_type = str(instrument_row["asset_type"])
             accepted_by_asset_type.setdefault(asset_type, []).extend(parsed_rows.accepted)
+            if (candidate.provider_symbol, candidate.trade_date) in existing_staged_keys:
+                classified_observations.append(
+                    _bulk_unmatched_observation_row(
+                        candidate.row,
+                        run_id=run_id,
+                        market=market,
+                        exchange=normalized_exchange,
+                        symbol=candidate.symbol,
+                        provider_symbol=candidate.provider_symbol,
+                        fallback_trade_date=trade_date,
+                        reason=(
+                            "resolved_in_bulk_ingest:"
+                            f"{candidate.resolution.matched_by}"
+                        ),
+                        classification_status="resolved",
+                        classified_asset_type=asset_type,
+                        matched_instrument_id=int(instrument_row["instrument_id"]),
+                    )
+                )
+            continue
+
+        rejection_reason = "; ".join(row.reason for row in parsed_rows.rejected)
+        classified_observations.append(
+            _bulk_unmatched_observation_row(
+                candidate.row,
+                run_id=run_id,
+                market=market,
+                exchange=normalized_exchange,
+                symbol=candidate.symbol,
+                provider_symbol=candidate.provider_symbol,
+                fallback_trade_date=trade_date,
+                reason=rejection_reason or "invalid_price_payload",
+                classification_status="invalid_price",
+                classified_asset_type=str(instrument_row["asset_type"]),
+                matched_instrument_id=int(instrument_row["instrument_id"]),
+            )
+        )
 
     rows_inserted = _upsert_daily_price_chunks(connection, accepted_by_asset_type)
-    if unmatched_observations:
-        connection.execute(build_bulk_unmatched_daily_price_observation_upsert(unmatched_observations))
+    _upsert_bulk_observations(
+        connection,
+        unmatched_observations,
+        classified=False,
+    )
+    _upsert_bulk_observations(
+        connection,
+        classified_observations,
+        classified=True,
+    )
     rows_rejected = len(rejected_rows) + unmatched_rows
     status, error_message = _bulk_daily_price_status(
         rows_inserted=rows_inserted,
@@ -360,12 +528,13 @@ def load_bulk_daily_prices(
         exchange=normalized_exchange,
         trade_date=trade_date,
         rows_fetched=response.rows_returned,
-        rows_matched=rows_matched,
+        rows_matched=len(resolved_candidates) - ambiguous_alias_rows,
         rows_inserted=rows_inserted,
         rows_rejected=rows_rejected,
         api_calls=1,
         rejected_rows=rejected_rows,
         unmatched_rows=unmatched_rows,
+        shadowed_rows=shadowed_alias_rows,
         error_message=error_message,
         status_code=response.status_code,
     )
@@ -532,7 +701,7 @@ def _load_daily_prices_for_instruments(
         rejected_rows.extend(parsed_rows.rejected)
         if parsed_rows.accepted:
             asset_type = str(instrument_row["asset_type"])
-            connection.execute(PRICE_UPSERT_BUILDERS[asset_type](parsed_rows.accepted))
+            connection.execute(build_daily_price_upsert(asset_type, parsed_rows.accepted))
             rows_inserted += len(parsed_rows.accepted)
 
     rows_rejected = len(rejected_rows) + len(missing_symbols)
@@ -621,7 +790,7 @@ def load_historical_daily_price_unit(
     rows_inserted = 0
     if parsed_rows.accepted:
         asset_type = str(instrument_row["asset_type"])
-        connection.execute(PRICE_UPSERT_BUILDERS[asset_type](parsed_rows.accepted))
+        connection.execute(build_daily_price_upsert(asset_type, parsed_rows.accepted))
         rows_inserted = len(parsed_rows.accepted)
 
     rows_rejected = len(parsed_rows.rejected)
@@ -666,6 +835,10 @@ def _bulk_unmatched_observation_row(
     symbol: str,
     provider_symbol: str,
     fallback_trade_date: date | None,
+    reason: str,
+    classification_status: str = "unresolved",
+    classified_asset_type: str | None = None,
+    matched_instrument_id: int | None = None,
 ) -> dict[str, object]:
     """Build one raw unmatched observation row for later classification."""
     observed_at = now_utc()
@@ -686,14 +859,142 @@ def _bulk_unmatched_observation_row(
         "volume": _optional_int(row, "volume", "Volume"),
         "currency": _optional_str(row, "currency", "Currency"),
         "raw_payload": json.dumps(row, sort_keys=True, default=str),
-        "classification_status": "unresolved",
-        "classified_asset_type": None,
-        "matched_instrument_id": None,
-        "reason": "unmatched_active_instrument",
+        "classification_status": classification_status,
+        "classified_asset_type": classified_asset_type,
+        "matched_instrument_id": matched_instrument_id,
+        "reason": reason,
         "source": "EODHD",
         "first_seen_at": observed_at,
         "last_seen_at": observed_at,
     }
+
+
+def _select_preferred_bulk_candidates(
+    candidates: list[_ResolvedBulkCandidate],
+) -> tuple[
+    list[_ResolvedBulkCandidate],
+    list[tuple[_ResolvedBulkCandidate, str, str]],
+]:
+    """Select one canonical row per instrument/date with dated history as winner."""
+    grouped: dict[tuple[int, date], list[_ResolvedBulkCandidate]] = {}
+    for candidate in candidates:
+        instrument_row = candidate.resolution.instrument
+        if instrument_row is None:
+            raise ValueError("bulk candidate must have a resolved instrument")
+        key = (int(instrument_row["instrument_id"]), candidate.trade_date)
+        grouped.setdefault(key, []).append(candidate)
+
+    selected: list[_ResolvedBulkCandidate] = []
+    shadowed: list[tuple[_ResolvedBulkCandidate, str, str]] = []
+    for (instrument_id, trade_date), group in grouped.items():
+        if len(group) == 1:
+            selected.append(group[0])
+            continue
+
+        dated = [
+            candidate
+            for candidate in group
+            if candidate.resolution.matched_by == "identifier_history"
+        ]
+        if len(dated) == 1:
+            winner = dated[0]
+            selected.append(winner)
+            reason = (
+                "shadowed_by_dated_identifier_history;"
+                f"instrument_id={instrument_id};trade_date={trade_date};"
+                f"selected_provider_symbol={winner.provider_symbol}"
+            )
+            shadowed.extend(
+                (candidate, "shadowed", reason)
+                for candidate in group
+                if candidate is not winner
+            )
+            continue
+
+        provider_symbols = ",".join(
+            sorted({candidate.provider_symbol for candidate in group})
+        )
+        reason = (
+            "ambiguous_provider_aliases_for_instrument_date;"
+            f"instrument_id={instrument_id};trade_date={trade_date};"
+            f"candidate_provider_symbols={provider_symbols}"
+        )
+        shadowed.extend((candidate, "ambiguous", reason) for candidate in group)
+
+    selected.sort(key=lambda candidate: candidate.index)
+    shadowed.sort(key=lambda item: item[0].index)
+    return selected, shadowed
+
+
+def _identity_resolution_reason(resolution: InstrumentIdentityResolution) -> str:
+    """Format an unresolved identity reason with deterministic candidate ids."""
+    reason = resolution.reason or "unresolved_instrument_identity"
+    candidate_ids = resolution.candidate_instrument_ids
+    if not candidate_ids:
+        return str(reason)
+    joined = ",".join(str(instrument_id) for instrument_id in candidate_ids)
+    return f"{reason};candidate_instrument_ids={joined}"
+
+
+def _requires_authoritative_ambiguity(
+    resolution: InstrumentIdentityResolution,
+) -> bool:
+    reason = resolution.reason or ""
+    return reason.startswith("ambiguous_") or reason == "identifier_not_valid_on_trade_date"
+
+
+def _existing_staged_observation_keys(
+    connection: Connection,
+    *,
+    market: str,
+    exchange: str,
+    candidates: list[_ResolvedBulkCandidate],
+) -> set[tuple[str, date]]:
+    if not candidates:
+        return set()
+    trade_dates = sorted({candidate.trade_date for candidate in candidates})
+    statement = select(
+        bulk_unmatched_daily_price_observation.c.provider_symbol,
+        bulk_unmatched_daily_price_observation.c.trade_date,
+    ).where(
+        bulk_unmatched_daily_price_observation.c.source == "EODHD",
+        bulk_unmatched_daily_price_observation.c.market == market,
+        bulk_unmatched_daily_price_observation.c.exchange == exchange,
+        bulk_unmatched_daily_price_observation.c.trade_date.in_(trade_dates),
+    )
+    return {
+        (str(row["provider_symbol"]), row["trade_date"])
+        for row in connection.execute(statement).mappings()
+    }
+
+
+def _upsert_bulk_observations(
+    connection: Connection,
+    observations: list[dict[str, object]],
+    *,
+    classified: bool,
+) -> None:
+    builder = (
+        build_classified_bulk_observation_upsert
+        if classified
+        else build_bulk_unmatched_daily_price_observation_upsert
+    )
+    ordered_observations = sorted(
+        observations,
+        key=lambda row: (
+            str(row.get("source") or ""),
+            str(row.get("provider_symbol") or ""),
+            str(row.get("trade_date") or ""),
+        ),
+    )
+    for start in range(0, len(ordered_observations), BULK_OBSERVATION_UPSERT_CHUNK_SIZE):
+        connection.execute(
+            builder(
+                ordered_observations[
+                    start:start + BULK_OBSERVATION_UPSERT_CHUNK_SIZE
+                ]
+            )
+        )
 
 
 def _bulk_row_trade_date(
@@ -756,11 +1057,29 @@ def _upsert_daily_price_chunks(
 ) -> int:
     """Write accepted rows to split daily price tables in bounded chunks."""
     rows_inserted = 0
-    for asset_type, rows in accepted_by_asset_type.items():
-        upsert_builder = PRICE_UPSERT_BUILDERS[asset_type]
+    ordered_asset_types = sorted(
+        accepted_by_asset_type,
+        key=lambda asset_type: (
+            _BULK_DAILY_ASSET_WRITE_RANK.get(
+                asset_type,
+                len(CANONICAL_ASSET_TYPES),
+            ),
+            asset_type,
+        ),
+    )
+    for asset_type in ordered_asset_types:
+        # Concurrent date jobs must acquire natural-key locks in the same order.
+        rows = sorted(
+            accepted_by_asset_type[asset_type],
+            key=lambda row: (
+                int(row["instrument_id"]),
+                str(row.get("trade_date") or ""),
+                str(row.get("provider_symbol") or ""),
+            ),
+        )
         for start in range(0, len(rows), BULK_DAILY_UPSERT_CHUNK_SIZE):
             chunk = rows[start:start + BULK_DAILY_UPSERT_CHUNK_SIZE]
-            connection.execute(upsert_builder(chunk))
+            connection.execute(build_daily_price_upsert(asset_type, chunk))
             rows_inserted += len(chunk)
     return rows_inserted
 
@@ -774,7 +1093,7 @@ def _bulk_daily_price_status(
     """Derive bulk daily task status and compact error message."""
     problems: list[str] = []
     if unmatched_rows:
-        problems.append(f"{unmatched_rows} EODHD bulk row(s) did not match active instruments")
+        problems.append(f"{unmatched_rows} EODHD bulk row(s) had unresolved instrument identity")
     if rejected_rows:
         problems.append(f"{rejected_rows} invalid EODHD bulk price row(s) rejected")
 

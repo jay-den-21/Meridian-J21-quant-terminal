@@ -11,9 +11,11 @@ from sqlalchemy import func, select
 from fdp.get_data.bulk.get_daily import (
     DEFAULT_ASSET_TYPES,
     DEFAULT_EXCHANGE,
+    DEFAULT_INSTRUMENT_STATUS,
     DEFAULT_MARKET,
     EODHD_BULK_FULL_EXCHANGE_API_CALL_COST,
     SUPPORTED_BULK_ASSET_TYPES,
+    SUPPORTED_INSTRUMENT_STATUSES,
 )
 from fdp.get_data.contracts import (
     JobFailure,
@@ -30,7 +32,10 @@ from fdp.get_data.historical.base import (
     GLOBAL_TRANSIENT_STATUS_CODES,
 )
 from fdp.get_data.runtime import JobRuntime
+from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.ingest import BulkDailyPriceLoadResult, load_bulk_daily_prices
+from fdp.sources.eodhd.identity import DatedInstrumentIdentityResolver
+from fdp.sources.eodhd.retry import WeightedApiBudget
 from fdp.storage.schema import ensure_runtime_schemas
 from fdp.storage.tables import instrument, market_calendar
 
@@ -54,6 +59,7 @@ class DailyRangeJob:
         exchange: str | None = None,
         asset_types: list[str] | None = None,
         market: str | None = None,
+        instrument_status: str | None = None,
         bytes_per_row: int | None = None,
         max_estimated_gb: float | None = None,
         parallel: bool | None = None,
@@ -70,6 +76,7 @@ class DailyRangeJob:
             exchange=exchange,
             asset_types=asset_types,
             market=market,
+            instrument_status=instrument_status,
             bytes_per_row=bytes_per_row,
             max_estimated_gb=max_estimated_gb,
             parallel=parallel,
@@ -90,14 +97,15 @@ class DailyRangeJob:
                 date_from=parameters["date_from"],
                 date_to=parameters["date_to"],
             )
-            active_instruments = self._count_active_instruments(
+            scoped_instruments = self._count_instruments(
                 connection,
                 market=parameters["market"],
                 asset_types=parameters["asset_types"],
+                instrument_status=parameters["instrument_status"],
             )
         if not trade_dates:
             raise ValueError("no trading days found in market_calendar for this range")
-        estimated_rows = len(trade_dates) * active_instruments
+        estimated_rows = len(trade_dates) * scoped_instruments
         estimated_gb = estimated_rows * parameters["bytes_per_row"] / (1024**3)
         estimated_api_calls = len(trade_dates) * EODHD_BULK_FULL_EXCHANGE_API_CALL_COST
         if estimated_gb > parameters["max_estimated_gb"]:
@@ -160,9 +168,25 @@ class DailyRangeJob:
                 date_from=parameters["date_from"],
                 date_to=parameters["date_to"],
             )
+        remote_budget = self._check_remote_api_capacity(
+            active_runtime.client(
+                active_reporter,
+                max_requests_per_minute=parameters["max_requests_per_minute"],
+            ),
+            required_units=parameters["max_api_calls"],
+        )
+        with active_runtime.engine.connect() as connection:
+            identity_resolver = DatedInstrumentIdentityResolver.from_connection(
+                connection,
+                market=parameters["market"],
+                asset_types=parameters["asset_types"],
+                instrument_status=parameters["instrument_status"],
+            )
+        api_budget = WeightedApiBudget(parameters["max_api_calls"])
         client = active_runtime.client(
             active_reporter,
             max_requests_per_minute=parameters["max_requests_per_minute"],
+            api_budget=api_budget,
         )
         active_reporter.on_event(
             ProgressEvent("start", self.job_key, 0, len(trade_dates), message="daily range started")
@@ -174,11 +198,14 @@ class DailyRangeJob:
             exchange=parameters["exchange"],
             market=parameters["market"],
             asset_types=parameters["asset_types"],
+            instrument_status=parameters["instrument_status"],
+            identity_resolver=identity_resolver,
             parallel=parameters["parallel"],
             workers=parameters["workers"],
             reporter=active_reporter,
         )
         totals = self._totals(results)
+        budget_snapshot = api_budget.snapshot()
         completed = len(results) + len(
             [failure for failure in failures if failure.category == "exception"]
         )
@@ -199,7 +226,12 @@ class DailyRangeJob:
                 completed,
                 len(trade_dates),
                 message=status,
-                counters={**totals, "failed": failed_days, "api_calls": totals["api_calls"]},
+                counters={
+                    **totals,
+                    "failed": failed_days,
+                    "api_calls": totals["api_calls"],
+                    "api_units": budget_snapshot.consumed,
+                },
             )
         )
         error_message = (
@@ -221,6 +253,17 @@ class DailyRangeJob:
             work_units_completed=completed,
             work_units_failed=failed_days,
             failures=failures,
+            metrics={
+                "api_units_limit": budget_snapshot.limit,
+                "api_units_consumed": budget_snapshot.consumed,
+                "api_units_remaining": budget_snapshot.remaining,
+                **remote_budget,
+                "rows_shadowed": totals["rows_shadowed"],
+                "task_api_units_consumed": (
+                    budget_snapshot.consumed
+                    + int(remote_budget["remote_preflight_api_units"])
+                ),
+            },
             error_message=error_message,
             preflight=active_preflight,
         )
@@ -234,6 +277,8 @@ class DailyRangeJob:
         exchange: str,
         market: str,
         asset_types: list[str],
+        instrument_status: str,
+        identity_resolver: DatedInstrumentIdentityResolver,
         parallel: bool,
         workers: int,
         reporter: ProgressReporter,
@@ -289,6 +334,8 @@ class DailyRangeJob:
                     exchange=exchange,
                     market=market,
                     asset_types=asset_types,
+                    instrument_status=instrument_status,
+                    identity_resolver=identity_resolver,
                 ): trade_date
                 for trade_date in trade_dates
             }
@@ -338,6 +385,8 @@ class DailyRangeJob:
                         exchange=exchange,
                         market=market,
                         asset_types=asset_types,
+                        instrument_status=instrument_status,
+                        identity_resolver=identity_resolver,
                     )
                 except Exception as exc:
                     completed += 1
@@ -369,6 +418,8 @@ class DailyRangeJob:
         exchange: str,
         market: str,
         asset_types: list[str],
+        instrument_status: str,
+        identity_resolver: DatedInstrumentIdentityResolver,
     ) -> BulkDailyPriceLoadResult:
         with runtime.engine.begin() as connection:
             ensure_runtime_schemas(connection)
@@ -379,6 +430,8 @@ class DailyRangeJob:
                 trade_date=trade_date,
                 market=market,
                 asset_types=asset_types,
+                instrument_status=instrument_status,
+                identity_resolver=identity_resolver,
             )
 
     @staticmethod
@@ -389,6 +442,7 @@ class DailyRangeJob:
             "rows_inserted": sum(result.rows_inserted for result in results),
             "rows_rejected": sum(result.rows_rejected for result in results),
             "rows_unmatched": sum(result.unmatched_rows for result in results),
+            "rows_shadowed": sum(result.shadowed_rows for result in results),
             "api_calls": sum(result.api_calls for result in results),
         }
 
@@ -400,6 +454,7 @@ class DailyRangeJob:
         exchange: str | None,
         asset_types: list[str] | None,
         market: str | None,
+        instrument_status: str | None,
         bytes_per_row: int | None,
         max_estimated_gb: float | None,
         parallel: bool | None,
@@ -427,6 +482,9 @@ class DailyRangeJob:
         unsupported = set(resolved_assets) - SUPPORTED_BULK_ASSET_TYPES
         if unsupported:
             raise ValueError(f"unsupported bulk asset type(s): {', '.join(sorted(unsupported))}")
+        resolved_status = (instrument_status or DEFAULT_INSTRUMENT_STATUS).lower()
+        if resolved_status not in SUPPORTED_INSTRUMENT_STATUSES:
+            raise ValueError("instrument_status must be active or all")
         resolved_parallel = (
             runtime.config.daily_range_parallel_enabled if parallel is None else parallel
         )
@@ -441,6 +499,7 @@ class DailyRangeJob:
             "exchange": (exchange or DEFAULT_EXCHANGE).upper(),
             "asset_types": resolved_assets,
             "market": (market or DEFAULT_MARKET).upper(),
+            "instrument_status": resolved_status,
             "bytes_per_row": (
                 bytes_per_row if bytes_per_row is not None else DEFAULT_BYTES_PER_ROW
             ),
@@ -473,6 +532,9 @@ class DailyRangeJob:
             "exchange": override_source if exchange is not None else "job_default",
             "asset_types": override_source if asset_types is not None else "job_default",
             "market": override_source if market is not None else "job_default",
+            "instrument_status": (
+                override_source if instrument_status is not None else "job_default"
+            ),
             "bytes_per_row": override_source if bytes_per_row is not None else "job_default",
             "max_estimated_gb": override_source if max_estimated_gb is not None else "job_default",
             "parallel": override_source if parallel is not None else "runtime_config",
@@ -484,6 +546,41 @@ class DailyRangeJob:
             "source": "job_default",
         }
         return values, sources
+
+    @staticmethod
+    def _check_remote_api_capacity(
+        client: EodhdClient,
+        *,
+        required_units: int,
+    ) -> dict[str, int | str]:
+        """Use the redacted User API counters to reject an underfunded real run."""
+        response = client.get_user()
+        if not response.success or not response.payload:
+            raise ValueError(
+                "EODHD User API budget preflight failed: "
+                f"{response.error_message or response.status_code}"
+            )
+        payload = response.payload[0]
+        try:
+            used = int(payload["apiRequests"])
+            daily_limit = int(payload["dailyRateLimit"])
+            extra_remaining = int(payload.get("extraLimit") or 0)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("EODHD User API returned incomplete budget counters") from exc
+        remote_remaining = max(daily_limit - used, 0) + max(extra_remaining, 0)
+        if remote_remaining < required_units:
+            raise ValueError(
+                "EODHD remote API budget is insufficient: "
+                f"remaining={remote_remaining} required={required_units}"
+            )
+        return {
+            "remote_api_requests_used": used,
+            "remote_daily_rate_limit": daily_limit,
+            "remote_extra_units_remaining": extra_remaining,
+            "remote_api_units_remaining": remote_remaining,
+            "remote_api_requests_date": str(payload.get("apiRequestsDate") or "unknown"),
+            "remote_preflight_api_units": response.retry_count + 1,
+        }
 
     @staticmethod
     def _load_trading_dates(connection: Any, *, date_from: date, date_to: date) -> list[date]:
@@ -520,21 +617,26 @@ class DailyRangeJob:
             )
 
     @staticmethod
-    def _count_active_instruments(
+    def _count_instruments(
         connection: Any,
         *,
         market: str,
         asset_types: list[str],
+        instrument_status: str,
     ) -> int:
+        conditions = [
+            instrument.c.provider == "EODHD",
+            instrument.c.market == market,
+            instrument.c.asset_type.in_(asset_types),
+        ]
+        if instrument_status == "active":
+            conditions.append(instrument.c.is_active.is_(True))
+        elif instrument_status != "all":
+            raise ValueError("instrument_status must be active or all")
         return int(
             connection.execute(
                 select(func.count())
                 .select_from(instrument)
-                .where(
-                    instrument.c.provider == "EODHD",
-                    instrument.c.market == market,
-                    instrument.c.asset_type.in_(asset_types),
-                    instrument.c.is_active.is_(True),
-                )
+                .where(*conditions)
             ).scalar_one()
         )

@@ -8,7 +8,8 @@ SUPPORTED_ASSET_TYPES = {
     "common stock": "stock",
     "stock": "stock",
     "etf": "etf",
-    "fund": "etf",
+    "fund": "fund",
+    "mutual fund": "fund",
 }
 
 
@@ -100,7 +101,7 @@ def parse_exchange_symbol(
     Output: storage-ready instrument dict, or `None` for unsupported asset type.
     Flow: raw row -> asset filter -> required fields -> provider symbol -> instrument row.
     """
-    asset_type = _normalize_asset_type(_first_present(payload, "Type", "type"))
+    asset_type = normalize_eodhd_asset_type(_first_present(payload, "Type", "type"))
     if asset_type is None:
         return None
 
@@ -225,7 +226,7 @@ def parse_symbol_change_history_rows(
     return ParsedSymbolChangeRows(accepted=accepted, rejected=rejected)
 
 
-def _normalize_asset_type(value: Any) -> str | None:
+def normalize_eodhd_asset_type(value: Any) -> str | None:
     """Map EODHD asset type text into project asset type values."""
     if value is None:
         return None

@@ -62,6 +62,8 @@ EODHD `provider_symbol` 必须保留，例如 `AAPL.US`。标准 `symbol` 也必
 - AI agent 负责在用户执行前给出精确 CLI 命令、日期范围、API-call 预算、预期写入表和失败处理方式。
 - 用户执行后，AI agent 负责读取 CLI 输出、任务日志或数据库，说明具体验证了哪些表、哪些行数、哪些缺失/重复/异常。
 - 只有当用户明确说“你帮我跑”或同等授权时，AI agent 才能代跑大规模真实 ingest。
+- EODHD 的 `/user` 配额读数可能在额度重置后短暂显示旧值，并在下一次低成本认证请求后恢复正常；这是已观察到的供应商计量异常，不应当作保证行为。
+- 当配额读数与重置时间或用户后台明显矛盾时，只允许做一次低成本探针并重新查询 `/user`，记录前后 `apiRequests`、`dailyRateLimit`、`extraLimit` 和 `apiRequestsDate`。禁止循环触发，也禁止在刷新后的可用额度确认前启动高成本 ingest。
 
 ## 数据拉取双入口
 
@@ -109,6 +111,36 @@ poetry run j21 repair ...
 - `AGENTS.md` 是执行约束。
 - 修改面向人阅读的 `.md` 文档时，如果存在对应 `.html` 文件，必须同步更新 HTML 版本。
 - 修改规格、架构、流程、CLI 或进度相关文档时，必须同步更新 `PROGRESS.md` 看板；如果只是错别字/格式且不影响进度，应在最终说明中明确。
-- `database_system_cli/` 先保留一个 `AGENTS.md`。
-- 不要预创建空的模块级 `AGENTS.md`。
-- 等 `src/sources/eodhd/`、`src/storage/`、`src/quality/` 等模块真实出现后，再按模块添加局部约束。
+- 不要为每个叶子目录机械创建 `AGENTS.md`；只在职责、风险或验证方法确实不同的边界创建。
+- 当前代码路径和完整调用关系以 `docs/architecture.md` 为入口。
+
+## 局部上下文路由
+
+规则按目录向下累积。修改下列路径前，除本文件外还必须读取对应的局部
+`AGENTS.md`：
+
+| 修改路径 | 最近的局部上下文 | 主要职责 |
+| --- | --- | --- |
+| `docs/**` | `docs/AGENTS.md` | 文档事实、Markdown/HTML 同步 |
+| `src/fdp/get_data/**` | `src/fdp/get_data/AGENTS.md` | 共享 Job 契约与编排 |
+| `src/fdp/menu/**` | `src/fdp/menu/AGENTS.md` | 人类终端输入和进度展示 |
+| `src/fdp/sources/eodhd/**` | `src/fdp/sources/eodhd/AGENTS.md` | EODHD transport、parser、ingest |
+| `src/fdp/storage/**` | `src/fdp/storage/AGENTS.md` | SQLAlchemy metadata、upsert、schema guard |
+| `alembic/**` | `alembic/AGENTS.md` | 物理 schema 迁移历史 |
+| `src/fdp/quality/**` | `src/fdp/quality/AGENTS.md` | 质量检测和 issue 记录 |
+| `src/fdp/repair/**` | `src/fdp/repair/AGENTS.md` | 缺失数据的确认式修复 |
+| `src/fdp/quarantine/**` | `src/fdp/quarantine/AGENTS.md` | 坏行归档和确认式移除 |
+| `src/fdp/research/**` | `src/fdp/research/AGENTS.md` | 数据库只读研究接口 |
+
+`src/fdp/cli.py` 是薄 Typer adapter，直接受本文件和
+`src/fdp/get_data/AGENTS.md` 的共享 Job 约束。若一项修改跨越多个路径，必须读取所有
+相关局部文件，并按 `docs/architecture.md` 检查上下游。
+
+`src/fdp/bulk_unmatched.py` 是 unmatched classification/routing 的 domain service；它直接
+继承本文件，并在修改时额外读取 `src/fdp/get_data/AGENTS.md`、
+`src/fdp/storage/AGENTS.md` 和 `docs/architecture.md`。`src/fdp/config.py` 等未列出的顶层
+模块直接继承本文件，不需要空的局部 `AGENTS.md`。
+
+仓库级可视化位于平级 `../research_terminal/`。CLI 只拥有 canonical 数据、研究读取和
+确定性命令契约；Terminal 只能通过只读查询消费这些契约，不能把 HTTP/UI 状态或写库入口
+反向放入本子项目。

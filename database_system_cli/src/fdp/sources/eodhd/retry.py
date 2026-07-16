@@ -14,6 +14,59 @@ EodhdApiEventKind = Literal["request", "retry", "success", "failed"]
 EodhdProgressCallback = Callable[["EodhdApiEvent"], None]
 
 
+class EodhdApiBudgetExceeded(RuntimeError):
+    """Raised before an HTTP attempt that would exceed its weighted API budget."""
+
+
+@dataclass(frozen=True)
+class WeightedApiBudgetSnapshot:
+    """Immutable weighted API-unit counters captured after one reservation."""
+
+    limit: int
+    consumed: int
+    remaining: int
+
+
+class WeightedApiBudget:
+    """Thread-safe hard budget charged before every EODHD HTTP attempt.
+
+    Input: a positive task limit and endpoint-specific unit reservations.
+    Output: atomic consumed/remaining snapshots or a pre-request exception.
+    Flow: HTTP attempt -> reserve weighted units -> request or hard stop.
+    """
+
+    def __init__(self, limit: int) -> None:
+        if limit <= 0:
+            raise ValueError("API budget limit must be positive")
+        self._limit = limit
+        self._consumed = 0
+        self._lock = Lock()
+
+    def reserve(self, *, endpoint: str, units: int) -> WeightedApiBudgetSnapshot:
+        if units <= 0:
+            raise ValueError("API budget units must be positive")
+        with self._lock:
+            proposed = self._consumed + units
+            if proposed > self._limit:
+                raise EodhdApiBudgetExceeded(
+                    f"EODHD API budget exhausted before {endpoint}: "
+                    f"consumed={self._consumed} requested={units} limit={self._limit}"
+                )
+            self._consumed = proposed
+            return self._snapshot_unlocked()
+
+    def snapshot(self) -> WeightedApiBudgetSnapshot:
+        with self._lock:
+            return self._snapshot_unlocked()
+
+    def _snapshot_unlocked(self) -> WeightedApiBudgetSnapshot:
+        return WeightedApiBudgetSnapshot(
+            limit=self._limit,
+            consumed=self._consumed,
+            remaining=self._limit - self._consumed,
+        )
+
+
 @dataclass(frozen=True)
 class EodhdApiEvent:
     """One user-visible EODHD API progress event.
@@ -32,6 +85,9 @@ class EodhdApiEvent:
     duration_ms: int | None = None
     error_message: str | None = None
     retry_delay_seconds: int | None = None
+    api_units_limit: int | None = None
+    api_units_consumed: int | None = None
+    api_units_remaining: int | None = None
 
 
 def is_retryable_status(status_code: int | None) -> bool:

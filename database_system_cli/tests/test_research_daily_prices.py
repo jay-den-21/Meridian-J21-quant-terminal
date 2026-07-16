@@ -108,6 +108,18 @@ def test_daily_price_reader_can_use_raw_close_as_analysis_close() -> None:
     assert "stock_daily_price.close AS analysis_close" in sql
 
 
+def test_daily_price_reader_routes_fund_queries_to_fund_table() -> None:
+    reader = DailyPriceReader(
+        FakeConnection(),
+        date_from=date(2023, 1, 1),
+        date_to=date(2023, 1, 31),
+    )
+
+    statement = reader.build_daily_prices_query(symbols=["VFINX"], asset_type="fund")
+
+    assert "fund_daily_price" in str(statement.compile(dialect=mysql.dialect()))
+
+
 def test_daily_price_reader_rejects_unsupported_asset_type() -> None:
     reader = DailyPriceReader(
         FakeConnection(),
@@ -115,7 +127,7 @@ def test_daily_price_reader_rejects_unsupported_asset_type() -> None:
         date_to=date(2023, 1, 31),
     )
 
-    with pytest.raises(ValueError, match="stock, etf, index"):
+    with pytest.raises(ValueError, match="stock, etf, fund, index, forex, crypto"):
         reader.build_daily_prices_query(symbols=["AAPL"], asset_type="bond")
 
 

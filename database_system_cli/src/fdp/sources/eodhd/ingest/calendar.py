@@ -79,6 +79,7 @@ def load_market_calendar(
         exchange_details,
         date_from=date_from,
         date_to=date_to,
+        market=market,
     )
     connection.execute(build_market_calendar_upsert(calendar_rows))
 

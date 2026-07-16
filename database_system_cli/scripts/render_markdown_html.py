@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Render the project's simple governance Markdown into standalone HTML.
 
-The project docs intentionally use headings, paragraphs, flat lists, links, and
-fenced code blocks. Keeping this renderer dependency-free lets documentation be
-updated without adding a web stack to the database CLI runtime.
+The project docs intentionally use headings, paragraphs, flat lists, links, tables,
+and fenced code blocks. Keeping this renderer dependency-free lets documentation
+be updated without adding a web stack to the database CLI runtime.
 """
 
 from __future__ import annotations
@@ -40,6 +40,15 @@ h2 { margin:42px 0 14px; padding-top:8px; font-size:25px; border-top:1px solid v
 h3 { margin:28px 0 10px; font-size:20px; }
 p { margin:12px 0; } ul,ol { margin:10px 0 16px 22px; padding:0; }
 li { margin:6px 0; }
+table { width:100%; border-collapse:collapse; min-width:620px; font-size:14px; }
+.table-wrap { overflow-x:auto; margin:16px 0 22px; border:1px solid var(--border);
+  border-radius:6px; }
+th,td { padding:11px 13px; border-right:1px solid var(--border);
+  border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+th:last-child,td:last-child { border-right:0; }
+thead th { background:#edf2f7; color:#344054; font-weight:700; }
+tbody tr:last-child td { border-bottom:0; }
+tbody tr:nth-child(even) { background:#fafbfc; }
 code { padding:1px 5px; background:var(--code); border:1px solid #e1e6ef;
   border-radius:5px; font-family:"SFMono-Regular",Consolas,monospace; font-size:.92em; }
 pre { overflow:auto; margin:16px 0 20px; padding:16px 18px; background:#101820;
@@ -78,6 +87,59 @@ def _inline(value: str) -> str:
     return rendered
 
 
+def _split_table_row(line: str) -> list[str]:
+    """Split one Markdown table row while preserving escaped pipe characters."""
+    value = line.strip()
+    if value.startswith("|"):
+        value = value[1:]
+    if value.endswith("|") and not value.endswith(r"\|"):
+        value = value[:-1]
+    return [cell.strip().replace(r"\|", "|") for cell in re.split(r"(?<!\\)\|", value)]
+
+
+def _table_alignments(separator: str, columns: int) -> list[str] | None:
+    cells = _split_table_row(separator)
+    if len(cells) != columns:
+        return None
+
+    alignments: list[str] = []
+    for cell in cells:
+        marker = re.sub(r"\s+", "", cell)
+        if not re.fullmatch(r":?-{3,}:?", marker):
+            return None
+        if marker.startswith(":") and marker.endswith(":"):
+            alignments.append("center")
+        elif marker.endswith(":"):
+            alignments.append("right")
+        else:
+            alignments.append("left")
+    return alignments
+
+
+def _render_table(
+    headers: list[str],
+    rows: list[list[str]],
+    alignments: list[str],
+) -> str:
+    header_html = "".join(
+        f'<th scope="col" style="text-align:{alignment}">{_inline(value)}</th>'
+        for value, alignment in zip(headers, alignments, strict=True)
+    )
+    rows_html = "".join(
+        "<tr>"
+        + "".join(
+            f'<td style="text-align:{alignment}">{_inline(value)}</td>'
+            for value, alignment in zip(row, alignments, strict=True)
+        )
+        + "</tr>"
+        for row in rows
+    )
+    return (
+        '<div class="table-wrap"><table><thead><tr>'
+        f"{header_html}</tr></thead><tbody>{rows_html}</tbody></table></div>"
+    )
+
+
 def _render_body(markdown: str) -> tuple[str, list[tuple[int, str, str]]]:
     lines = markdown.splitlines()
     output: list[str] = []
@@ -102,7 +164,11 @@ def _render_body(markdown: str) -> tuple[str, list[tuple[int, str, str]]]:
         list_items.clear()
         list_tag = None
 
-    for line in lines:
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+
         if in_code:
             if line.startswith("```"):
                 language = f' class="language-{escape(code_language)}"' if code_language else ""
@@ -115,6 +181,23 @@ def _render_body(markdown: str) -> tuple[str, list[tuple[int, str, str]]]:
             else:
                 code_lines.append(line)
             continue
+
+        if "|" in line and index < len(lines):
+            headers = _split_table_row(line)
+            alignments = _table_alignments(lines[index], len(headers))
+            if alignments is not None:
+                flush_paragraph()
+                flush_list()
+                index += 1
+                table_rows: list[list[str]] = []
+                while index < len(lines) and lines[index].strip() and "|" in lines[index]:
+                    cells = _split_table_row(lines[index])
+                    if len(cells) != len(headers):
+                        break
+                    table_rows.append(cells)
+                    index += 1
+                output.append(_render_table(headers, table_rows, alignments))
+                continue
 
         if line.startswith("```"):
             flush_paragraph()

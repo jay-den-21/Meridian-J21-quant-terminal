@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J21 Database System CLI Architecture</title><style>
+:root { --bg:#f6f7f9; --paper:#fff; --text:#20242a; --muted:#667085;
+  --border:#d9dee7; --accent:#1769aa; --code:#f1f4f8; --nav:#15191e; }
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body { margin:0; background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+  "Microsoft YaHei",sans-serif; line-height:1.7; }
+.layout { display:grid; grid-template-columns:280px minmax(0,1fr); min-height:100vh; }
+nav { position:sticky; top:0; height:100vh; overflow:auto; padding:28px 20px;
+  background:var(--nav); color:#d9e2ec; border-right:1px solid #0b1118; }
+nav h2 { margin:0 0 16px; color:#fff; font-size:15px; }
+nav a { display:block; padding:6px 0; color:#c9d2dc; text-decoration:none;
+  border-bottom:1px solid rgba(255,255,255,.06); font-size:13px; line-height:1.35; }
+nav a:hover { color:#fff; }
+.toc-1 { font-weight:700; } .toc-2 { padding-left:10px; }
+.toc-3 { padding-left:22px; color:#aebccc; }
+main { padding:42px 24px 64px; }
+article { max-width:980px; margin:0 auto; padding:44px 54px; background:var(--paper);
+  border:1px solid var(--border); border-radius:8px; box-shadow:0 12px 30px rgba(16,24,32,.06); }
+h1,h2,h3 { line-height:1.3; letter-spacing:0; }
+h1 { margin:0 0 24px; font-size:34px; }
+h2 { margin:42px 0 14px; padding-top:8px; font-size:25px; border-top:1px solid var(--border); }
+h3 { margin:28px 0 10px; font-size:20px; }
+p { margin:12px 0; } ul,ol { margin:10px 0 16px 22px; padding:0; }
+li { margin:6px 0; }
+table { width:100%; border-collapse:collapse; min-width:620px; font-size:14px; }
+.table-wrap { overflow-x:auto; margin:16px 0 22px; border:1px solid var(--border);
+  border-radius:6px; }
+th,td { padding:11px 13px; border-right:1px solid var(--border);
+  border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+th:last-child,td:last-child { border-right:0; }
+thead th { background:#edf2f7; color:#344054; font-weight:700; }
+tbody tr:last-child td { border-bottom:0; }
+tbody tr:nth-child(even) { background:#fafbfc; }
+code { padding:1px 5px; background:var(--code); border:1px solid #e1e6ef;
+  border-radius:5px; font-family:"SFMono-Regular",Consolas,monospace; font-size:.92em; }
+pre { overflow:auto; margin:16px 0 20px; padding:16px 18px; background:#101820;
+  color:#e6edf3; border-radius:8px; line-height:1.5; }
+pre code { padding:0; background:transparent; color:inherit; border:0; font-size:13px; }
+a { color:var(--accent); } .meta { margin-bottom:26px; padding-bottom:18px;
+  color:var(--muted); border-bottom:1px solid var(--border); font-size:13px; }
+@media (max-width:900px) { .layout { display:block; } nav { position:relative; height:auto;
+  max-height:42vh; } main { padding:18px 12px 40px; } article { padding:28px 22px; }
+  h1 { font-size:28px; } h2 { font-size:22px; } }
+@media print { body { background:#fff; } .layout { display:block; } nav { display:none; }
+  main { padding:0; } article { max-width:none; padding:0; border:0; box-shadow:none; } }
+</style></head>
+<body><div class="layout"><nav><h2>目录 / Contents</h2><a class="toc-1" href="#j21-database-system-cli-architecture">J21 Database System CLI Architecture</a><a class="toc-2" href="#1-一句话架构">1. 一句话架构</a><a class="toc-2" href="#2-当前目录职责">2. 当前目录职责</a><a class="toc-2" href="#3-总体组件图">3. 总体组件图</a><a class="toc-2" href="#4-三种入口如何汇合">4. 三种入口如何汇合</a><a class="toc-3" href="#4-1-typer-cli">4.1 Typer CLI</a><a class="toc-3" href="#4-2-terminal-menu">4.2 Terminal menu</a><a class="toc-3" href="#4-3-python-caller">4.3 Python caller</a><a class="toc-2" href="#5-shared-job-内部流程">5. Shared Job 内部流程</a><a class="toc-2" href="#6-instrument-master-与生命周期">6. Instrument Master 与生命周期</a><a class="toc-3" href="#6-1-active-instruments-symbol-history">6.1 Active instruments + symbol history</a><a class="toc-3" href="#6-2-delisted-instruments">6.2 Delisted instruments</a><a class="toc-2" href="#7-historical-eod-路径">7. Historical EOD 路径</a><a class="toc-2" href="#8-bulk-eod-路径">8. Bulk EOD 路径</a><a class="toc-3" href="#8-1-单日-bulk">8.1 单日 Bulk</a><a class="toc-3" href="#8-2-多日-daily-range">8.2 多日 Daily Range</a><a class="toc-2" href="#9-bulk-unmatched-reconcile">9. Bulk Unmatched Reconcile</a><a class="toc-2" href="#10-质量-repair-与-quarantine">10. 质量、Repair 与 Quarantine</a><a class="toc-2" href="#11-research-read-layer">11. Research Read Layer</a><a class="toc-2" href="#11-1-sibling-research-terminal">11.1 Sibling Research Terminal</a><a class="toc-2" href="#12-数据库分层">12. 数据库分层</a><a class="toc-2" href="#13-常见修改的联查清单">13. 常见修改的联查清单</a><a class="toc-2" href="#14-当前未实现边界">14. 当前未实现边界</a><a class="toc-2" href="#15-验证入口">15. 验证入口</a></nav>
+<main><article><div class="meta">Generated from architecture.md. Markdown remains the source of truth.</div>
+<h1 id="j21-database-system-cli-architecture">J21 Database System CLI Architecture</h1><p>本文是 <code>database_system_cli</code> 当前可执行代码的路径地图。它回答三个问题：</p><ol><li>用户从哪里进入系统？</li><li>数据经过哪些 class/function 才进入数据库？</li><li>修改某一层时，必须联查哪些上下游？</li></ol><p>文档基于当前代码，而不是未来设想。Markdown 是源文件；同目录 <code>architecture.html</code> 是人类阅读版。</p><h2 id="1-一句话架构">1. 一句话架构</h2><pre><code class="language-text">CLI / terminal menu / Python caller
+-&gt; shared fdp.get_data Job
+-&gt; EODHD provider client + ingest/parser
+-&gt; SQLAlchemy Core upsert + MySQL audit/canonical tables
+-&gt; independent quality -&gt; repair/quarantine -&gt; research read/indicator layer
+-&gt; sibling read-only FastAPI/React Research Terminal</code></pre><p>关键边界：CLI 和菜单只是输入/输出 adapter；human-operable ingestion 的参数、预算、 失败策略和结果必须收敛在同一个 <code>fdp.get_data</code> Job 中。</p><h2 id="2-当前目录职责">2. 当前目录职责</h2><div class="table-wrap"><table><thead><tr><th scope="col" style="text-align:left">路径</th><th scope="col" style="text-align:left">拥有的职责</th><th scope="col" style="text-align:left">不应放入</th></tr></thead><tbody><tr><td style="text-align:left"><code>src/fdp/cli.py</code></td><td style="text-align:left">Typer command、参数解析、文本/JSON 输出</td><td style="text-align:left">provider/SQL 业务流程</td></tr><tr><td style="text-align:left"><code>src/fdp/menu/</code></td><td style="text-align:left">双语 TTY、确认页、等价命令、tqdm</td><td style="text-align:left">API、预算、写库逻辑</td></tr><tr><td style="text-align:left"><code>src/fdp/get_data/</code></td><td style="text-align:left">Job、preflight、runtime、progress、result、registry</td><td style="text-align:left">原始 payload parser</td></tr><tr><td style="text-align:left"><code>src/fdp/sources/eodhd/</code></td><td style="text-align:left">HTTP、retry/rate limit、parser、provider ingest</td><td style="text-align:left">UI 和 research query</td></tr><tr><td style="text-align:left"><code>src/fdp/storage/</code></td><td style="text-align:left">SQLAlchemy table contract、schema guard、upsert</td><td style="text-align:left">migration 历史</td></tr><tr><td style="text-align:left"><code>alembic/</code></td><td style="text-align:left">MySQL 物理 schema revision</td><td style="text-align:left">运行时业务逻辑</td></tr><tr><td style="text-align:left"><code>src/fdp/quality/</code></td><td style="text-align:left">检测 query、check run、issue persistence</td><td style="text-align:left">自动修复/删除</td></tr><tr><td style="text-align:left"><code>src/fdp/repair/</code></td><td style="text-align:left">缺失数据 plan/confirm/claim/backfill</td><td style="text-align:left">坏行删除</td></tr><tr><td style="text-align:left"><code>src/fdp/quarantine/</code></td><td style="text-align:left">坏行 plan/confirm/archive/delete/revalidate</td><td style="text-align:left">missing backfill</td></tr><tr><td style="text-align:left"><code>src/fdp/research/</code></td><td style="text-align:left">本地只读查询/指标；受 200-unit cap 的 Technical 口径抽验</td><td style="text-align:left">数据补拉和写库</td></tr><tr><td style="text-align:left"><code>src/fdp/bulk_unmatched.py</code></td><td style="text-align:left">unmatched summary/classify/route domain logic</td><td style="text-align:left">UI 和 API 拉取</td></tr></tbody></table></div><p>对应的局部 AI/maintainer 规则位于各路径的 <code>AGENTS.md</code>。规则继承顺序是：</p><pre><code class="language-text">repo AGENTS.md -&gt; database_system_cli/AGENTS.md -&gt; nearest scoped AGENTS.md</code></pre><h2 id="3-总体组件图">3. 总体组件图</h2><pre><code class="language-mermaid">flowchart TB
+    subgraph Input[&quot;Input Layer&quot;]
+        direction LR
+        A[&quot;CLI / Menu / Python&quot;] --&gt; B[&quot;fdp.get_data Job&quot;]
+        B --&gt; C[&quot;JobRuntime&quot;]
+    end
+
+    subgraph Source[&quot;External Data Source&quot;]
+        D[&quot;EODHD Client&quot;]
+    end
+
+    subgraph Pipeline[&quot;Ingestion Pipeline&quot;]
+        direction LR
+        C --&gt; E[&quot;Provider Ingest / Parser&quot;]
+        D --&gt; E
+        E --&gt; F[&quot;Storage Upsert&quot;]
+    end
+
+    subgraph Core[&quot;Canonical Data Layer&quot;]
+        direction LR
+        F --&gt; G[&quot;us_share Canonical Data&quot;]
+        G --&gt; I[&quot;Quality&quot;]
+        I --&gt; J[&quot;Repair / Quarantine&quot;]
+    end
+
+    subgraph Research[&quot;Research Layer&quot;]
+        K[&quot;Research Reader + Local Indicators&quot;]
+        L[&quot;Read-only FastAPI&quot;]
+        M[&quot;React / ECharts Terminal&quot;]
+    end
+
+    E --&gt; H[&quot;System Audit / Unmatched&quot;]
+    G --&gt; K
+    K --&gt; L --&gt; M</code></pre><p>注意：<code>validate</code>、<code>repair</code>、<code>quarantine</code> 和 <code>research</code> 当前不是 ingest Job。它们由 <code>fdp/cli.py</code> 直接调用各自 service/read layer。<code>j21 menu</code> 当前只覆盖 registry 中的 ingest/reconcile workflows。</p><h2 id="4-三种入口如何汇合">4. 三种入口如何汇合</h2><h3 id="4-1-typer-cli">4.1 Typer CLI</h3><p><code>pyproject.toml</code> 同时把 <code>j21</code> 和兼容命令 <code>fdp</code> 映射到 <code>fdp.cli:app</code>。</p><pre><code class="language-text">poetry run j21 ingest daily ...
+-&gt; fdp.cli.ingest_daily()
+-&gt; BulkDailyJob.run(override_source=&quot;cli&quot;)</code></pre><p>CLI 负责把字符串转成 date/list/enum，选择 Job，渲染 <code>JobResult</code>。<code>--output json</code> 时，stdout 只输出一个 JSON result，progress 走 stderr。</p><h3 id="4-2-terminal-menu">4.2 Terminal menu</h3><pre><code class="language-text">poetry run j21 menu
+-&gt; fdp.cli.terminal_menu()
+-&gt; fdp.menu.run_terminal_menu()
+-&gt; INGEST_JOB_DEFINITIONS + JOB_HANDLERS
+-&gt; Job.preflight()
+-&gt; 人工确认（默认取消）
+-&gt; Job.run(TqdmProgressReporter)</code></pre><p>菜单不 shell 调 CLI。它直接调用与 CLI 相同的 Job，因此默认值、预算和失败语义只有 一份。</p><h3 id="4-3-python-caller">4.3 Python caller</h3><p>研究脚本或未来 automation 可以直接实例化 Job：</p><pre><code class="language-python">job = StockDailyJob()
+preflight = job.preflight(...)
+result = job.run(...)</code></pre><p>参数优先级固定为：</p><pre><code class="language-text">CLI/menu/Python explicit value -&gt; Job module default -&gt; ValueError</code></pre><h2 id="5-shared-job-内部流程">5. Shared Job 内部流程</h2><p><code>fdp.get_data</code> 的四个基础文件：</p><ul><li><code>contracts.py</code>：<code>JobPreflight</code>、<code>JobResult</code>、<code>ProgressEvent</code>。</li><li><code>runtime.py</code>：创建 SQLAlchemy engine，并延迟创建 EODHD client。</li><li><code>registry.py</code>：菜单可发现 Job 的显式清单。</li><li><code>reporting.py</code>：跨入口的结果/事件格式辅助。</li></ul><pre><code class="language-mermaid">sequenceDiagram
+    participant U as CLI/Menu/Python
+    participant J as fdp.get_data Job
+    participant DB as MySQL
+    participant R as JobRuntime
+    participant E as EODHD
+    participant I as provider ingest
+
+    U-&gt;&gt;J: explicit parameters
+    opt Job needs database estimates or identity resolution
+        J-&gt;&gt;DB: read-only preflight queries
+    end
+    J--&gt;&gt;U: target tables, units, API/storage estimate
+    U-&gt;&gt;J: confirmed run
+    J-&gt;&gt;R: lazy client construction
+    R--&gt;&gt;J: configured EodhdClient
+    J-&gt;&gt;I: run one work unit
+    I-&gt;&gt;E: authenticated request with limiter/retry
+    E--&gt;&gt;I: normalized API response
+    I-&gt;&gt;DB: validated upsert + audit rows
+    I--&gt;&gt;J: provider load result
+    J--&gt;&gt;U: progress events + versioned JobResult</code></pre><p>预算拒绝、dry-run 和菜单取消必须发生在 <code>JobRuntime.client()</code> 之前，因此这些路径不会 读取 API key，也不会消耗 API call。</p><h2 id="6-instrument-master-与生命周期">6. Instrument Master 与生命周期</h2><h3 id="6-1-active-instruments-symbol-history">6.1 Active instruments + symbol history</h3><pre><code class="language-text">j21 ingest instruments
+-&gt; ActiveInstrumentsJob.run()
+-&gt; load_exchange_symbols()
+-&gt; EodhdClient.get_symbol_change_history()
+-&gt; reconcile_symbol_changes()
+-&gt; instrument_identifier_history upsert
+-&gt; EodhdClient.get_exchange_symbols()
+-&gt; parse_exchange_symbol_rows()
+-&gt; instrument upsert
+-&gt; ingestion_task_run + api_call_log</code></pre><p>身份规则：<code>instrument_id</code> 稳定；<code>instrument.symbol/provider_symbol</code> 保存当前值；旧值和 有效期写入 <code>instrument_identifier_history</code>。不能仅凭 name/ticker 猜测合并。</p><h3 id="6-2-delisted-instruments">6.2 Delisted instruments</h3><pre><code class="language-text">j21 ingest delisted-instruments
+-&gt; DelistedInstrumentsJob.run()
+-&gt; load_delisted_instruments()
+-&gt; EODHD delisted symbol list
+-&gt; parse inactive stock/ETF/Fund rows into canonical asset_type
+-&gt; instrument upsert with is_active=false/delisted_date
+-&gt; instrument_lifecycle_event upsert by event_key</code></pre><p>重跑必须幂等：可以刷新 instrument 当前状态，不可重复制造相同 lifecycle event。</p><h2 id="7-historical-eod-路径">7. Historical EOD 路径</h2><p><code>j21 ingest history</code> 根据 <code>--asset-types</code> 选择 stock、ETF、Fund、index Job 或通用 <code>HistoricalDailyJob</code>。<code>--instrument-status active|inactive|all</code> 控制 instrument master 匹配范围；旧 <code>--include-inactive</code> 仅为兼容参数。</p><pre><code class="language-mermaid">flowchart TD
+    A[&quot;history CLI/menu&quot;] --&gt; B[&quot;HistoricalDailyJob.preflight&quot;]
+    B --&gt; C[&quot;resolve current/provider/history symbol&quot;]
+    C --&gt; D[&quot;create aggregate ingestion_task_run&quot;]
+    D --&gt; E{&quot;for each resolved instrument&quot;}
+    E --&gt; F[&quot;one DB transaction&quot;]
+    F --&gt; G[&quot;load_historical_daily_price_unit&quot;]
+    G --&gt; H[&quot;EodhdClient.get_historical_eod&quot;]
+    H --&gt; I[&quot;record_api_call&quot;]
+    I --&gt; J[&quot;parse_daily_price_rows&quot;]
+    J --&gt; K[&quot;asset-specific upsert&quot;]
+    K --&gt; E
+    E --&gt; L[&quot;finish aggregate task run&quot;]</code></pre><p>事务边界不是一个超大 transaction：parent task run 先提交，每个 provider symbol 独立 提交，最后再提交 aggregate counters。单 symbol 失败不会回滚之前已成功的 symbol； 401/402/403、数据库/parser exception 或连续全局 transient failures 会停止后续 work units。</p><p><code>IndexDailyJob</code> 复用 historical base，但先确保 index instrument 存在，再写 <code>index_daily_price</code>。<code>MarketCalendarJob</code> 调用 exchange details/calendar parser，写入 <code>market_calendar(calendar_date, is_trading_day, source)</code>。</p><p>EODHD 历史 holiday payload 曾漏掉三个已证实休市日。US calendar parser 因此有显式、 有一手来源的 closure override：Nasdaq 2012 schedule 的 <code>2012-01-02</code>，以及 SEC/NYSE Arca 记录的 Sandy <code>2012-10-29/30</code>。这些日期写 source <code>NASDAQ_SEC_US_CLOSURE</code>；不会从“返回行少”自动猜休市。</p><h2 id="8-bulk-eod-路径">8. Bulk EOD 路径</h2><h3 id="8-1-单日-bulk">8.1 单日 Bulk</h3><pre><code class="language-text">j21 ingest daily
+-&gt; BulkDailyJob.run()
+-&gt; load_bulk_daily_prices()
+-&gt; EodhdClient.get_bulk_eod(exchange, date, optional symbols)
+-&gt; load active/all temporal identity map for selected asset types
+-&gt; dated identifier history -&gt; current provider symbol -&gt; optional Type compatibility
+-&gt; batch natural-key arbitration: unique dated alias wins; lower alias is shadowed
+   -&gt; matched: parse_daily_price_rows -&gt; stock/ETF/Fund/index upsert
+   -&gt; unmatched: bulk_unmatched_daily_price_observation upsert
+-&gt; finish task/API audit -&gt; JobResult</code></pre><p>单日流程使用一个 transaction。unmatched 不是垃圾，也不会被丢掉；它保留原始 payload、 vendor type、价格字段、首次/最近观察时间和分类状态，等待后续 instrument 补全或人工判断。</p><h3 id="8-2-多日-daily-range">8.2 多日 Daily Range</h3><pre><code class="language-text">j21 ingest daily-range --from ... --to ...
+-&gt; DailyRangeJob.preflight()
+-&gt; verify complete market_calendar coverage
+-&gt; select is_trading_day=true dates
+-&gt; estimate API calls and storage
+-&gt; User API preflight + thread-safe weighted attempt ledger
+-&gt; dry-run by default
+-&gt; --execute --yes
+-&gt; one load_bulk_daily_prices transaction per trading date
+-&gt; optional bounded ThreadPoolExecutor
+-&gt; aggregate committed per-day results</code></pre><p><code>--instrument-status active</code> 适合每日增量；历史 backfill 使用 <code>all</code>。每次 HTTP attempt 在发出前 扣除真实 weighted units，retry 同样计费，预算不足时不发送请求。并发只改变“多个交易日同时 进行”，不改变单日事务、upsert 唯一键或 audit 语义。出现 fatal 条件后取消尚未启动的 future，同时收集已经开始的 future，保证结果计数等于真实提交。</p><h2 id="9-bulk-unmatched-reconcile">9. Bulk Unmatched Reconcile</h2><pre><code class="language-mermaid">flowchart LR
+    Raw[&quot;system.bulk_unmatched_daily_price_observation&quot;]
+    Summary[&quot;summary / list&quot;]
+    Classify[&quot;strict classifier&quot;]
+    Match{&quot;exact provider_symbol&lt;br/&gt;instrument match?&quot;}
+    Route[&quot;route dry-run / execute&quot;]
+    Price[&quot;stock / ETF / Fund / index daily price&quot;]
+    Hold[&quot;needs_instrument / non_price_asset / unknown&quot;]
+
+    Raw --&gt; Summary --&gt; Classify --&gt; Match
+    Match -- yes --&gt; Route --&gt; Price
+    Match -- no --&gt; Hold</code></pre><p>操作顺序：</p><pre><code class="language-text">j21 research bulk-unmatched summary/list
+j21 research bulk-unmatched classify
+j21 ingest bulk-unmatched-route --dry-run
+j21 ingest bulk-unmatched-route --execute --yes
+j21 validate daily-price</code></pre><p><code>fdp.bulk_unmatched.classify_bulk_unmatched_observations()</code> 只接受 exact source-date/current <code>provider_symbol</code> identity match。Fund 路由到 <code>fund_daily_price</code>； preferred/notes/bond/warrant/unknown 不会被猜测写进 canonical price table。route 时重新通过 <code>parse_daily_price_rows()</code> 校验价格，并保留 observed symbol/provider symbol。</p><h2 id="10-质量-repair-与-quarantine">10. 质量、Repair 与 Quarantine</h2><pre><code class="language-mermaid">flowchart TD
+    Price[&quot;canonical daily price + market calendar&quot;] --&gt; Validate[&quot;validate_daily_prices&quot;]
+    Validate --&gt; Checks[&quot;duplicate / missing / OHLCV / calendar checks&quot;]
+    Checks --&gt; Issue[&quot;system.data_quality_issue&quot;]
+    Issue --&gt; Kind{&quot;issue type&quot;}
+    Kind -- missing_trade_date --&gt; Repair[&quot;repair plan -&gt; confirm -&gt; claim&quot;]
+    Repair --&gt; API[&quot;EODHD backfill by instrument_id&quot;]
+    API --&gt; Verify1[&quot;verify target row&quot;] --&gt; Resolve1[&quot;resolve issue&quot;]
+    Kind -- stored bad row --&gt; Quarantine[&quot;quarantine plan -&gt; confirm -&gt; claim&quot;]
+    Quarantine --&gt; Archive[&quot;archive payload/hash&quot;]
+    Archive --&gt; Delete[&quot;delete locked source row&quot;]
+    Delete --&gt; Verify2[&quot;revalidate&quot;] --&gt; Resolve2[&quot;resolve issue&quot;]
+    Kind -- asset_type_mismatch --&gt; Reconcile[&quot;migrate daily-price-asset-types&quot;]
+    Reconcile --&gt; Verify3[&quot;copy -&gt; payload verify -&gt; source delete&quot;]</code></pre><p><code>quality/checks/</code> 只生成 SELECT；<code>quality/validation.py</code> 负责写 check run 和 open issue。 质量检查不自动改市场数据。</p><p>instrument metadata 更正可能发生在旧价格写入之后。<code>asset_type_mismatch</code> 不走 quarantine； <code>j21 migrate daily-price-asset-types --phase plan</code> 只读列出 source/target/rows，execute 阶段按 chunk transaction copy 到当前 canonical type 表，完整 payload 验证通过后才删除 source。 同 natural key 的目标 payload 不一致时拒绝覆盖并回滚。</p><p>Repair 只处理缺失行：执行前重验 issue、instrument/provider symbol 和 plan status，从 <code>confirmed</code> 原子 claim 为 <code>executing</code>，按 <code>instrument_id</code> 回填；目标行存在后才 resolve。</p><p>Quarantine 处理已经存在的坏行：必须先归档 payload/hash，再删除锁定源行；归档数与删除数 不一致则失败。只有 exact duplicate payload 能自动 dedupe，冲突 payload 留给人工 review。</p><h2 id="11-research-read-layer">11. Research Read Layer</h2><pre><code class="language-text">j21 research daily-prices
+-&gt; DailyPriceReader.get_daily_prices()
+-&gt; resolve date range
+-&gt; match current symbol / provider_symbol / valid identifier history
+-&gt; join instrument to selected split price table
+-&gt; expose current lifecycle + historical price symbols
+-&gt; return ordered dictionaries</code></pre><p>Reader 只读本地数据库，不调用 EODHD。<code>analysis_close</code> 根据 <code>adjusted=True/False</code> 选择 <code>adjusted_close</code> 或 raw <code>close</code>。<code>is_active/delisted_date</code> 来自 instrument join，不复制到 每天的 price row。</p><pre><code class="language-text">local daily rows
+-&gt; calculate_daily_indicators(adjusted=True|False)
+-&gt; adjusted OHLC + SMA/EMA/Bollinger/RSI/MACD/Volume SMA/volatility</code></pre><p><code>j21 research technical-validate</code> 是唯一例外的小额 provider 诊断：固定比较 SMA20/EMA20/RSI14，每请求 5 units，总 hard cap 200；它只输出误差报告、不写数据库。 2026-07-11 对 2024 Q1 AAPL/META/SPY 的 9 组真实抽验全部通过，最大 absolute error 小于 <code>0.00005</code>；完整记录见 <code>technical_indicator_parity_report.md</code>。</p><h2 id="11-1-sibling-research-terminal">11.1 Sibling Research Terminal</h2><pre><code class="language-text">React/TypeScript/ECharts
+-&gt; GET-only FastAPI routes
+-&gt; guarded SQLAlchemy Core repository
+-&gt; us_share canonical + system audit
+-&gt; local indicator transform</code></pre><p><code>../research_terminal/</code> 提供 Overview、Security Explorer、ETF/Fund、Data Health、safe CSV 和 chart PNG。进程级 SQL guard 拒绝非 SELECT/SHOW/EXPLAIN/WITH，并且部署账号仍应只有 SELECT 权限。没有 ingest/repair/migration HTTP route；页面只复制 CLI。<code>current_active</code> 是 当前 master 状态，<code>price_observed</code> 不是 point-in-time universe。</p><h2 id="12-数据库分层">12. 数据库分层</h2><div class="table-wrap"><table><thead><tr><th scope="col" style="text-align:left">Schema</th><th scope="col" style="text-align:left">内容</th><th scope="col" style="text-align:left">例子</th></tr></thead><tbody><tr><td style="text-align:left"><code>us_share</code></td><td style="text-align:left">canonical instrument/market data</td><td style="text-align:left">identity/lifecycle/calendar、六种 asset daily price</td></tr><tr><td style="text-align:left"><code>system</code></td><td style="text-align:left">运行审计、DQ、人工 workflow、staging</td><td style="text-align:left">task/API log、issues、repair/quarantine plan、bulk unmatched</td></tr><tr><td style="text-align:left"><code>app_log</code></td><td style="text-align:left">API playground/search/snapshot 临时响应</td><td style="text-align:left">quote/search/screener/live snapshot</td></tr></tbody></table></div><p><code>src/fdp/storage/tables.py</code> 管理 Data Core 的 runtime table contract；物理变化必须通过 Alembic。<code>app_log</code> snapshot 当前由迁移历史管理，不应重新混入 <code>us_share</code> canonical metadata。</p><p>ETF/Fund 历史混表已通过 <code>j21 migrate fund-daily-price</code> 的 plan/copy/verify/finalize workflow 拆开。Alembic 只建 schema/checkpoint；数千万行 copy/compact swap 在可恢复 Job 中运行， finalize 需要 verified backup/hash 和 conservation/checksum gate，不自动 <code>OPTIMIZE TABLE</code>。</p><p>后续 instrument type correction 由通用 <code>daily-price-asset-types</code> reconcile 维护跨表不变量； 2026-07-11 已无损搬迁 871 行 <code>stock -&gt; etf</code> drift，最终 mismatch count 为 0。</p><h2 id="13-常见修改的联查清单">13. 常见修改的联查清单</h2><div class="table-wrap"><table><thead><tr><th scope="col" style="text-align:left">修改类型</th><th scope="col" style="text-align:left">至少联查</th></tr></thead><tbody><tr><td style="text-align:left">新 ingest workflow</td><td style="text-align:left">Job + registry + CLI + menu + provider ingest + tests/docs</td></tr><tr><td style="text-align:left">EODHD 字段变化</td><td style="text-align:left">client/parser + ingest model + storage/upsert + quality/research + tests</td></tr><tr><td style="text-align:left">schema 变化</td><td style="text-align:left">tables + Alembic + upsert + callers + tests + PROJECT/HTML</td></tr><tr><td style="text-align:left">新 quality issue</td><td style="text-align:left">check + persistence + repair/quarantine/manual route + CLI/tests</td></tr><tr><td style="text-align:left">research 返回字段</td><td style="text-align:left">reader query + CLI renderer + tests + PROJECT contract</td></tr><tr><td style="text-align:left">文档命令变化</td><td style="text-align:left">actual Typer <code>--help</code> tree + CLI Markdown/HTML + command-registration tests</td></tr></tbody></table></div><h2 id="14-当前未实现边界">14. 当前未实现边界</h2><ul><li>Terminal menu 尚未覆盖 validate、repair、quarantine 和普通 research 查询。</li><li>High-volume intraday bar store 尚未实现。若未来加入 5-minute 全市场数据，推荐将</li></ul><p>instrument/catalog/quality metadata 留在 SQL，将大规模 bars 放入按资产/周期/日期分区的 Parquet；不要默认把数亿行 intraday bars 塞入当前日频 MySQL 模型。</p><ul><li>Research Terminal v1 已实现，但不是 PIT universe terminal；等待 universe membership 数据后</li></ul><p>才能增加历史时点成分筛选。</p><h2 id="15-验证入口">15. 验证入口</h2><pre><code class="language-bash">cd database_system_cli
+poetry run pytest
+poetry run ruff check --no-cache src tests scripts
+poetry run python -m compileall -q src tests scripts
+poetry run alembic heads
+poetry run j21 --help
+poetry run j21 ingest --help</code></pre><p>大规模真实 ingest 不属于架构验证；没有用户明确授权时，只运行 dry-run、small smoke 或 只读检查。</p></article></main></div></body></html>

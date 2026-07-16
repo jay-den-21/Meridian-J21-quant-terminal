@@ -6,27 +6,28 @@
 
 `database_system_cli` 不是一个单纯下载行情数据的脚本集合，而是 `financial-data-platform` 仓库里的可追踪、可验证、可扩展的金融数据库系统子项目。
 
-第一阶段先建立数据基础设施，并完整打通美股股票+ETF 日频量价数据：
+第一阶段先建立数据基础设施，并完整打通美股股票、ETF、Fund 日频量价数据：
 
 - 数据源：EODHD paid API
 - 市场：`US`
-- 数据范围：当前活跃股票+ETF；退市/非活跃股票+ETF 保存为 instrument lifecycle/universe；可额外保存常用市场指数作为 benchmark time series
+- 数据范围：当前与退市/非活跃股票、ETF、Fund；生命周期保存在 instrument/lifecycle；常用市场指数作为 benchmark time series
 - 历史深度：近 20 年
 - 数据粒度：一个标的一天一行
 - 数据库：本机 MySQL
 - schema：`us_share`、`a_share`、`system`、`app_log`
 
-长期方向是支持策略研究和策略交易平台，但第一阶段只建设可信数据内核，不实现实盘交易、复杂前端、多数据源兜底或自动猜测式修复。
+长期方向是支持策略研究和策略交易平台。数据库 CLI 只建设可信数据内核；平级 Terminal
+提供只读可视化，但仍不实现实盘交易、多数据源兜底或自动猜测式修复。
 
 ## 2. 第一阶段范围
 
 必须完成的能力：
 
-- 从 EODHD 获取 US 市场股票+ETF 的 `instrument` 清单。
+- 从 EODHD 获取 US 市场股票、ETF、Fund 的 `instrument` 清单。
 - 按 ticker 回填近 20 年历史日频 OHLCV。
 - 按 provider symbol 拉取常用市场指数的历史日频 OHLCV，用于 benchmark/market regime 研究。
 - 使用 EODHD Bulk EOD 做每日盘后增量更新。
-- 拉取 EODHD delisted/inactive stock+ETF universe，并把生命周期状态写入 `instrument` 和 `instrument_lifecycle_event`。
+- 拉取 EODHD delisted/inactive stock+ETF+Fund universe，并把生命周期状态写入 `instrument` 和 `instrument_lifecycle_event`。
 - 将结构化数据写入 MySQL。
 - 使用唯一键 upsert 防止重复写入。
 - 将任务运行状态、API 调用摘要、质量检查结果写入 `system` schema。
@@ -37,7 +38,7 @@
 
 - 不做实盘下单。
 - 不做多数据源 fallback。
-- 不做复杂 app 前端。
+- database CLI 不拥有 app 前端；平级 `research_terminal/` 已提供 localhost-only 只读可视化。
 - 不保存全量 raw API response。
 - 不自动修正价格。
 - 不给缺失交易日插入空价格行。
@@ -82,26 +83,44 @@ financial-data-platform/
     config/
       default.yaml
     alembic/
+      AGENTS.md
       versions/
     docs/
+      AGENTS.md
       architecture.md
     src/
       fdp/
         cli.py
+        bulk_unmatched.py
         config.py
         get_data/
+          AGENTS.md
           historical/
           bulk/
           instruments/
           reconcile/
         menu/
+          AGENTS.md
         sources/
           eodhd/
+            AGENTS.md
         storage/
+          AGENTS.md
         quality/
+          AGENTS.md
         repair/
+          AGENTS.md
+        quarantine/
+          AGENTS.md
         research/
+          AGENTS.md
     tests/
+  research_terminal/
+    AGENTS.md
+    PROJECT.md
+    PROGRESS.md
+    src/j21_terminal/
+    frontend/
 ```
 
 说明：
@@ -110,11 +129,13 @@ financial-data-platform/
 - `storage/` 负责 MySQL 连接、SQLAlchemy Core table definitions、upsert。
 - `quality/` 负责重复、缺失、OHLCV 合法性、空值等检查。
 - `repair/` 负责生成和执行人工确认后的 backfill plan。
-- `research/` 负责 Python/notebook/backtest 读取接口，例如 `DailyPriceReader.get_daily_prices(...)`。
+- `research/` 负责 Python/notebook/backtest 读取、本地技术指标和小预算 provider 口径抽验。
 - `get_data/` 是 CLI、terminal menu 和 Python 调用共用的 Job 层，负责参数解析、preflight、执行和结构化结果。
 - `menu/` 只负责中英文 prompts、确认页和 `tqdm` 展示，不复制 provider/storage 业务逻辑，也不 shell out 到 CLI。
-- `docs/architecture.md` 记录 Data Core / future Terminal 的边界，以及 MySQL daily 与 intraday Parquet bar store 的取舍。
+- `bulk_unmatched.py` 是 staging row 的严格分类和 route domain service，由 `get_data/reconcile/` 和 CLI adapter 调用。
+- `docs/architecture.md` 是当前可执行代码的总入口：它逐层追踪 CLI/menu/Python Job、EODHD provider、storage、quality、repair/quarantine、research 和平级只读 Terminal。
 - `cli.py` 暴露 `j21 menu`、`j21 ingest`、`j21 validate`、`j21 repair`、`j21 research`；`fdp` 暂时保留为兼容 alias。
+- 局部 `AGENTS.md` 只放在真实职责边界。规则从 repo root 到子项目再到最近局部文件累积；修改跨层功能时必须读取所有相关局部文件，并按 `docs/architecture.md` 检查上下游。
 
 ## 5. 数据模型
 
@@ -141,7 +162,7 @@ financial-data-platform/
 
 `instrument` 是标的主表，不是字段名称表。
 
-一行代表一个金融标的，例如 Apple、Microsoft、SPY ETF。它回答“这个东西是谁”。
+一行代表一个金融标的，例如 Apple、SPY ETF、VFINX Fund。它回答“这个东西是谁”。
 
 建议字段：
 
@@ -175,7 +196,8 @@ instrument_id | market | symbol | provider | provider_symbol | name       | exch
 - 必须保留 `provider_symbol`，例如 `AAPL.US`。
 - 必须保留标准 `symbol`，例如 `AAPL`。
 - 必须保留 `market`、`exchange`、`asset_type`、`currency`。
-- active instrument 清单纳入当前活跃 stock/ETF；delisted/inactive stock+ETF 通过独立 `delisted-instruments` workflow 幂等写入。
+- canonical `asset_type` 固定为 `stock/etf/fund/index/forex/crypto`，不增加临时 subtype。
+- active instrument 清单纳入当前活跃 stock/ETF/Fund；delisted/inactive 通过独立 workflow 幂等写入。
 - 常用市场指数可作为 `asset_type = "index"` 的手动 provider-symbol 集合写入。
 
 ### 5.3 `us_share.instrument_identifier_history`
@@ -215,17 +237,17 @@ instrument_id | id_type         | id_value | valid_from | valid_to   | source
 
 ### 5.4 日频价格表和 instrument views
 
-v0.1 使用“身份统一，价格拆表”的结构：
+当前使用“身份统一，按 canonical asset type 价格拆表”的结构：
 
 - `us_share.instrument` 是唯一可写 identity master。
-- `us_share.stock_instrument`、`us_share.etf_instrument`、`us_share.index_instrument` 是只读 view，按 `asset_type` 从 `instrument` 过滤出来。
-- `us_share.stock_daily_price`、`us_share.etf_daily_price`、`us_share.index_daily_price` 是真实日频量价表。
-- 旧 `us_share.daily_price` 已退出运行模型；有效 stock/ETF/index 行迁移到 split tables 后，legacy 表应删除。
+- `stock_instrument`、`etf_instrument`、`fund_instrument`、`index_instrument` 是只读 view。
+- `stock/etf/fund/index/forex/crypto_daily_price` 是六张明确的日频表。
+- 旧 `us_share.daily_price` 已退出运行模型；有效行迁入 canonical split tables 后已删除 legacy 表。
 
 这样做的原因：
 
 - ticker rename、provider symbol 变化、identifier history 只维护一套 `instrument_id`。
-- 查询和质量检查时，股票、ETF、指数的价格表不再混在一个物理表里。
+- 查询和质量检查时，不同 canonical asset type 不混在一个物理表里。
 - 后续做 point-in-time universe、delisted instrument、corporate action 时，身份链路仍然集中。
 
 建议字段：
@@ -264,10 +286,16 @@ unique(instrument_id, trade_date)
 - 不在入库时只保留 adjusted price。
 - stock 数据写 `stock_daily_price`。
 - ETF 数据写 `etf_daily_price`。
+- Fund/Mutual Fund 数据写 `fund_daily_price`；`etf_instrument` 不再包含 Fund。
 - benchmark index 数据写 `index_daily_price`。
+- forex 与 crypto 分别写 `forex_daily_price`、`crypto_daily_price`。
 - `j21 ingest history` 用于历史回填，按 provider symbol 逐个调用历史 EOD API。
 - `j21 ingest history --instrument-status active|inactive|all` 控制历史回填匹配 active、inactive 或全部 instrument；旧 `--include-inactive` 保留为兼容入口，等价于 `--instrument-status all`。
-- `j21 ingest daily` 用于每日增量，调用 EODHD Bulk EOD API 后写入 stock/ETF split tables；无法匹配当前 instrument 的 rows 写入 unmatched staging 表。
+- `j21 ingest daily` 用于每日增量；`--instrument-status active|all` 控制当前或包含 inactive 的严格 identity map，无法匹配的 rows 写入 unmatched staging。
+- 历史 Bulk 依次使用 source-date identifier history、current provider symbol、可用时的 EODHD type compatibility；同一 natural key 出现旧/新 alias 时，唯一 dated-history row 胜出，其余保留为 `shadowed`。
+- instrument metadata 之后若纠正 `asset_type`，quality 会报告 `asset_type_mismatch`；
+  `j21 migrate daily-price-asset-types --phase plan|execute` 按当前 instrument master 把旧表行
+  copy 到目标表、逐字段验证后才删除 source，目标同日 payload 冲突时整块回滚。
 
 读取层提供价格口径开关：
 
@@ -278,7 +306,16 @@ DailyPriceReader(connection, date_from=start, date_to=end).get_daily_prices(
 )
 ```
 
-第一阶段 `adjusted=True` 至少使用 `adjusted_close` 作为复权收盘价。完整 adjusted OHLC 可在后续通过明确算法扩展。
+`adjusted=True` 使用 `adjusted_close / close` 因子同步缩放 OHLC；`adjusted=False` 保留 raw OHLC。
+
+ETF/Fund 物理拆分使用 operator-controlled expand/backfill/contract，不在 Alembic 内复制
+数千万行。`j21 migrate fund-daily-price --phase plan|copy|verify|finalize` 保存 checkpoint、
+备份路径/hash 和 conservation/checksum；finalize 只有在 current verification 成功后才允许。
+真实 split 最终为 ETF `7,100,821`、Fund `56,464,163`，总数守恒且跨表污染为 0；未运行
+`OPTIMIZE TABLE`。
+
+2026-07-11 终检发现 metadata 更正后遗留 `stock -> etf` 的 22 个 instrument、871 行；通用
+reconcile 先以 100-row chunk 实测，再搬迁剩余 771 行，最终 mismatch plan 为 0。
 
 ### 5.5 `us_share.instrument_lifecycle_event`
 
@@ -342,11 +379,16 @@ updated_at
 - 唯一键是 `source + provider_symbol + trade_date`。
 - Bulk 重跑时只能刷新 raw payload、价格字段、`run_id` 和 `last_seen_at`，不能把已分类状态重置成 `unresolved`。
 - `classification_status = unresolved` 表示尚未处理。
-- `classification_status = matched` 表示严格 provider_symbol 匹配到已入库 stock/ETF/index instrument，可由人工确认的 route 命令转入正式价格表。
-- `classification_status = needs_instrument` 表示 EODHD type 看起来像 stock/ETF/index，但本库还没有可严格匹配的 instrument。
-- `classification_status = non_price_asset` 表示 fund、preferred、notes、bond、warrant 等 P0 不写入正式价格表的资产。
+- `classification_status = matched` 表示严格 identity 匹配到已入库 stock/ETF/Fund/index instrument，可由 gated route 命令转入正式价格表。
+- `classification_status = needs_instrument` 表示 EODHD type 看起来像 canonical price asset，但本库还没有可严格匹配的 instrument。
+- `classification_status = shadowed` 表示同一 instrument/date 的低优先级 old/current alias，原始行保留但不覆盖 dated winner。
+- `classification_status = ambiguous` 表示多个 identity owner 或无法唯一选出 dated winner。
+- `classification_status = invalid_price` 表示 identity 可判定但 OHLCV 不合法，不能写 canonical 表。
+- `classification_status = resolved` 表示该 observation 后续已严格匹配并写入 canonical 表；作为审计历史继续保留，不代表仍待处理。
+- `classification_status = non_price_asset` 表示 preferred、notes、bond、warrant 等当前没有 canonical price table 的资产；Fund 已有正式表，不属于此类。
 - `classification_status = routed` 表示已转入对应 split daily price table。
 - `classification_status = route_failed` 表示转写时 OHLCV 校验失败或字段不足。
+- `COUNT(*)` 统计的是全部历史 observations，可能包含大量 `resolved` rows；统计当前 backlog 必须显式过滤 `classification_status`。
 
 ### 5.5c `app_log` snapshot tables
 
@@ -392,7 +434,10 @@ updated_at
 - 日期按交易所本地日期保存。
 - 第一阶段只做 US 日频 EOD，`calendar_date` 使用 US 交易日日期。
 - 优先从 EODHD exchange details / holidays 能力构建。
-- 如果 EODHD 日历覆盖不足，必须定义明确的交易日历生成算法，不能靠猜测式补丁。
+- EODHD 历史 holiday payload 若漏掉交易所已证实休市，使用带一手来源、US-only 的显式
+  closure override。当前覆盖 Nasdaq 已确认的 `2012-01-02` observed holiday，以及 SEC/NYSE
+  Arca 已确认的 Sandy `2012-10-29/30` 全市场休市；source 写
+  `NASDAQ_SEC_US_CLOSURE`，不得用低行数启发式自动判休市。
 
 ### 5.7 `system.ingestion_task_run`
 
@@ -565,7 +610,7 @@ Terminal menu -/
 CLI/menu explicit value > Python Job module default > ValueError
 ```
 
-历史 stock/ETF pull 通过 instrument master 同时解析 `AAPL` 和 `AAPL.US`，不能盲目拼接 `.US`。每个 symbol 使用独立 transaction，共用一个 aggregate `ingestion_task_run`；单个无数据/404 可以继续，401/402/403、数据库错误或连续全局 transient failure 必须停止后续 work units。
+历史 stock/ETF/Fund pull 通过 instrument master 同时解析 canonical/provider symbol，不能盲目拼接 `.US`。每个 symbol 使用独立 transaction，共用一个 aggregate `ingestion_task_run`；单个无数据/404 可以继续，401/402/403、数据库错误或连续全局 transient failure 必须停止后续 work units。
 
 ### 6.1 Load instrument list
 
@@ -576,7 +621,7 @@ CLI/menu explicit value > Python Job module default > ValueError
 - 先从 EODHD `symbol-change-history` 获取 US rename 历史。
 - 对已存在的旧 `provider_symbol` 做显式 rename reconcile，例如 `FB.US -> META.US`。
 - 将旧 ticker/provider symbol 和新 ticker/provider symbol 写入 `us_share.instrument_identifier_history`。
-- 过滤当前活跃 stock/ETF。
+- 规范 EODHD Common Stock/Stock、ETF、Fund/Mutual Fund 到 `stock/etf/fund`。
 - 保留 EODHD `provider_symbol`。
 - 拆出标准 `symbol`。
 - 写入 `us_share.instrument`。
@@ -590,7 +635,7 @@ CLI/menu explicit value > Python Job module default > ValueError
 
 ```text
 call EODHD exchange-symbol-list with delisted=1
-parse inactive stock/ETF rows
+parse inactive stock/ETF/Fund rows
 upsert into us_share.instrument with is_active=false
 upsert delisted lifecycle event by event_key
 write task state and api call summary
@@ -605,19 +650,20 @@ write task state and api call summary
 流程：
 
 ```text
-select active instruments
+select active/inactive/all instruments from explicit operator status
 for each provider_symbol:
   call EODHD historical EOD endpoint
   parse date/open/high/low/close/adjusted_close/volume
   validate required fields and OHLCV basics
-  upsert into stock_daily_price / etf_daily_price / index_daily_price by asset_type
+  upsert into the canonical asset-specific daily table
   write api_call_log
   update ingestion_task_run
 ```
 
-回填必须可分批执行。推荐先用 20-50 个 symbol 验证，再扩大到全量股票+ETF。
+回填必须可分批执行。推荐先用 20-50 个 symbol 验证，再扩大到目标 universe。
 
-delisted/inactive 标的历史价格只在显式传入 `--include-inactive` 时纳入查找范围，避免普通 active 回填误把已退市标的混入日常任务。
+使用 `--instrument-status active|inactive|all` 明确 lifecycle 范围；旧
+`--include-inactive` 只保留为 `all` 的兼容 alias。
 
 ### 6.4 Daily bulk update
 
@@ -627,9 +673,9 @@ delisted/inactive 标的历史价格只在显式传入 `--include-inactive` 时�
 
 ```text
 call EODHD bulk endpoint for US/date
-match rows to us_share.instrument
+match source-date identifier history, then current provider symbol and compatible type
 matched rows validate OHLCV
-matched rows upsert into stock_daily_price / etf_daily_price by asset_type
+matched rows upsert into stock/ETF/Fund/index daily table by asset_type
 unmatched rows upsert into system.bulk_unmatched_daily_price_observation
 write task state and api call summary
 ```
@@ -642,7 +688,37 @@ EODHD 限额规则：
 - EODHD 官方 request rate ceiling 按 1000 requests/minute 控制。
 - 本项目默认限速为 600 requests/minute，低于官方上限。
 - Bulk EOD 全 exchange 一次请求按 100 API calls 估算。
-- 超过 `--max-api-calls` 或 `--max-estimated-gb` 时，命令必须在读取 API key 和调用 EODHD 之前拒绝执行。
+- User API preflight 核对 remote allowance；thread-safe ledger 在每次 attempt 前扣 weighted units，retry 也计费。
+- 超过 `--max-api-calls` 或 `--max-estimated-gb` 时，命令必须在调用 EODHD 之前拒绝执行。
+
+截至 `2026-07-12`，近期因子研究优先窗口 `2022-08-08..2026-07-06` 已完成
+`instrument-status=all` Bulk recovery：980/980 个交易日、48,191,634 条 source rows、
+46,958,823 条 matched rows、98,000 weighted API units、0 failed days、0 retries。
+数据库逐日验收确认 Stock/ETF/Fund canonical 与 unmatched staging 在 980 天均有数据，
+三个价格表的 table/master mismatch 为 0，并保留唯一
+`(instrument_id, trade_date)` 索引。当前物理行数为 Stock `17,063,497`、ETF
+`4,127,506`、Fund `25,587,451`、staging `1,550,792`；尚待后续额度日恢复的
+pre-staging 缺口此前是 `2014-09-18..2022-08-05` 共 1,985 个交易日。
+
+截至 `2026-07-14`，该旧窗口又完成连续前缀 `2014-09-18..2018-08-08`：
+980/980 个交易日、44,389,798 条 source rows、43,220,825 次 canonical upsert
+effects、99,800 weighted API units。数据库物理验收为 Stock `14,226,096`、ETF
+`1,767,338`、Fund `27,260,645`、staging `1,168,973`；三类表均覆盖全部
+980 天，table/master mismatch 为 0，联合唯一索引仍有效。完成该批后，2,986 个
+受影响交易日已恢复 1,981 个，剩余窗口为 `2018-08-09..2022-08-05` 共 1,005 天。
+
+截至 `2026-07-15`，剩余窗口已分两批闭合。`2018-08-09..2022-03-30`
+完成 917/917 天，run IDs `6009..6925`，取得 45,485,986 条 source rows、
+44,146,515 次 canonical upsert effects；917 次成功请求加 7 次 retry 共消耗
+92,400 weighted API units。`2022-03-31..2022-08-05` 完成 88/88 天，
+run IDs `6927..7014`，取得 4,506,354 条 source rows、4,329,704 次 canonical
+upsert effects 和 176,650 条 staging observations；88 次请求消耗 8,800 units，
+0 retry、0 failed day。
+
+最终审计确认：原先缺失 post-staging evidence 的 2,986/2,986 个交易日已全部重跑，
+`system.bulk_unmatched_daily_price_observation` 也覆盖全部 2,986 天。每个批次均有
+Stock、ETF、Fund 和 staging 数据；三张 canonical 表的 table/master mismatch 为 0，
+并由 `(instrument_id, trade_date)` 联合唯一索引阻止重复自然键。
 
 Bulk unmatched 后处理流程：
 
@@ -658,8 +734,8 @@ j21 validate daily-price
 
 - daily ingest 主路径必须快，只做精确匹配、正式表 upsert、unmatched staging，不做复杂猜测。
 - classifier 只允许严格 provider_symbol 匹配到已入库 `instrument_id`。
-- 只有 high-confidence stock/ETF/index rows 才能 route 到正式 price table。
-- fund、preferred、notes、unknown 暂不建新 price table，先保留在 staging 表里。
+- 只有 high-confidence stock/ETF/Fund/index rows 才能 route 到正式 price table。
+- preferred、notes、bond、warrant、unknown 暂无 canonical price table，保留在 staging。
 - 不确定的 rows 保持 unresolved/needs_instrument/non_price_asset，等待 instrument 补全或人工确认。
 
 ### 6.5 Validate quality
@@ -716,6 +792,17 @@ get_daily_prices(symbols, start, end, adjusted=True)
 - 返回 `instrument.is_active` 和 `instrument.delisted_date`，避免把生命周期字段复制到每日价格表。
 - 查询前可选检查目标范围是否存在 open quality issue。
 
+`calculate_daily_indicators(rows, adjusted=True)` 从本地 daily rows 计算 SMA20/50/200、
+EMA20、Bollinger20/2、RSI14、MACD12/26/9、Volume SMA20 和 annualized 20-day
+log-return volatility，不物化巨量指标表。`j21 research technical-validate` 使用固定
+SMA20/EMA20/RSI14 matrix 与 weighted hard budget（最多 200 units）抽验 EODHD 口径，
+只输出报告、不写库。2026-07-11 的 45-unit 实测结果见
+[`docs/technical_indicator_parity_report.md`](docs/technical_indicator_parity_report.md)。
+
+平级 `research_terminal/` 通过只读 FastAPI repository 消费这些查询和指标，提供 Overview、
+Security Explorer、ETF/Fund、Data Health、CSV 和 PNG。网页没有 ingest/repair/migration
+route；`current_active` 是当前状态，`price_observed` 不是 PIT universe。
+
 ## 7. CLI 语义
 
 命令入口建议为 `j21`。`fdp` 暂时保留为兼容 alias，避免旧笔记和脚本立刻失效。
@@ -742,9 +829,10 @@ poetry run j21 ingest history --market US --symbols AAPL,MSFT,SPY --asset-types 
 poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --include-inactive
 poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --instrument-status inactive
 poetry run j21 ingest delisted-instruments --market US
-poetry run j21 ingest daily --market US --date 2026-05-20
+poetry run j21 ingest daily --market US --date 2026-05-20 --asset-types stock,etf,fund --instrument-status active
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --dry-run
-poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --execute --yes --parallel --workers 4
+poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --instrument-status all --execute --yes --parallel --workers 4
+poetry run j21 migrate fund-daily-price --phase verify --run-id 1
 poetry run j21 research bulk-unmatched summary --from 2024-01-01 --to 2024-01-31
 poetry run j21 research bulk-unmatched list --from 2024-01-01 --to 2024-01-31 --status unresolved
 poetry run j21 research bulk-unmatched classify --from 2024-01-01 --to 2024-01-31
@@ -760,6 +848,7 @@ poetry run j21 repair list --market US
 poetry run j21 repair confirm --plan-id 123 --yes
 poetry run j21 repair run --plan-id 123 --yes
 poetry run j21 ingest daily --market US --date 2026-05-20 --output json
+poetry run j21 research technical-validate --from 2024-01-01 --to 2024-03-31 --max-api-units 200
 ```
 
 ## 8. 错误处理原则
@@ -812,8 +901,12 @@ if still invalid:
 - `j21 ingest delisted-instruments` 幂等写入 inactive instruments 和 lifecycle events。
 - `j21 ingest history --instrument-status inactive` 能只按 inactive symbol 写入对应 split daily table，避免重复请求 active instrument。
 - Bulk EOD unmatched rows 能写入 staging 表，重跑不覆盖已分类状态。
-- Bulk unmatched classifier 只做严格 provider_symbol 匹配，preferred/fund/unknown 不自动写入正式 price table。
-- Bulk unmatched route 必须先 dry-run；只有 `--execute --yes` 才能把 matched stock/ETF/index rows 写入正式 price table。
+- Bulk historical tests 覆盖 source-date identifier、FB/META reused ticker、missing Type、alias shadowing、inactive/all 和 ambiguity。
+- Bulk unmatched classifier 只做严格 identity 匹配；Fund 可写 `fund_daily_price`，preferred/notes/bond/unknown 不自动写入正式 price table。
+- Bulk unmatched route 必须先 dry-run；只有 `--execute --yes` 才能把 matched stock/ETF/Fund/index rows 写入正式 price table。
+- Fund split verifier 覆盖 conservation、natural-key duplicate、cross-table type 和 sample checksum。
+- 本地指标 fixture 与 EODHD Technical parity 覆盖 adjusted/raw、warm-up 和 weighted budget。
+- 平级 Terminal 覆盖只读 SQL guard、无 write route、CSV injection、desktop/mobile overflow 和 canvas pixel。
 
 测试数据库必须使用独立 schema，例如 `test_us_share`、`test_system`。
 
@@ -829,7 +922,9 @@ A 股通常按上交所、深交所、北交所，以及主板、科创板、创
 - Cboe / BATS
 - NYSE Arca
 
-ETF 与普通股票都可以在交易所上市。第一阶段的 active backfill 覆盖当前活跃股票+ETF；退市/非活跃标的以 instrument lifecycle/universe 形式纳入，避免数据库长期存在明显 survivorship bias 盲区。
+ETF、Fund 与普通股票的 provider 类型不同，必须进入各自 instrument view 和物理 price table。
+历史 backfill 使用 `instrument-status=all` 纳入 inactive identity，但 `price_observed` 仍不等于
+point-in-time universe membership。
 
 指数例如 S&P 500、Nasdaq 100、Russell 2000 不是交易所。指数暂不作为第一阶段核心数据，但架构必须保留扩展空间。
 
@@ -838,3 +933,5 @@ ETF 与普通股票都可以在交易所上市。第一阶段的 active backfill
 - EODHD Historical / Market Data: https://eodhd.com/
 - EODHD Trading Hours and Holidays: https://eodhd.com/financial-apis/exchanges-api-trading-hours-and-stock-market-holidays
 - EODHD OpenAPI: https://github.com/EodHistoricalData/eodhd-openapi
+- Nasdaq 2012 Market Holiday Schedule: https://www.nasdaqtrader.com/TraderNews.aspx?id=dn2011-011
+- SEC / NYSE Arca Superstorm Sandy closure record: https://www.sec.gov/rules/sro/nysearca/2013/34-70097.pdf

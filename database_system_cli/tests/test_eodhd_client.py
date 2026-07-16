@@ -1,13 +1,19 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from http.client import IncompleteRead, RemoteDisconnected
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
+
+import pytest
 
 from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.retry import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY_SECONDS,
     EodhdRequestRateLimiter,
+    EodhdApiBudgetExceeded,
+    WeightedApiBudget,
 )
 
 
@@ -48,6 +54,33 @@ def test_eodhd_client_fetches_active_exchange_symbols() -> None:
     assert response.endpoint == "/exchange-symbol-list/US"
     assert response.rows_returned == 1
     assert response.payload == [{"Code": "AAPL", "Type": "Common Stock"}]
+
+
+def test_eodhd_client_fetches_user_api_usage_object() -> None:
+    requested_urls: list[str] = []
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        requested_urls.append(request.full_url)
+        return FakeResponse(
+            {
+                "name": "Private User",
+                "email": "private@example.com",
+                "apiRequests": 123,
+                "apiRequestsDate": "2026-07-11",
+                "dailyRateLimit": 100000,
+            }
+        )
+
+    client = EodhdClient(api_key="test-token", transport=fake_transport)
+    response = client.get_user()
+    parsed_url = urlparse(requested_urls[0])
+    query = parse_qs(parsed_url.query)
+
+    assert parsed_url.path == "/api/user"
+    assert query["api_token"] == ["test-token"]
+    assert response.success is True
+    assert response.rows_returned == 1
+    assert response.payload[0]["apiRequests"] == 123
 
 
 def test_eodhd_client_fetches_delisted_exchange_symbols() -> None:
@@ -184,6 +217,46 @@ def test_eodhd_client_fetches_bulk_eod_prices() -> None:
     assert response.rows_returned == 1
 
 
+def test_eodhd_client_fetches_weighted_technical_indicator() -> None:
+    requested_urls: list[str] = []
+    budget = WeightedApiBudget(5)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        requested_urls.append(request.full_url)
+        return FakeResponse([{"date": "2024-01-02", "rsi": 51.5}])
+
+    client = EodhdClient(
+        api_key="test-token",
+        transport=fake_transport,
+        api_budget=budget,
+    )
+    response = client.get_technical(
+        "aapl.us",
+        function="RSI",
+        period=14,
+        date_from=date(2024, 1, 1),
+        date_to=date(2024, 3, 1),
+        order="d",
+        filter_name="last_rsi",
+        split_adjusted_only=True,
+    )
+
+    parsed_url = urlparse(requested_urls[0])
+    query = parse_qs(parsed_url.query)
+
+    assert parsed_url.path == "/api/technical/AAPL.US"
+    assert query["from"] == ["2024-01-01"]
+    assert query["to"] == ["2024-03-01"]
+    assert query["function"] == ["rsi"]
+    assert query["period"] == ["14"]
+    assert query["order"] == ["d"]
+    assert query["filter"] == ["last_rsi"]
+    assert query["splitadjusted_only"] == ["1"]
+    assert response.success is True
+    assert response.rows_returned == 1
+    assert budget.snapshot().consumed == 5
+
+
 def test_eodhd_client_fetches_legacy_exchange_details() -> None:
     requested_urls: list[str] = []
 
@@ -249,6 +322,72 @@ def test_eodhd_client_retries_transient_failures_with_progress() -> None:
     assert "temporary disconnect" in events[1].error_message
 
 
+def test_eodhd_client_retries_truncated_response_body() -> None:
+    events = []
+    calls = 0
+    budget = WeightedApiBudget(200)
+
+    class TruncatedResponse(FakeResponse):
+        def read(self) -> bytes:
+            raise IncompleteRead(b"partial", 10)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return TruncatedResponse([])
+        return FakeResponse([])
+
+    client = EodhdClient(
+        api_key="test-token",
+        max_retries=1,
+        retry_delay_seconds=0,
+        transport=fake_transport,
+        sleeper=lambda seconds: None,
+        api_budget=budget,
+        progress_callback=events.append,
+    )
+
+    response = client.get_bulk_eod("US", trade_date=date(2014, 10, 23))
+
+    assert response.success is True
+    assert response.retry_count == 1
+    assert calls == 2
+    assert budget.snapshot().consumed == 200
+    assert [event.kind for event in events] == ["request", "retry", "request", "success"]
+
+
+def test_eodhd_client_retries_remote_disconnect() -> None:
+    events = []
+    calls = 0
+    budget = WeightedApiBudget(200)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RemoteDisconnected("Remote end closed connection without response")
+        return FakeResponse([])
+
+    client = EodhdClient(
+        api_key="test-token",
+        max_retries=1,
+        retry_delay_seconds=0,
+        transport=fake_transport,
+        sleeper=lambda seconds: None,
+        api_budget=budget,
+        progress_callback=events.append,
+    )
+
+    response = client.get_bulk_eod("US", trade_date=date(2016, 9, 16))
+
+    assert response.success is True
+    assert response.retry_count == 1
+    assert calls == 2
+    assert budget.snapshot().consumed == 200
+    assert [event.kind for event in events] == ["request", "retry", "request", "success"]
+
+
 def test_eodhd_client_default_retry_policy_matches_runtime_default() -> None:
     client = EodhdClient(api_key="test-token", transport=lambda request, timeout: None)
 
@@ -297,3 +436,86 @@ def test_eodhd_client_waits_on_rate_limiter_before_request() -> None:
 
     assert response.success is True
     assert events == ["wait", "request"]
+
+
+def test_weighted_api_budget_is_atomic_across_workers() -> None:
+    budget = WeightedApiBudget(200)
+
+    def reserve() -> bool:
+        try:
+            budget.reserve(endpoint="/eod-bulk-last-day/US", units=100)
+        except EodhdApiBudgetExceeded:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        accepted = list(executor.map(lambda _: reserve(), range(20)))
+
+    assert sum(accepted) == 2
+    assert budget.snapshot().consumed == 200
+    assert budget.snapshot().remaining == 0
+
+
+def test_bulk_retry_consumes_weighted_units_for_each_http_attempt() -> None:
+    calls = 0
+    budget = WeightedApiBudget(200)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise URLError("temporary disconnect")
+        return FakeResponse([])
+
+    client = EodhdClient(
+        api_key="test-token",
+        max_retries=1,
+        retry_delay_seconds=0,
+        transport=fake_transport,
+        sleeper=lambda seconds: None,
+        api_budget=budget,
+    )
+
+    response = client.get_bulk_eod("US", trade_date=date(2023, 1, 3))
+
+    assert response.success is True
+    assert calls == 2
+    assert budget.snapshot().consumed == 200
+
+
+def test_budget_exhaustion_happens_before_transport() -> None:
+    calls = 0
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        return FakeResponse([])
+
+    client = EodhdClient(
+        api_key="test-token",
+        transport=fake_transport,
+        api_budget=WeightedApiBudget(99),
+    )
+
+    with pytest.raises(EodhdApiBudgetExceeded, match="consumed=0 requested=100 limit=99"):
+        client.get_bulk_eod("US", trade_date=date(2023, 1, 3))
+
+    assert calls == 0
+
+
+def test_bulk_symbol_filter_charges_full_exchange_plus_each_symbol() -> None:
+    budget = WeightedApiBudget(102)
+    client = EodhdClient(
+        api_key="test-token",
+        transport=lambda request, timeout: FakeResponse([]),
+        api_budget=budget,
+    )
+
+    response = client.get_bulk_eod(
+        "US",
+        trade_date=date(2023, 1, 3),
+        symbols=["AAPL", "MSFT", "AAPL"],
+    )
+
+    assert response.success is True
+    assert budget.snapshot().consumed == 102

@@ -30,7 +30,7 @@ class FakeSelectResult:
 class FakeValidationConnection:
     def __init__(self) -> None:
         self.statements: list[Any] = []
-        self.select_rows = [[], [], [], []]
+        self.select_rows = [[], [], [], [], []]
 
     def execute(self, statement):
         self.statements.append(statement)

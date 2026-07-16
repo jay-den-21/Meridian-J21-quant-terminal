@@ -1,8 +1,12 @@
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
 import fdp.cli as cli_module
 from fdp.cli import app
+from fdp.get_data.contracts import JobResult
+from fdp.sources.eodhd.retry import EodhdApiEvent
 
 
 def test_cli_registers_instrument_ingest_command() -> None:
@@ -24,6 +28,63 @@ def test_cli_registers_history_ingest_command() -> None:
     assert "--instrument-status" in result.output
 
 
+def test_cli_registers_bounded_technical_validation_command() -> None:
+    result = CliRunner().invoke(app, ["research", "technical-validate", "--help"])
+
+    assert result.exit_code == 0
+    assert "--max-api-units" in result.output
+    assert "--output" in result.output
+
+
+def test_json_mode_eodhd_progress_is_written_to_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    client = cli_module._eodhd_client("test-token", progress_to_stderr=True)
+    assert client.progress_callback is not None
+
+    client.progress_callback(
+        EodhdApiEvent(kind="request", endpoint="/technical/AAPL.US", attempt=1, max_attempts=1)
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "/technical/AAPL.US" in captured.err
+
+
+def test_cli_history_routes_fund_asset_type_to_fund_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[dict[str, object]] = []
+
+    def fake_run(self, **kwargs):
+        seen.append(kwargs)
+        return JobResult(
+            job="ingest.history",
+            status="success",
+            run_id=1,
+            parameters={"asset_types": ["fund"]},
+            parameter_sources={},
+        )
+
+    monkeypatch.setattr(cli_module.FundDailyJob, "run", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "ingest",
+            "history",
+            "--symbols",
+            "VFINX",
+            "--from",
+            "2024-01-01",
+            "--to",
+            "2024-01-31",
+            "--asset-types",
+            "fund",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen[0]["symbols"] == ["VFINX"]
+
+
 def test_cli_registers_indices_ingest_command() -> None:
     result = CliRunner().invoke(app, ["ingest", "indices", "--help"])
 
@@ -33,6 +94,31 @@ def test_cli_registers_indices_ingest_command() -> None:
     assert "--to" in result.output
 
 
+def test_cli_indices_executes_the_index_daily_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run(self, **kwargs):
+        calls.append(kwargs)
+        return JobResult(
+            job="ingest.indices",
+            status="success",
+            run_id=2,
+            parameters={"asset_types": ["index"]},
+            parameter_sources={},
+            work_units_total=4,
+            work_units_completed=4,
+        )
+
+    monkeypatch.setattr(cli_module.IndexDailyJob, "run", fake_run)
+    result = CliRunner().invoke(
+        app,
+        ["ingest", "indices", "--from", "2024-01-01", "--to", "2024-01-05"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["override_source"] == "cli"
+
+
 def test_cli_registers_calendar_ingest_command() -> None:
     result = CliRunner().invoke(app, ["ingest", "calendar", "--help"])
 
@@ -40,6 +126,17 @@ def test_cli_registers_calendar_ingest_command() -> None:
     assert "--market" in result.output
     assert "--from" in result.output
     assert "--to" in result.output
+
+
+def test_cli_documentation_and_html_mirrors_are_current() -> None:
+    repository_root = Path(__file__).parents[2]
+    result = CliRunner().invoke(
+        app,
+        ["validate", "docs-staleness", "--root", str(repository_root)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "status=current" in result.output
 
 
 def test_cli_registers_daily_bulk_ingest_command() -> None:
@@ -65,6 +162,35 @@ def test_cli_registers_daily_range_ingest_command() -> None:
     assert "--workers" in result.output
     assert "--max-requests-per-minute" in result.output
     assert "--max-api-calls" in result.output
+
+
+def test_cli_registers_guarded_fund_daily_price_migration() -> None:
+    runner = CliRunner()
+    help_result = runner.invoke(app, ["migrate", "fund-daily-price", "--help"])
+    unsafe_copy = runner.invoke(
+        app,
+        ["migrate", "fund-daily-price", "--phase", "copy"],
+    )
+
+    assert help_result.exit_code == 0
+    assert "--backup-file" in help_result.output
+    assert "--run-id" in help_result.output
+    assert unsafe_copy.exit_code != 0
+    assert "requires --execute --yes" in unsafe_copy.output
+
+
+def test_cli_registers_guarded_asset_type_reconcile() -> None:
+    runner = CliRunner()
+    help_result = runner.invoke(app, ["migrate", "daily-price-asset-types", "--help"])
+    unsafe_execute = runner.invoke(
+        app,
+        ["migrate", "daily-price-asset-types", "--phase", "execute"],
+    )
+
+    assert help_result.exit_code == 0
+    assert "--chunk-size" in help_result.output
+    assert unsafe_execute.exit_code != 0
+    assert "requires --execute --yes" in unsafe_execute.output
 
 
 def test_cli_registers_bulk_unmatched_commands() -> None:
@@ -214,6 +340,18 @@ def test_daily_range_refuses_api_budget_before_api_key(
 
     assert result.exit_code != 0
     assert "estimated EODHD API calls 100 exceed max-api-calls 99" in result.output
+
+
+def test_bulk_daily_commands_expose_point_in_time_instrument_scope() -> None:
+    runner = CliRunner()
+
+    daily = runner.invoke(app, ["ingest", "daily", "--help"])
+    daily_range = runner.invoke(app, ["ingest", "daily-range", "--help"])
+
+    assert daily.exit_code == 0
+    assert "--instrument-status" in daily.output
+    assert daily_range.exit_code == 0
+    assert "--instrument-status" in daily_range.output
 
 
 def test_cli_registers_delisted_instruments_ingest_command() -> None:

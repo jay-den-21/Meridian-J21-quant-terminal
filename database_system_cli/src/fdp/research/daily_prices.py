@@ -8,20 +8,14 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.sql import Select
 
 from fdp.storage.tables import (
-    etf_daily_price,
-    index_daily_price,
+    DAILY_PRICE_TABLES,
     instrument,
     instrument_identifier_history,
-    stock_daily_price,
 )
 
 DateInput = date | str | None
 
-_DAILY_PRICE_TABLES: dict[str, Table] = {
-    "stock": stock_daily_price,
-    "etf": etf_daily_price,
-    "index": index_daily_price,
-}
+_DAILY_PRICE_TABLES: dict[str, Table] = DAILY_PRICE_TABLES
 
 
 class DailyPriceReader:
@@ -192,7 +186,8 @@ def _price_table_for_asset_type(asset_type: str) -> Table:
     try:
         return _DAILY_PRICE_TABLES[asset_type]
     except KeyError as exc:
-        raise ValueError("asset_type must be one of: stock, etf, index") from exc
+        supported = ", ".join(_DAILY_PRICE_TABLES)
+        raise ValueError(f"asset_type must be one of: {supported}") from exc
 
 
 def _normalize_symbols(symbols: Sequence[str]) -> list[str]:

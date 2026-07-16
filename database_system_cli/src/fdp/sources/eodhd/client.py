@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from http.client import IncompleteRead, RemoteDisconnected
 from time import perf_counter, sleep
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -16,6 +17,8 @@ from fdp.sources.eodhd.retry import (
     EodhdApiEvent,
     EodhdProgressCallback,
     EodhdRequestRateLimiter,
+    WeightedApiBudget,
+    WeightedApiBudgetSnapshot,
     should_retry,
 )
 
@@ -61,6 +64,7 @@ class EodhdClient:
         transport: Transport = urlopen,
         sleeper: Sleeper = sleep,
         rate_limiter: EodhdRequestRateLimiter | None = None,
+        api_budget: WeightedApiBudget | None = None,
         progress_callback: EodhdProgressCallback | None = None,
     ) -> None:
         """Store EODHD connection settings.
@@ -79,7 +83,18 @@ class EodhdClient:
         self.transport = transport
         self.sleeper = sleeper
         self.rate_limiter = rate_limiter
+        self.api_budget = api_budget
         self.progress_callback = progress_callback
+
+    def get_user(self) -> EodhdApiResponse:
+        """Fetch EODHD account usage needed for a redacted API-budget preflight."""
+        endpoint = "/user"
+        query = urlencode({"api_token": self.api_key, "fmt": "json"})
+        return self._get_json_object(
+            endpoint=endpoint,
+            url=f"{self.base_url}{endpoint}?{query}",
+            object_name="user",
+        )
 
     def get_exchange_symbols(self, market: str) -> EodhdApiResponse:
         """Fetch the active EODHD exchange symbol list for one market.
@@ -201,6 +216,7 @@ class EodhdClient:
             "api_token": self.api_key,
             "fmt": "json",
         }
+        normalized_symbols: list[str] = []
         if trade_date is not None:
             query_params["date"] = trade_date.isoformat()
         if symbols:
@@ -216,6 +232,63 @@ class EodhdClient:
             endpoint=endpoint,
             url=url,
             object_name="bulk EOD",
+            api_units=100 + len(normalized_symbols),
+        )
+
+    def get_technical(
+        self,
+        provider_symbol: str,
+        *,
+        function: str,
+        period: int,
+        date_from: date,
+        date_to: date,
+        order: str = "a",
+        filter_name: str | None = None,
+        split_adjusted_only: bool = False,
+    ) -> EodhdApiResponse:
+        """Fetch one EODHD technical-indicator series for local formula validation.
+
+        Input: provider symbol, indicator function/period, date range, and output options.
+        Output: technical rows from `/technical/{provider_symbol}` at a cost of 5 API units.
+        Flow: validate arguments -> technical URL -> weighted retrying GET -> parsed rows.
+        """
+        normalized_symbol = provider_symbol.strip().upper()
+        normalized_function = function.strip().lower()
+        normalized_order = order.strip().lower()
+        if not normalized_symbol:
+            raise ValueError("provider_symbol must not be empty")
+        if not normalized_function:
+            raise ValueError("function must not be empty")
+        if period < 1:
+            raise ValueError("period must be at least 1")
+        if date_to < date_from:
+            raise ValueError("date_to must be greater than or equal to date_from")
+        if normalized_order not in {"a", "d"}:
+            raise ValueError("order must be 'a' or 'd'")
+
+        endpoint = f"/technical/{normalized_symbol}"
+        query_params = {
+            "from": date_from.isoformat(),
+            "to": date_to.isoformat(),
+            "order": normalized_order,
+            "function": normalized_function,
+            "period": period,
+            "api_token": self.api_key,
+            "fmt": "json",
+        }
+        if filter_name:
+            query_params["filter"] = filter_name.strip()
+        if split_adjusted_only:
+            query_params["splitadjusted_only"] = "1"
+        query = urlencode(query_params)
+        url = f"{self.base_url}{endpoint}?{query}"
+
+        return self._get_json_list(
+            endpoint=endpoint,
+            url=url,
+            object_name="technical indicator",
+            api_units=5,
         )
 
     def _get_json_list(
@@ -224,6 +297,7 @@ class EodhdClient:
         endpoint: str,
         url: str,
         object_name: str,
+        api_units: int = 1,
     ) -> EodhdApiResponse:
         """Fetch one JSON-list endpoint with the shared retry policy.
 
@@ -231,7 +305,12 @@ class EodhdClient:
         Output: normalized `EodhdApiResponse`.
         Flow: request attempts -> retry wait on transient failure -> parsed list response.
         """
-        response = self._request_json(endpoint=endpoint, url=url, object_name=object_name)
+        response = self._request_json(
+            endpoint=endpoint,
+            url=url,
+            object_name=object_name,
+            api_units=api_units,
+        )
         if not response.success:
             return response
 
@@ -289,9 +368,15 @@ class EodhdClient:
         endpoint: str,
         url: str,
         object_name: str,
+        api_units: int = 1,
     ) -> EodhdApiResponse:
         """Fetch one JSON object endpoint and wrap it as a one-row response."""
-        response = self._request_json(endpoint=endpoint, url=url, object_name=object_name)
+        response = self._request_json(
+            endpoint=endpoint,
+            url=url,
+            object_name=object_name,
+            api_units=api_units,
+        )
         if not response.success:
             return response
 
@@ -322,6 +407,7 @@ class EodhdClient:
         endpoint: str,
         url: str,
         object_name: str,
+        api_units: int,
     ) -> EodhdApiResponse:
         """Run one EODHD request with retries and return decoded JSON payload."""
         started = perf_counter()
@@ -332,6 +418,7 @@ class EodhdClient:
 
         for attempt in range(max_attempts):
             retry_count = attempt
+            budget_snapshot = self._reserve_api_units(endpoint=endpoint, api_units=api_units)
             if self.rate_limiter is not None:
                 self.rate_limiter.wait()
             self._emit_progress(
@@ -340,6 +427,7 @@ class EodhdClient:
                     endpoint=endpoint,
                     attempt=attempt + 1,
                     max_attempts=max_attempts,
+                    **_budget_event_fields(budget_snapshot),
                 )
             )
             try:
@@ -356,7 +444,14 @@ class EodhdClient:
                         attempt=attempt,
                         max_retries=self.max_retries,
                     ):
-                        self._retry_after(endpoint, attempt, max_attempts, status_code, last_error)
+                        self._retry_after(
+                            endpoint,
+                            attempt,
+                            max_attempts,
+                            status_code,
+                            last_error,
+                            budget_snapshot,
+                        )
                         continue
                     break
 
@@ -372,6 +467,7 @@ class EodhdClient:
                         status_code=status_code,
                         rows_returned=rows_returned,
                         duration_ms=duration_ms,
+                        **_budget_event_fields(budget_snapshot),
                     )
                 )
 
@@ -392,7 +488,13 @@ class EodhdClient:
                     body=_read_http_error_body(exc),
                 )
                 retry_status_code = last_status_code
-            except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+            except (
+                URLError,
+                TimeoutError,
+                IncompleteRead,
+                RemoteDisconnected,
+                json.JSONDecodeError,
+            ) as exc:
                 last_error = str(exc)
                 retry_status_code = None
             except ValueError as exc:
@@ -404,7 +506,14 @@ class EodhdClient:
                 attempt=attempt,
                 max_retries=self.max_retries,
             ):
-                self._retry_after(endpoint, attempt, max_attempts, retry_status_code, last_error)
+                self._retry_after(
+                    endpoint,
+                    attempt,
+                    max_attempts,
+                    retry_status_code,
+                    last_error,
+                    budget_snapshot,
+                )
                 continue
             break
 
@@ -418,6 +527,7 @@ class EodhdClient:
                 status_code=last_status_code,
                 duration_ms=duration_ms,
                 error_message=last_error,
+                **_budget_event_fields(self._api_budget_snapshot()),
             )
         )
         return self._failed_response(
@@ -435,6 +545,7 @@ class EodhdClient:
         max_attempts: int,
         status_code: int | None,
         error_message: str | None,
+        budget_snapshot: WeightedApiBudgetSnapshot | None,
     ) -> None:
         """Emit a retry event and wait before the next attempt."""
         self._emit_progress(
@@ -446,9 +557,26 @@ class EodhdClient:
                 status_code=status_code,
                 error_message=error_message,
                 retry_delay_seconds=self.retry_delay_seconds,
+                **_budget_event_fields(budget_snapshot),
             )
         )
         self.sleeper(self.retry_delay_seconds)
+
+    def _reserve_api_units(
+        self,
+        *,
+        endpoint: str,
+        api_units: int,
+    ) -> WeightedApiBudgetSnapshot | None:
+        """Reserve endpoint-weighted units immediately before an HTTP attempt."""
+        if self.api_budget is None:
+            return None
+        return self.api_budget.reserve(endpoint=endpoint, units=api_units)
+
+    def _api_budget_snapshot(self) -> WeightedApiBudgetSnapshot | None:
+        if self.api_budget is None:
+            return None
+        return self.api_budget.snapshot()
 
     def _emit_progress(self, event: EodhdApiEvent) -> None:
         """Send an EODHD progress event to the optional reporter."""
@@ -520,3 +648,14 @@ def _read_http_error_body(exc: HTTPError) -> str:
 def _http_error_message(*, status_code: int, body: str) -> str:
     """Format an HTTP status/body pair for CLI and task logs."""
     return f"HTTP {status_code}: {body[:1000]}"
+
+
+def _budget_event_fields(snapshot: WeightedApiBudgetSnapshot | None) -> dict[str, int | None]:
+    """Map an optional budget snapshot into safe progress-event counters."""
+    if snapshot is None:
+        return {}
+    return {
+        "api_units_limit": snapshot.limit,
+        "api_units_consumed": snapshot.consumed,
+        "api_units_remaining": snapshot.remaining,
+    }

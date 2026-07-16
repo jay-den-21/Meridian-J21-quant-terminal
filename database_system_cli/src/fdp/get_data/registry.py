@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from fdp.get_data.bulk import BulkDailyJob, DailyRangeJob
-from fdp.get_data.historical import EtfDailyJob, IndexDailyJob, MarketCalendarJob, StockDailyJob
+from fdp.get_data.historical import (
+    EtfDailyJob,
+    FundDailyJob,
+    IndexDailyJob,
+    MarketCalendarJob,
+    StockDailyJob,
+)
 from fdp.get_data.instruments import ActiveInstrumentsJob, DelistedInstrumentsJob
 from fdp.get_data.reconcile import BulkUnmatchedReconcileJob
 
@@ -48,6 +54,13 @@ INGEST_JOB_DEFINITIONS = (
         "job_etf_daily",
         "fdp.get_data.historical.get_etf_daily",
         EtfDailyJob,
+    ),
+    IngestJobDefinition(
+        "fund_daily",
+        "historical_eod",
+        "job_fund_daily",
+        "fdp.get_data.historical.get_fund_daily",
+        FundDailyJob,
     ),
     IngestJobDefinition(
         "index_daily",

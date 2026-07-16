@@ -94,6 +94,7 @@ def _instrument_view(name: str) -> Table:
 
 stock_instrument = _instrument_view("stock_instrument")
 etf_instrument = _instrument_view("etf_instrument")
+fund_instrument = _instrument_view("fund_instrument")
 index_instrument = _instrument_view("index_instrument")
 
 # us_share.instrument_identifier_history example row:
@@ -188,6 +189,8 @@ def _asset_daily_price_table(
     unique_name: str,
     symbol_index_name: str,
     trade_date_index_name: str,
+    *,
+    volume_nullable: bool = False,
 ) -> Table:
     """Define one asset-specific daily OHLCV table with the common price shape."""
     return Table(
@@ -208,7 +211,7 @@ def _asset_daily_price_table(
         Column("low", Numeric(20, 6), nullable=False),
         Column("close", Numeric(20, 6), nullable=False),
         Column("adjusted_close", Numeric(20, 6), nullable=False),
-        Column("volume", BigInteger, nullable=False),
+        Column("volume", BigInteger, nullable=volume_nullable),
         Column("currency", String(16), nullable=False),
         Column("source", String(32), nullable=False),
         Column("source_updated_at", DateTime),
@@ -241,6 +244,13 @@ etf_daily_price = _asset_daily_price_table(
     "ix_etf_daily_price_symbol_date",
     "ix_etf_daily_price_trade_date",
 )
+fund_daily_price = _asset_daily_price_table(
+    "fund_daily_price",
+    "fund_daily_price_id",
+    "uq_fund_daily_price_instrument_date",
+    "ix_fund_daily_price_symbol_date",
+    "ix_fund_daily_price_trade_date",
+)
 index_daily_price = _asset_daily_price_table(
     "index_daily_price",
     "index_daily_price_id",
@@ -248,6 +258,30 @@ index_daily_price = _asset_daily_price_table(
     "ix_index_daily_price_symbol_date",
     "ix_index_daily_price_trade_date",
 )
+forex_daily_price = _asset_daily_price_table(
+    "forex_daily_price",
+    "forex_daily_price_id",
+    "uq_forex_daily_price_instrument_date",
+    "ix_forex_daily_price_symbol_date",
+    "ix_forex_daily_price_trade_date",
+    volume_nullable=True,
+)
+crypto_daily_price = _asset_daily_price_table(
+    "crypto_daily_price",
+    "crypto_daily_price_id",
+    "uq_crypto_daily_price_instrument_date",
+    "ix_crypto_daily_price_symbol_date",
+    "ix_crypto_daily_price_trade_date",
+)
+
+DAILY_PRICE_TABLES = {
+    "stock": stock_daily_price,
+    "etf": etf_daily_price,
+    "fund": fund_daily_price,
+    "index": index_daily_price,
+    "forex": forex_daily_price,
+    "crypto": crypto_daily_price,
+}
 
 # us_share.market_calendar example row:
 # - calendar_id: 1
@@ -601,5 +635,46 @@ bulk_unmatched_daily_price_observation = Table(
     Index("ix_bulk_unmatched_date_status", "trade_date", "classification_status"),
     Index("ix_bulk_unmatched_provider_symbol", "provider_symbol"),
     Index("ix_bulk_unmatched_matched_instrument", "matched_instrument_id"),
+    schema=SYSTEM_SCHEMA,
+)
+
+# system.fund_daily_price_split_run checkpoints the operator-controlled ETF/Fund split.
+fund_daily_price_split_run = Table(
+    "fund_daily_price_split_run",
+    metadata,
+    Column("fund_split_run_id", BigInteger, primary_key=True, autoincrement=True),
+    Column("status", String(32), nullable=False),
+    Column("source_total_before", BigInteger, nullable=False),
+    Column("source_fund_rows", BigInteger, nullable=False),
+    Column("target_rows_before", BigInteger, nullable=False),
+    Column("rows_copied", BigInteger, nullable=False, server_default="0"),
+    Column("rows_deleted", BigInteger, nullable=False, server_default="0"),
+    Column("copy_last_source_id", BigInteger, nullable=False, server_default="0"),
+    Column("delete_last_source_id", BigInteger, nullable=False, server_default="0"),
+    Column("finalize_strategy", String(32)),
+    Column("rows_compacted", BigInteger, nullable=False, server_default="0"),
+    Column("compact_last_source_id", BigInteger, nullable=False, server_default="0"),
+    Column("compact_verification_fingerprint", String(64)),
+    Column("compact_verification_details", Text),
+    Column("compact_verified_at", DateTime),
+    Column("swapped_at", DateTime),
+    Column("chunk_size", Integer, nullable=False),
+    Column("backup_path", String(1024), nullable=False),
+    Column("backup_size_bytes", BigInteger, nullable=False),
+    Column("backup_sha256", String(64), nullable=False),
+    Column("verification_fingerprint", String(64)),
+    Column("verification_details", Text),
+    Column("error_message", Text),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        server_onupdate=func.current_timestamp(),
+    ),
+    Column("verified_at", DateTime),
+    Column("completed_at", DateTime),
+    Index("ix_fund_daily_price_split_status", "status"),
     schema=SYSTEM_SCHEMA,
 )

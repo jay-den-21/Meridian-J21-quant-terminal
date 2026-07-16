@@ -12,13 +12,11 @@ from sqlalchemy.engine import Connection
 from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.ingest import load_daily_prices_for_instrument_ids
 from fdp.storage.tables import (
+    DAILY_PRICE_TABLES,
     US_SHARE_SCHEMA,
     data_quality_issue,
-    etf_daily_price,
-    index_daily_price,
     instrument,
     repair_plan,
-    stock_daily_price,
 )
 
 PENDING_CONFIRMATION = "pending_confirmation"
@@ -30,9 +28,7 @@ BACKFILL_MISSING_DAILY_PRICE = "backfill_missing_daily_price"
 ACTIVE_REPAIR_STATUSES = {PENDING_CONFIRMATION, CONFIRMED, EXECUTING}
 
 REPAIRABLE_DAILY_PRICE_TARGETS = {
-    "stock": stock_daily_price.name,
-    "etf": etf_daily_price.name,
-    "index": index_daily_price.name,
+    asset_type: table.name for asset_type, table in DAILY_PRICE_TABLES.items()
 }
 TARGET_TABLE_TO_ASSET_TYPE = {
     table_name: asset_type for asset_type, table_name in REPAIRABLE_DAILY_PRICE_TARGETS.items()
@@ -490,7 +486,7 @@ def _insert_row_from_record(record: RepairPlanRecord) -> dict[str, object]:
 
 def _normalize_asset_types(asset_types: list[str] | None) -> list[str]:
     if asset_types is None:
-        return ["stock", "etf", "index"]
+        return ["stock", "etf", "fund", "index"]
     normalized = [asset_type.strip().lower() for asset_type in asset_types if asset_type.strip()]
     if not normalized:
         raise ValueError("asset_types must contain at least one asset type")
@@ -609,11 +605,7 @@ def _daily_price_row_exists(
 
 
 def _daily_price_table_for_name(target_table: str):
-    tables = {
-        stock_daily_price.name: stock_daily_price,
-        etf_daily_price.name: etf_daily_price,
-        index_daily_price.name: index_daily_price,
-    }
+    tables = {table.name: table for table in DAILY_PRICE_TABLES.values()}
     try:
         return tables[target_table]
     except KeyError as exc:

@@ -5,7 +5,10 @@ from sqlalchemy.dialects import mysql
 
 from fdp.storage.upsert import (
     build_bulk_unmatched_daily_price_observation_upsert,
+    build_crypto_daily_price_upsert,
     build_etf_daily_price_upsert,
+    build_forex_daily_price_upsert,
+    build_fund_daily_price_upsert,
     build_identifier_history_upsert,
     build_index_daily_price_upsert,
     build_instrument_upsert,
@@ -59,7 +62,10 @@ def test_asset_daily_price_upserts_target_split_tables() -> None:
     builders_and_tables = [
         (build_stock_daily_price_upsert, "stock_daily_price"),
         (build_etf_daily_price_upsert, "etf_daily_price"),
+        (build_fund_daily_price_upsert, "fund_daily_price"),
         (build_index_daily_price_upsert, "index_daily_price"),
+        (build_forex_daily_price_upsert, "forex_daily_price"),
+        (build_crypto_daily_price_upsert, "crypto_daily_price"),
     ]
 
     for builder, table_name in builders_and_tables:

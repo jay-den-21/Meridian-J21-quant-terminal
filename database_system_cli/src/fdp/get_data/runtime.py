@@ -16,7 +16,7 @@ from fdp.config import (
 )
 from fdp.get_data.contracts import NullProgressReporter, ProgressReporter
 from fdp.sources.eodhd.client import EodhdClient
-from fdp.sources.eodhd.retry import EodhdRequestRateLimiter
+from fdp.sources.eodhd.retry import EodhdRequestRateLimiter, WeightedApiBudget
 
 ClientFactory = Callable[..., EodhdClient]
 
@@ -47,6 +47,7 @@ class JobRuntime:
         reporter: ProgressReporter | None = None,
         *,
         max_requests_per_minute: int | None = None,
+        api_budget: WeightedApiBudget | None = None,
     ) -> EodhdClient:
         if self.injected_client is not None:
             return self.injected_client
@@ -58,5 +59,6 @@ class JobRuntime:
             max_retries=self.config.max_retries,
             retry_delay_seconds=self.config.retry_delay_seconds,
             rate_limiter=EodhdRequestRateLimiter(requests_per_minute),
+            api_budget=api_budget,
             progress_callback=active_reporter.on_api_event,
         )

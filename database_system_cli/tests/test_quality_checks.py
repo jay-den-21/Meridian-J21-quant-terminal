@@ -2,6 +2,7 @@ from datetime import date
 
 from sqlalchemy.dialects import mysql
 
+from fdp.quality.checks.asset_type import asset_type_mismatch_rows
 from fdp.quality.checks.calendar_alignment import price_rows_on_non_trading_days
 from fdp.quality.checks.duplicate import duplicate_daily_price_groups
 from fdp.quality.checks.missing import (
@@ -107,3 +108,18 @@ def test_price_rows_on_non_trading_days_joins_market_calendar() -> None:
     assert "index_daily_price" in sql
     assert "market_calendar" in sql
     assert "is_trading_day IS false" in sql
+
+
+def test_asset_type_mismatch_rows_joins_current_instrument_type() -> None:
+    statement = asset_type_mismatch_rows(
+        expected_asset_type="etf",
+        date_from=date(2023, 1, 1),
+        date_to=date(2025, 12, 31),
+        price_table=etf_daily_price,
+    )
+
+    sql = str(statement.compile(dialect=mysql.dialect()))
+
+    assert "etf_daily_price" in sql
+    assert "JOIN us_share.instrument" in sql
+    assert "instrument.asset_type != %s" in sql
