@@ -15,6 +15,7 @@ from fdp.get_data.historical import (
 )
 from fdp.get_data.instruments import ActiveInstrumentsJob, DelistedInstrumentsJob
 from fdp.get_data.reconcile import BulkUnmatchedReconcileJob
+from fdp.get_data.reference import IdentifierMappingJob
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,13 @@ INGEST_JOB_DEFINITIONS = (
         "job_calendar",
         "fdp.get_data.historical.get_market_calendar",
         MarketCalendarJob,
+    ),
+    IngestJobDefinition(
+        "id_mappings",
+        "reference",
+        "job_id_mappings",
+        "fdp.get_data.reference.get_id_mappings",
+        IdentifierMappingJob,
     ),
     IngestJobDefinition(
         "bulk_unmatched",

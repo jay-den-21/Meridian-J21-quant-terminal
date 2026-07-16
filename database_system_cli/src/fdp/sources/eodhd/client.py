@@ -165,6 +165,70 @@ class EodhdClient:
             object_name="symbol change",
         )
 
+    def get_id_mappings(
+        self,
+        *,
+        filter_type: str,
+        filter_value: str,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> EodhdApiResponse:
+        """Fetch one page from the EODHD ID Mapping endpoint.
+
+        Input: one supported filter plus provider page limit and offset.
+        Output: mapping envelope with `meta`, `data`, and `links` preserved.
+        Flow: validated filter -> `/id-mapping` -> retrying GET -> object envelope.
+        """
+        supported_filters = {"symbol", "ex", "isin", "figi", "lei", "cusip", "cik"}
+        normalized_filter = filter_type.strip().lower()
+        normalized_value = filter_value.strip().upper()
+        if normalized_filter not in supported_filters:
+            raise ValueError(f"unsupported ID Mapping filter: {filter_type}")
+        if not normalized_value:
+            raise ValueError("ID Mapping filter value must not be empty")
+        if not 1 <= limit <= 1000:
+            raise ValueError("ID Mapping page limit must be between 1 and 1000")
+        if offset < 0:
+            raise ValueError("ID Mapping page offset must be non-negative")
+
+        endpoint = "/id-mapping"
+        query = urlencode(
+            {
+                f"filter[{normalized_filter}]": normalized_value,
+                "page[limit]": limit,
+                "page[offset]": offset,
+                "api_token": self.api_key,
+                "fmt": "json",
+            }
+        )
+        response = self._request_json(
+            endpoint=endpoint,
+            url=f"{self.base_url}{endpoint}?{query}",
+            object_name="ID mapping",
+            api_units=1,
+        )
+        if not response.success:
+            return response
+        payload = response.payload
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+            return self._failed_response(
+                endpoint=endpoint,
+                status_code=response.status_code,
+                retry_count=response.retry_count,
+                started=None,
+                error_message="EODHD ID mapping response must contain a JSON data list",
+            )
+        return EodhdApiResponse(
+            endpoint=endpoint,
+            status_code=response.status_code,
+            success=True,
+            retry_count=response.retry_count,
+            rows_returned=len(payload["data"]),
+            duration_ms=response.duration_ms,
+            payload=payload,
+            error_message=None,
+        )
+
     def get_historical_eod(
         self,
         provider_symbol: str,

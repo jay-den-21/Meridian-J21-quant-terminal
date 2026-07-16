@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.engine import Connection
 
 from fdp.sources.eodhd.client import EodhdClient
@@ -22,7 +22,7 @@ from fdp.sources.eodhd.instruments import (
     parse_exchange_symbol_rows,
     parse_symbol_change_history_rows,
 )
-from fdp.storage.tables import instrument, instrument_identifier_history
+from fdp.storage.tables import instrument
 from fdp.storage.upsert import build_identifier_history_upsert, build_instrument_upsert
 
 
@@ -167,7 +167,6 @@ def reconcile_symbol_changes(connection: Connection, symbol_changes: list[Symbol
             continue
 
         history_rows = _identifier_history_rows(instrument_id, symbol_change)
-        _delete_null_start_identifier_history_rows(connection, history_rows)
         connection.execute(build_identifier_history_upsert(history_rows))
 
     return reconciled
@@ -180,28 +179,6 @@ def _find_eodhd_instrument_id(connection: Connection, provider_symbol: str):
             instrument.c.provider_symbol == provider_symbol,
         )
     ).mappings().first()
-
-
-def _delete_null_start_identifier_history_rows(
-    connection: Connection,
-    history_rows: list[dict[str, object]],
-) -> None:
-    nullable_start_rows = [row for row in history_rows if row["valid_from"] is None]
-    if not nullable_start_rows:
-        return
-
-    predicates = [
-        (
-            (instrument_identifier_history.c.instrument_id == row["instrument_id"])
-            & (instrument_identifier_history.c.id_type == row["id_type"])
-            & (instrument_identifier_history.c.id_value == row["id_value"])
-            & instrument_identifier_history.c.valid_from.is_(None)
-            & (instrument_identifier_history.c.valid_to == row["valid_to"])
-            & (instrument_identifier_history.c.source == row["source"])
-        )
-        for row in nullable_start_rows
-    ]
-    connection.execute(delete(instrument_identifier_history).where(or_(*predicates)))
 
 
 def _identifier_history_rows(instrument_id: int, symbol_change: SymbolChange) -> list[dict[str, object]]:

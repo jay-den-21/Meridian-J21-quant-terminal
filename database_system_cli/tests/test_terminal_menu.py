@@ -156,3 +156,55 @@ def test_menu_closes_progress_reporter_when_job_raises(
         )
 
     assert closed == [True]
+
+
+def test_id_mapping_menu_builds_symbol_scope_for_shared_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class MappingPrompts:
+        def select(self, message, choices, *, default=None):
+            return "symbols"
+
+        def text(self, message, *, default=""):
+            return "AAPL.US,MSFT.US"
+
+        def confirm(self, message, *, default=False):
+            return False
+
+    class FakeJob:
+        def preflight(self, **kwargs):
+            captured["preflight_kwargs"] = kwargs
+            return JobPreflight(
+                job="ingest.id_mappings",
+                job_module="fdp.get_data.reference.get_id_mappings",
+                target_tables=["instrument_identifier_history"],
+                work_units=2,
+                estimated_api_calls=2,
+                parameters={"scope": "symbols"},
+                parameter_sources={"scope": "menu"},
+            )
+
+        def run(self, **kwargs):
+            raise AssertionError("captured confirmation adapter must not execute the job")
+
+    def capture_confirmation(session, language, preflight, command, runner):
+        captured["command"] = command
+        captured["preflight"] = preflight
+
+    monkeypatch.setattr(menu_module.JobRuntime, "from_env", lambda: object())
+    monkeypatch.setattr(menu_module, "IdentifierMappingJob", FakeJob)
+    monkeypatch.setattr(menu_module, "_confirm_and_run", capture_confirmation)
+
+    menu_module._run_id_mappings(MappingPrompts(), "en")
+
+    preflight_kwargs = captured["preflight_kwargs"]
+    assert preflight_kwargs["exchange"] is None
+    assert preflight_kwargs["symbols"] == ["AAPL.US", "MSFT.US"]
+    assert preflight_kwargs["page_limit"] == 1000
+    assert preflight_kwargs["max_api_calls"] == 200
+    assert captured["command"] == (
+        "poetry run j21 ingest id-mappings --symbols AAPL.US,MSFT.US "
+        "--page-limit 1000 --max-api-calls 200"
+    )

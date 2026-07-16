@@ -17,11 +17,16 @@ from fdp.get_data import (
     EtfDailyJob,
     FundDailyJob,
     HistoricalDailyJob,
+    IdentifierMappingJob,
     IndexDailyJob,
     MarketCalendarJob,
     StockDailyJob,
 )
 from fdp.get_data.contracts import JobResult, ProgressEvent
+from fdp.get_data.reference import (
+    DEFAULT_MAX_API_CALLS as ID_MAPPING_DEFAULT_MAX_API_CALLS,
+)
+from fdp.get_data.reference import DEFAULT_PAGE_LIMIT as ID_MAPPING_DEFAULT_PAGE_LIMIT
 from fdp.get_data.reporting import format_eodhd_event
 from fdp.migrate import (
     copy_fund_daily_prices,
@@ -446,6 +451,87 @@ def ingest_history(
     )
     if result.missing_symbols:
         typer.echo(f"missing_symbols={','.join(result.missing_symbols)}")
+
+
+@ingest_app.command("id-mappings")
+def ingest_id_mappings(
+    exchange: str | None = typer.Option(
+        None,
+        "--exchange",
+        help="Full EODHD exchange scope; mutually exclusive with --symbols.",
+    ),
+    symbols: str | None = typer.Option(
+        None,
+        "--symbols",
+        help="Comma-separated EODHD provider symbols; mutually exclusive with --exchange.",
+    ),
+    page_limit: int = typer.Option(
+        ID_MAPPING_DEFAULT_PAGE_LIMIT,
+        "--page-limit",
+        min=1,
+        max=1000,
+        help="EODHD rows per page.",
+    ),
+    start_offset: int = typer.Option(
+        0,
+        "--start-offset",
+        min=0,
+        help="Exchange pagination offset used to resume a partial run.",
+    ),
+    max_api_calls: int = typer.Option(
+        ID_MAPPING_DEFAULT_MAX_API_CALLS,
+        "--max-api-calls",
+        min=1,
+        help="Hard mapping API-unit budget; retries count against it.",
+    ),
+    max_requests_per_minute: int | None = typer.Option(
+        None,
+        "--max-requests-per-minute",
+        min=1,
+        max=1000,
+        help="Optional request-rate override.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show the local plan without API calls or database writes.",
+    ),
+    source: str = typer.Option("eodhd", "--source", help="Source provider."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Synchronize EODHD CUSIP/ISIN/FIGI/LEI/CIK mappings."""
+    if source.lower() != "eodhd":
+        raise typer.BadParameter("only eodhd is supported")
+    parsed_symbols = None
+    if symbols is not None:
+        parsed_symbols = [value.strip() for value in symbols.split(",") if value.strip()]
+        if not parsed_symbols:
+            raise typer.BadParameter("symbols must contain at least one provider symbol")
+    output_mode = _parse_output_format(output)
+    try:
+        result = IdentifierMappingJob().run(
+            exchange=exchange,
+            symbols=parsed_symbols,
+            page_limit=page_limit,
+            start_offset=start_offset,
+            max_api_calls=max_api_calls,
+            max_requests_per_minute=max_requests_per_minute,
+            execute=not dry_run,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
+            override_source="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
+    typer.echo(
+        "id-mappings ingest "
+        f"run_id={result.run_id or '-'} status={result.status} "
+        f"fetched={result.rows_fetched} matched={result.rows_matched} "
+        f"inserted={result.rows_inserted} unmatched={result.rows_unmatched} "
+        f"invalid={result.rows_rejected} api_calls={result.api_calls} "
+        f"next_offset={result.metrics.get('next_offset')}"
+    )
 
 
 @ingest_app.command("delisted-instruments")

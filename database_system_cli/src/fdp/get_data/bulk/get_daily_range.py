@@ -17,6 +17,7 @@ from fdp.get_data.bulk.get_daily import (
     SUPPORTED_BULK_ASSET_TYPES,
     SUPPORTED_INSTRUMENT_STATUSES,
 )
+from fdp.get_data.api_budget import check_remote_api_capacity
 from fdp.get_data.contracts import (
     JobFailure,
     JobPreflight,
@@ -554,33 +555,7 @@ class DailyRangeJob:
         required_units: int,
     ) -> dict[str, int | str]:
         """Use the redacted User API counters to reject an underfunded real run."""
-        response = client.get_user()
-        if not response.success or not response.payload:
-            raise ValueError(
-                "EODHD User API budget preflight failed: "
-                f"{response.error_message or response.status_code}"
-            )
-        payload = response.payload[0]
-        try:
-            used = int(payload["apiRequests"])
-            daily_limit = int(payload["dailyRateLimit"])
-            extra_remaining = int(payload.get("extraLimit") or 0)
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError("EODHD User API returned incomplete budget counters") from exc
-        remote_remaining = max(daily_limit - used, 0) + max(extra_remaining, 0)
-        if remote_remaining < required_units:
-            raise ValueError(
-                "EODHD remote API budget is insufficient: "
-                f"remaining={remote_remaining} required={required_units}"
-            )
-        return {
-            "remote_api_requests_used": used,
-            "remote_daily_rate_limit": daily_limit,
-            "remote_extra_units_remaining": extra_remaining,
-            "remote_api_units_remaining": remote_remaining,
-            "remote_api_requests_date": str(payload.get("apiRequestsDate") or "unknown"),
-            "remote_preflight_api_units": response.retry_count + 1,
-        }
+        return check_remote_api_capacity(client, required_units=required_units)
 
     @staticmethod
     def _load_trading_dates(connection: Any, *, date_from: date, date_to: date) -> list[date]:

@@ -205,6 +205,33 @@ j21 ingest delisted-instruments
 
 重跑必须幂等：可以刷新 instrument 当前状态，不可重复制造相同 lifecycle event。
 
+### 6.3 Security ID Mapping
+
+```text
+j21 ingest id-mappings --exchange US|--symbols AAPL.US,...
+-> IdentifierMappingJob.preflight()
+-> audited EODHD User API allowance check
+-> EodhdClient.get_id_mappings()
+-> parse/check CUSIP, ISIN, FIGI, LEI, CIK
+-> exact current provider_symbol
+-> unique historical provider_symbol owner
+   -> matched/valid: instrument_identifier_history upsert
+   -> unresolved/ambiguous/invalid: system identifier_mapping_unmatched_observation
+-> ingestion_task_run + api_call_log + optional next_offset
+```
+
+CLI、菜单和 Python caller 共用同一个 `IdentifierMappingJob`。exchange mode 使用最多
+1000 rows/page 的 offset pagination；targeted symbols 只用于 smoke/repair。每个 mapping HTTP
+attempt 在发出前扣 1 个 weighted unit，retry 同样扣费；另有一次 audited User API preflight。
+预算停止后返回可续跑 offset。分页完整但仍有 reconciliation backlog 时，状态可以是
+`partial_failed`，但 `next_offset` 为 `NULL`。
+
+该 API 不返回 identifier 生效日期，所以 `valid_from/valid_to` 保持 `NULL`，不能宣称
+current-only 或 PIT。同一 instrument/type 的多个 validated values 作为 undated aliases 全部保留；
+不能按 provider 返回顺序任取第一值。
+MySQL 通过 generated `valid_from_key` 只在唯一约束内部把 `NULL` 归一化，业务字段本身不伪造日期。
+外部 ID 只 enrich 已通过 provider symbol 严格定位的 `instrument_id`，不能反向触发 fuzzy merge。
+
 ## 7. Historical EOD 路径
 
 `j21 ingest history` 根据 `--asset-types` 选择 stock、ETF、Fund、index Job 或通用
@@ -394,7 +421,7 @@ SELECT 权限。没有 ingest/repair/migration HTTP route；页面只复制 CLI�
 | Schema | 内容 | 例子 |
 | --- | --- | --- |
 | `us_share` | canonical instrument/market data | identity/lifecycle/calendar、六种 asset daily price |
-| `system` | 运行审计、DQ、人工 workflow、staging | task/API log、issues、repair/quarantine plan、bulk unmatched |
+| `system` | 运行审计、DQ、人工 workflow、staging | task/API log、issues、repair/quarantine plan、bulk/ID-mapping unmatched |
 | `app_log` | API playground/search/snapshot 临时响应 | quote/search/screener/live snapshot |
 
 `src/fdp/storage/tables.py` 管理 Data Core 的 runtime table contract；物理变化必须通过

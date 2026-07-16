@@ -109,17 +109,18 @@ Completed:
 - `j21 research technical-validate` provides a 200-unit hard-capped EODHD parity diagnostic. AAPL/META/SPY SMA20/EMA20/RSI14 used 45 units; all 9 comparisons passed with maximum absolute error about `0.00005`.
 - New sibling `research_terminal/` is operational: GET-only FastAPI/SQLAlchemy backend, React/TypeScript/ECharts Overview/Security/Funds/Data Health views, stock/ETF candles, Fund NAV line, safe CSV, PNG, and no ingest/repair HTTP route.
 - Terminal verification passes 22 backend tests, frontend Vitest/build, npm audit with 0 vulnerabilities, and 8 Playwright desktop/mobile tests with real AAPL/VFINX data, nonblank canvas pixels, and no global horizontal overflow.
-- Final database CLI suite passes 202 tests plus Ruff and compileall; Alembic code and live DB both report the single `0014_fund_compact_swap` head.
+- Final database CLI suite passes 235 tests plus Ruff and compileall; Alembic code and live DB both report the single `0015_id_mapping_ingest` head.
 - Final cross-table audit found 871 rows for 22 instruments that were written as stock before later
   metadata corrected them to ETF. New `j21 migrate daily-price-asset-types` plan/execute workflow
   copies, verifies, and transactionally deletes drift rows; a 100-row smoke plus 771-row completion
   moved all rows with no target conflicts, and the final global mismatch plan is 0.
 - Daily quality validation now reports future table/master drift as `asset_type_mismatch` and points
   to the reconcile workflow instead of quarantining valid prices.
+- EODHD Security ID Mapping is operational through one shared Job, Typer CLI, and bilingual terminal menu. Live run `7022` completed all 110 remote pages: 109,338 rows fetched, 98,810 exactly matched, 176,599 new undated aliases inserted, 30,350 aliases unchanged, 10,625 rows staged for reconciliation, 0 request failures, and `next_offset=NULL`. Targeted repair run `7023` resolved all six blank-field parser false positives; normalized identifier duplicates and conflicting intervals are both 0.
 
-Not started:
+In progress:
 
-- ID mapping ingestion for CUSIP/ISIN/FIGI/LEI/CIK validation
+- none
 
 ## Next Step
 
@@ -130,3 +131,4 @@ Not started:
 - reconcile the recent factor-window staging backlog by reason: `1,132,723 unresolved`, `100,088 ambiguous`, `785 invalid_price`, and `317,196 shadowed`; do not auto-route without strict identity evidence
 - create a dedicated MySQL SELECT-only account for `research_terminal`; the application SQL guard remains defense-in-depth, not the only permission boundary
 - decide whether to persist exact/periodic table statistics for Terminal Overview instead of using labeled InnoDB estimates
+- reconcile the remaining `10,619` ID Mapping observations, starting with `10,522 missing_instrument` rows; do not create or merge instruments from CIK/LEI/CUSIP/ISIN/FIGI alone

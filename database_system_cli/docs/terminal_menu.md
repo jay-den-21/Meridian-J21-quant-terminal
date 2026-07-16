@@ -64,9 +64,24 @@ Bulk EOD：
 Reference / reconcile：
 
 - US market calendar
+- Security ID Mapping：US exchange full sync 或少量 provider symbols
 - Bulk unmatched summary -> classify -> route dry-run -> route execute
 
 Validate、repair、quarantine 和普通 research 查询暂时保留为 CLI-only；它们不会在菜单中显示成不可用按钮。
+
+### Security ID Mapping
+
+菜单里的 ID Mapping wizard 提供两个互斥 scope：
+
+- `US exchange`：按 `page[limit]` / `page[offset]` 分页同步全市场。
+- `Provider symbols`：只查询 `AAPL.US,MSFT.US` 这类少量明确标的。
+
+高级参数可设置 page size、resume offset、hard API-call budget 和每分钟请求上限。
+确认页会显示等价的 `j21 ingest id-mappings` 命令。预算耗尽时已提交 page 保留，结果中的
+`next_offset` 用于续跑。返回数据没有有效期，因此是 undated crosswalk aliases，不是
+current-only 或 PIT history；同一 instrument/type 的多个 validated values 会全部保留。
+若分页已完成但仍有 unmatched/invalid 行，结果为 `partial_failed` 且 `next_offset` 为空；
+这表示后续需要 reconcile，不需要重复拉取整套分页。
 
 ## Symbol 和日期规则
 
