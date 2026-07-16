@@ -117,6 +117,12 @@ Completed:
 - Daily quality validation now reports future table/master drift as `asset_type_mismatch` and points
   to the reconcile workflow instead of quarantining valid prices.
 - EODHD Security ID Mapping is operational through one shared Job, Typer CLI, and bilingual terminal menu. Live run `7022` completed all 110 remote pages: 109,338 rows fetched, 98,810 exactly matched, 176,599 new undated aliases inserted, 30,350 aliases unchanged, 10,625 rows staged for reconciliation, 0 request failures, and `next_offset=NULL`. Targeted repair run `7023` resolved all six blank-field parser false positives; normalized identifier duplicates and conflicting intervals are both 0.
+- Guided Bulk reconciliation is operational through `j21 reconcile bulk-unmatched summary/list/classify/route/status`. Classify uses 5,000-row checkpointed keyset batches; route uses complete 1,000-group batches, confidence-aware overwrite protection, identity audit, existing quality tables, atomic checkpoints, and 0 EODHD API calls. The v0.4 research/ingest routes remain warning-compatible and are scheduled for removal in v0.5.
+- Alembic `0016_guided_bulk_reconcile` is the single code/live head. It adds `checkpoint_json`, `last_classified_run_id`, `instrument_identity_resolution_audit`, and the exact `(market, classification_status, trade_date, observation_id)` index with online DDL and shape validation. Live `EXPLAIN ANALYZE` used that index to fetch 5,000 rows in about 21.5 ms.
+- Bounded real-DB reconciliation smoke stayed within authorization: 905 observations classified in 100-row batches, one complete FIRRF.US group dry-run/routed, repeated route produced 0 new groups, canonical/audit/staging counts remained 1/1/1, duplicate groups were 0, related API logs were 0, and daily-price quality runs found 0 issues.
+- Guided Menu now hands successful Bulk daily/range results to a colored summary, skippable 10-second review, default-No classify/route confirmations, Rich Live measured progress, route dry-run, automatic daily-price validation, final retained-issue samples, and same-`run_id` resume. Latest daily defaults to active; explicit historical daily and daily-range default to active+inactive.
+- Harsh review hardened three non-obvious failure modes: migration rejects a same-name/wrong-shape classifier index; route enforces `selected = routed + shadowed + failed` plus canonical/routed closure; invalid price payloads use `invalid_ohlcv`/`api_rejected_row` rather than identity-conflict issues. Final gate passes 274 tests, Ruff, compileall, docs-staleness, CLI help, and live Alembic current.
+- `docs/system_tables.md/.html` now records every managed `system` table's purpose, writer, reader, retention policy, and deletion boundary; it is included in deterministic Markdown/HTML staleness validation.
 
 In progress:
 
@@ -128,7 +134,9 @@ In progress:
 - decide the next delisted-date source: EODHD Fundamentals/Corporate Actions, Nasdaq/FINRA lists, or manual enrichment, because the EODHD delisted symbol list does not expose delist dates
 - plan point-in-time universe membership so active-only backtests can be clearly separated from survivorship-bias-aware research
 - extend delisted historical backfill in small, budgeted batches after date-source and universe policy are settled
-- reconcile the recent factor-window staging backlog by reason: `1,132,723 unresolved`, `100,088 ambiguous`, `785 invalid_price`, and `317,196 shadowed`; do not auto-route without strict identity evidence
+- run the full retained Bulk staging backlog through `j21 menu -> Reference / reconcile -> Bulk unmatched -> New` under user control, then verify checkpoint closure, quality runs, canonical duplicate keys, audit aggregation, and remaining status samples; do not auto-route identity conflicts
+- design the separate from-zero database bootstrap wizard after the full reconcile run; it remains outside the Guided Bulk workflow
+- remove the v0.4 `research bulk-unmatched` and `ingest bulk-unmatched-route` compatibility aliases in v0.5 after dependent notes/automation migrate
 - create a dedicated MySQL SELECT-only account for `research_terminal`; the application SQL guard remains defense-in-depth, not the only permission boundary
 - decide whether to persist exact/periodic table statistics for Terminal Overview instead of using labeled InnoDB estimates
 - reconcile the remaining `10,619` ID Mapping observations, starting with `10,522 missing_instrument` rows; do not create or merge instruments from CIK/LEI/CUSIP/ISIN/FIGI alone

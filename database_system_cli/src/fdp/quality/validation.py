@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any, Iterable
 
 from sqlalchemy import Table, update
 from sqlalchemy.engine import Connection
@@ -18,10 +18,14 @@ from fdp.quality.checks.missing import loaded_daily_price_instruments, missing_d
 from fdp.quality.checks.ohlcv import invalid_ohlcv_rows
 from fdp.storage.tables import (
     DAILY_PRICE_TABLES,
+    SYSTEM_SCHEMA,
     US_SHARE_SCHEMA,
     data_quality_check_run,
     data_quality_issue,
 )
+
+if TYPE_CHECKING:
+    from fdp.bulk_unmatched import BulkUnmatchedRouteFailure
 
 PRICE_TABLES = {
     asset_type: DAILY_PRICE_TABLES[asset_type]
@@ -51,6 +55,84 @@ class DailyPriceValidationResult:
     @property
     def issues_found(self) -> int:
         return sum(summary.issues_found for summary in self.table_summaries)
+
+
+def create_bulk_route_quality_check(
+    connection: Connection,
+    *,
+    market: str,
+    date_from: date,
+    date_to: date,
+) -> int:
+    """Create one reusable quality run for conflicts retained by a route workflow."""
+    result = connection.execute(
+        data_quality_check_run.insert().values(
+            market=market,
+            target_schema=SYSTEM_SCHEMA,
+            target_table="bulk_unmatched_daily_price_observation",
+            check_scope=(
+                "bulk_route_identity:"
+                f"{date_from.isoformat()}..{date_to.isoformat()}"
+            ),
+            status="running",
+            started_at=_now_utc(),
+        )
+    )
+    return int(result.inserted_primary_key[0])
+
+
+def record_bulk_route_quality_issues(
+    connection: Connection,
+    *,
+    check_run_id: int,
+    market: str,
+    failures: Iterable["BulkUnmatchedRouteFailure"],
+) -> int:
+    """Persist route conflicts without changing or repairing their source rows."""
+    issue_rows = [
+        {
+            "check_run_id": check_run_id,
+            "market": market,
+            "target_schema": US_SHARE_SCHEMA,
+            "target_table": f"{failure.asset_type}_daily_price",
+            "issue_type": failure.issue_type,
+            "severity": "error",
+            "instrument_id": failure.instrument_id,
+            "symbol": failure.symbol,
+            "trade_date": failure.trade_date,
+            "details": json.dumps(
+                {
+                    "observation_id": failure.observation_id,
+                    "provider_symbol": failure.provider_symbol,
+                    "reason": failure.reason,
+                },
+                sort_keys=True,
+            ),
+            "status": "open",
+        }
+        for failure in failures
+    ]
+    if issue_rows:
+        connection.execute(data_quality_issue.insert().values(issue_rows))
+    return len(issue_rows)
+
+
+def finish_bulk_route_quality_check(
+    connection: Connection,
+    *,
+    check_run_id: int,
+    status: str,
+    issues_found: int,
+    error_message: str | None,
+) -> None:
+    """Finish or pause the route-conflict quality run with committed counts."""
+    _finish_check_run(
+        connection,
+        check_run_id=check_run_id,
+        status=status,
+        issues_found=issues_found,
+        error_message=error_message,
+    )
 
 
 def validate_daily_prices(

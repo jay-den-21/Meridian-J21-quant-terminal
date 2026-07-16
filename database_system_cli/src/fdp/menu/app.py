@@ -10,6 +10,7 @@ from typing import Any
 
 import typer
 
+from fdp.bulk_unmatched import MENU_CLASSIFICATION_STATUSES
 from fdp.get_data import (
     ActiveInstrumentsJob,
     BulkDailyJob,
@@ -36,6 +37,13 @@ from fdp.get_data.registry import INGEST_JOB_DEFINITIONS
 from fdp.menu.i18n import Language, tr
 from fdp.menu.progress import TqdmProgressReporter
 from fdp.menu.prompts import PromptSession
+from fdp.menu.reconcile_ui import (
+    RichReconcileProgressReporter,
+    hold_summary_for_review,
+    play_j21_logo,
+    show_reconcile_final_report,
+    show_reconcile_summary,
+)
 
 
 class MenuCancelled(Exception):
@@ -429,7 +437,7 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
     instrument_status = session.select(
         tr(language, "status"),
         [("Active", "active"), ("Active + inactive", "all")],
-        default="active",
+        default="active" if trade_date is None else "all",
     )
     if instrument_status is None:
         raise MenuCancelled
@@ -465,7 +473,7 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
         ]
     )
     command = _command(*args)
-    _confirm_and_run(
+    result = _confirm_and_run(
         session,
         language,
         preflight,
@@ -483,6 +491,20 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
             preflight=preflight,
         ),
     )
+    actual_trade_date = result.metrics.get("provider_trade_date") or trade_date
+    if actual_trade_date is not None:
+        parsed_trade_date = (
+            actual_trade_date
+            if isinstance(actual_trade_date, date)
+            else date.fromisoformat(str(actual_trade_date))
+        )
+        _run_guided_reconcile(
+            session,
+            language,
+            date_from=parsed_trade_date,
+            date_to=parsed_trade_date,
+            runtime=runtime,
+        )
 
 
 def _run_daily_range(session: PromptSession, language: Language) -> None:
@@ -492,7 +514,7 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
     instrument_status = session.select(
         tr(language, "status"),
         [("Active", "active"), ("Active + inactive", "all")],
-        default="active",
+        default="all",
     )
     if instrument_status is None:
         raise MenuCancelled
@@ -589,103 +611,274 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
             preflight=preflight,
         ),
     )
+    _run_guided_reconcile(
+        session,
+        language,
+        date_from=date_from,
+        date_to=date_to,
+        runtime=runtime,
+    )
 
 
 def _run_bulk_unmatched(session: PromptSession, language: Language) -> None:
+    mode = session.select(
+        tr(language, "reconcile_mode"),
+        [
+            (tr(language, "reconcile_new"), "new"),
+            (tr(language, "reconcile_resume"), "resume"),
+        ],
+        default="new",
+    )
+    if mode is None:
+        raise MenuCancelled
+    runtime = JobRuntime.from_env()
+    job = BulkUnmatchedReconcileJob()
+    if mode == "resume":
+        run_id = _int_value(session, tr(language, "run_id"), default=1)
+        state = job.status(run_id=run_id, runtime=runtime)
+        checkpoint = state["checkpoint"]
+        _run_guided_reconcile(
+            session,
+            language,
+            date_from=date.fromisoformat(checkpoint["date_from"]),
+            date_to=date.fromisoformat(checkpoint["date_to"]),
+            market=checkpoint["market"],
+            asset_types=checkpoint["route"].get("asset_types") or None,
+            statuses=checkpoint["source_statuses"],
+            runtime=runtime,
+            run_id=run_id,
+        )
+        return
+
     date_from = _date_value(session, tr(language, "date_from"))
     date_to = _date_value(session, tr(language, "date_to"))
     asset_types = ["stock", "etf", "fund", "index"]
+    statuses = list(MENU_CLASSIFICATION_STATUSES)
     market = "US"
-    limit = None
     if _advanced(session, language):
         market = _text(session, tr(language, "market"), default="US")
-        limit = _optional_int(session, tr(language, "limit"))
-    runtime = JobRuntime.from_env()
-    job = BulkUnmatchedReconcileJob()
-    preflight = job.preflight(
+        selected = session.checkbox(
+            tr(language, "classification_statuses"),
+            [
+                ("Unresolved", "unresolved"),
+                ("Needs instrument", "needs_instrument"),
+                ("Unknown", "unknown"),
+                ("Ambiguous (advanced)", "ambiguous"),
+                ("Non-price asset (advanced)", "non_price_asset"),
+            ],
+            defaults=set(MENU_CLASSIFICATION_STATUSES),
+        )
+        if not selected:
+            raise MenuCancelled
+        statuses = selected
+    _run_guided_reconcile(
+        session,
+        language,
         date_from=date_from,
         date_to=date_to,
         market=market,
         asset_types=asset_types,
-        limit=limit,
-        runtime=runtime,
-        override_source="menu",
-    )
-    summary = job.summary(
-        date_from=date_from,
-        date_to=date_to,
-        market=market,
+        statuses=statuses,
         runtime=runtime,
     )
-    _show_preflight(
-        preflight,
-        _command(
-            "research",
+
+
+def _run_guided_reconcile(
+    session: PromptSession,
+    language: Language,
+    *,
+    date_from: date,
+    date_to: date,
+    market: str = "US",
+    asset_types: list[str] | None = None,
+    statuses: list[str] | None = None,
+    runtime: JobRuntime | None = None,
+    run_id: int | None = None,
+) -> None:
+    """Drive new and resumed Menu workflows through one shared local Job."""
+    active_runtime = runtime or JobRuntime.from_env()
+    job = BulkUnmatchedReconcileJob()
+    resolved_assets = asset_types or ["stock", "etf", "fund", "index"]
+    resolved_statuses = statuses or list(MENU_CLASSIFICATION_STATUSES)
+    phase = "classify"
+    if run_id is not None:
+        state = job.status(run_id=run_id, runtime=active_runtime)
+        phase = state["checkpoint"]["phase"]
+        typer.echo(
+            f"\nResume reconcile run_id={run_id} status={state['status']} phase={phase}"
+        )
+
+    if phase == "classify":
+        preflight = job.preflight(
+            date_from=date_from,
+            date_to=date_to,
+            market=market,
+            asset_types=resolved_assets,
+            statuses=resolved_statuses,
+            runtime=active_runtime,
+            override_source="menu",
+        )
+        summary = job.summary(
+            date_from=date_from,
+            date_to=date_to,
+            market=market,
+            runtime=active_runtime,
+        )
+        _show_preflight(
+            preflight,
+            _command(
+                "reconcile",
+                "bulk-unmatched",
+                "classify",
+                "--from",
+                date_from,
+                "--to",
+                date_to,
+                "--market",
+                market,
+                "--statuses",
+                ",".join(resolved_statuses),
+            ),
+        )
+        show_reconcile_summary(
+            summary,
+            date_from=date_from,
+            date_to=date_to,
+            language=language,
+        )
+        hold_summary_for_review(language=language)
+        if not session.confirm(tr(language, "confirm_classify"), default=False):
+            typer.echo(tr(language, "cancelled"))
+            return
+        play_j21_logo()
+        classify_result = _run_reconcile_with_progress(
+            lambda reporter: job.classify(
+                date_from=date_from,
+                date_to=date_to,
+                market=market,
+                statuses=resolved_statuses,
+                run_id=run_id,
+                runtime=active_runtime,
+                reporter=reporter,
+                preflight=preflight if run_id is None else None,
+                override_source="menu",
+            )
+        )
+        run_id = classify_result.run_id
+        _show_result(classify_result, language)
+        phase = str(classify_result.metrics.get("checkpoint_phase", "classify"))
+        if phase != "route" or run_id is None:
+            return
+
+    if phase == "route":
+        route_preview = job.route(
+            date_from=date_from,
+            date_to=date_to,
+            market=market,
+            asset_types=resolved_assets,
+            execute=False,
+            run_id=run_id,
+            runtime=active_runtime,
+            override_source="menu",
+        )
+        route_command = _command(
+            "reconcile",
             "bulk-unmatched",
-            "classify",
+            "route",
             "--from",
             date_from,
             "--to",
             date_to,
+            "--asset-types",
+            ",".join(resolved_assets),
             "--market",
             market,
-        ),
-    )
-    for row in summary:
-        typer.echo(
-            f"  status={row.classification_status} "
-            f"asset_type={row.classified_asset_type or '-'} count={row.row_count}"
+            "--run-id",
+            run_id,
+            "--execute",
+            "--yes",
         )
-    if not session.confirm(tr(language, "confirm_classify"), default=False):
-        raise MenuCancelled
-    classify_result = job.classify(
-        date_from=date_from,
-        date_to=date_to,
-        market=market,
-        limit=limit,
-        runtime=runtime,
-        override_source="menu",
-    )
-    _show_result(classify_result, language)
-    route_preview = job.route(
-        date_from=date_from,
-        date_to=date_to,
-        market=market,
-        asset_types=asset_types,
-        limit=limit,
-        execute=False,
-        runtime=runtime,
-        override_source="menu",
-    )
-    route_command = _command(
-        "ingest",
-        "bulk-unmatched-route",
-        "--from",
-        date_from,
-        "--to",
-        date_to,
-        "--asset-types",
-        ",".join(asset_types),
-        "--market",
-        market,
-        "--execute",
-        "--yes",
-    )
-    typer.echo(f"\nEquivalent CLI: {route_command}")
-    _show_result(route_preview, language)
-    if not session.confirm(tr(language, "confirm_route"), default=False):
-        raise MenuCancelled
-    routed = job.route(
-        date_from=date_from,
-        date_to=date_to,
-        market=market,
-        asset_types=asset_types,
-        limit=limit,
-        execute=True,
-        runtime=runtime,
-        override_source="menu",
-    )
-    _show_result(routed, language)
+        typer.echo(f"\nEquivalent CLI: {route_command}")
+        _show_result(route_preview, language)
+        if not session.confirm(tr(language, "confirm_route"), default=False):
+            typer.echo(
+                f"run_id={run_id} preserved; resume with: {route_command}"
+            )
+            return
+        play_j21_logo()
+        route_result = _run_reconcile_with_progress(
+            lambda reporter: job.route(
+                date_from=date_from,
+                date_to=date_to,
+                market=market,
+                asset_types=resolved_assets,
+                execute=True,
+                run_id=run_id,
+                runtime=active_runtime,
+                reporter=reporter,
+                override_source="menu",
+            )
+        )
+        _show_result(route_result, language)
+        phase = str(route_result.metrics.get("checkpoint_phase", "route"))
+        if phase != "validation":
+            return
+
+    if phase == "validation":
+        if run_id is None:
+            raise RuntimeError("validation phase is missing reconcile run_id")
+        validation_result = job.validate(
+            date_from=date_from,
+            date_to=date_to,
+            market=market,
+            asset_types=resolved_assets,
+            run_id=run_id,
+            runtime=active_runtime,
+            override_source="menu",
+        )
+        _show_result(validation_result, language)
+        remaining = job.summary(
+            date_from=date_from,
+            date_to=date_to,
+            market=market,
+            runtime=active_runtime,
+        )
+        show_reconcile_final_report(
+            result=validation_result,
+            remaining=remaining,
+            language=language,
+        )
+        issue_rows: list[dict[str, object]] = []
+        for issue_status in ("route_failed", "ambiguous", "needs_instrument", "unknown"):
+            issue_rows.extend(
+                job.list(
+                    date_from=date_from,
+                    date_to=date_to,
+                    market=market,
+                    status=issue_status,
+                    limit=max(1, 10 - len(issue_rows)),
+                    runtime=active_runtime,
+                )
+            )
+            if len(issue_rows) >= 10:
+                break
+        if issue_rows:
+            typer.echo("\nRemaining issue samples")
+            _show_bulk_unmatched_rows(issue_rows, limit=10)
+        return
+
+    if phase == "complete":
+        typer.echo(f"reconcile run_id={run_id} is already complete")
+
+
+def _run_reconcile_with_progress(
+    runner: Callable[[RichReconcileProgressReporter], JobResult],
+) -> JobResult:
+    reporter = RichReconcileProgressReporter()
+    try:
+        return runner(reporter)
+    finally:
+        reporter.close()
 
 
 def _confirm_and_run(
@@ -694,7 +887,7 @@ def _confirm_and_run(
     preflight: JobPreflight,
     command: str,
     runner: Callable[[TqdmProgressReporter], JobResult],
-) -> None:
+) -> JobResult:
     _show_preflight(preflight, command)
     if not session.confirm(tr(language, "confirm"), default=False):
         raise MenuCancelled
@@ -704,6 +897,7 @@ def _confirm_and_run(
     finally:
         reporter.close()
     _show_result(result, language)
+    return result
 
 
 def _show_preflight(preflight: JobPreflight, command: str) -> None:
@@ -741,6 +935,18 @@ def _show_result(result: JobResult, language: Language) -> None:
         )
     if len(result.failures) > 10:
         typer.echo(f"  ... {len(result.failures) - 10} more failure(s)")
+
+
+def _show_bulk_unmatched_rows(rows: list[dict[str, object]], *, limit: int) -> None:
+    """Print bounded retained issue examples without querying or changing state."""
+    for row in rows[:limit]:
+        typer.echo(
+            "  "
+            f"observation_id={row['observation_id']} "
+            f"date={row['trade_date']} provider_symbol={row['provider_symbol']} "
+            f"status={row['classification_status']} "
+            f"reason={row.get('reason') or '-'}"
+        )
 
 
 def _advanced(session: PromptSession, language: Language) -> bool:

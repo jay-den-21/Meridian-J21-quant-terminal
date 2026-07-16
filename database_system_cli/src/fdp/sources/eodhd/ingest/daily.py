@@ -39,6 +39,7 @@ from fdp.storage.upsert import (
     build_bulk_unmatched_daily_price_observation_upsert,
     build_classified_bulk_observation_upsert,
     build_daily_price_upsert,
+    build_identity_resolution_audit_upsert,
     build_instrument_upsert,
 )
 
@@ -320,6 +321,7 @@ def load_bulk_daily_prices(
     unmatched_observations: list[dict[str, object]] = []
     classified_observations: list[dict[str, object]] = []
     resolved_candidates: list[_ResolvedBulkCandidate] = []
+    observed_trade_dates: set[date] = set()
     rejected_rows: list[RejectedDailyPriceRow] = []
     unmatched_rows = 0
 
@@ -353,6 +355,7 @@ def load_bulk_daily_prices(
                 )
             )
             continue
+        observed_trade_dates.add(observed_trade_date)
 
         resolution = active_identity_resolver.resolve(
             provider_symbol=provider_symbol,
@@ -420,6 +423,7 @@ def load_bulk_daily_prices(
         exchange=normalized_exchange,
         candidates=selected_candidates,
     )
+    identity_audit_rows: list[dict[str, object]] = []
     for candidate, classification_status, reason in shadowed_candidates:
         instrument_row = candidate.resolution.instrument
         if instrument_row is None:  # The selector only receives resolved candidates.
@@ -455,6 +459,14 @@ def load_bulk_daily_prices(
         if parsed_rows.accepted:
             asset_type = str(instrument_row["asset_type"])
             accepted_by_asset_type.setdefault(asset_type, []).extend(parsed_rows.accepted)
+            identity_audit_rows.append(
+                candidate.resolution.audit_row(
+                    provider_symbol=candidate.provider_symbol,
+                    trade_date=candidate.trade_date,
+                    run_id=run_id,
+                    market=market,
+                )
+            )
             if (candidate.provider_symbol, candidate.trade_date) in existing_staged_keys:
                 classified_observations.append(
                     _bulk_unmatched_observation_row(
@@ -494,6 +506,8 @@ def load_bulk_daily_prices(
         )
 
     rows_inserted = _upsert_daily_price_chunks(connection, accepted_by_asset_type)
+    if identity_audit_rows:
+        connection.execute(build_identity_resolution_audit_upsert(identity_audit_rows))
     _upsert_bulk_observations(
         connection,
         unmatched_observations,
@@ -522,11 +536,14 @@ def load_bulk_daily_prices(
         error_message=error_message,
     )
 
+    actual_trade_date = trade_date
+    if actual_trade_date is None and len(observed_trade_dates) == 1:
+        actual_trade_date = next(iter(observed_trade_dates))
     return BulkDailyPriceLoadResult(
         run_id=run_id,
         status=status,
         exchange=normalized_exchange,
-        trade_date=trade_date,
+        trade_date=actual_trade_date,
         rows_fetched=response.rows_returned,
         rows_matched=len(resolved_candidates) - ambiguous_alias_rows,
         rows_inserted=rows_inserted,

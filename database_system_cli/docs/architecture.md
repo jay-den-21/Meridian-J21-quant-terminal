@@ -312,34 +312,66 @@ j21 ingest daily-range --from ... --to ...
 ## 9. Bulk Unmatched Reconcile
 
 ```mermaid
-flowchart LR
-    Raw["system.bulk_unmatched_daily_price_observation"]
-    Summary["summary / list"]
-    Classify["strict classifier"]
-    Match{"exact provider_symbol<br/>instrument match?"}
-    Route["route dry-run / execute"]
-    Price["stock / ETF / Fund / index daily price"]
-    Hold["needs_instrument / non_price_asset / unknown"]
-
-    Raw --> Summary --> Classify --> Match
-    Match -- yes --> Route --> Price
-    Match -- no --> Hold
+flowchart TB
+    Input["CLI / Guided Menu"] --> Job["BulkUnmatchedReconcileJob"]
+    Raw["system.bulk_unmatched observation"] --> Summary["summary / list"]
+    Job --> Summary
+    Summary --> Classify["checkpointed classifier"]
+    Classify --> Decision{"identity confidence"}
+    Decision -- high or medium --> Matched["matched candidate"]
+    Decision -- conflict or unsupported --> Hold["retained staging state"]
+    Matched --> Preview["complete-group route dry-run"]
+    Preview --> Confirm{"operator confirms?"}
+    Confirm -- no --> Resume["preserve run checkpoint"]
+    Confirm -- yes --> Route["atomic route batches"]
+    Route --> Price["canonical daily price"]
+    Route --> Audit["identity resolution audit"]
+    Route --> Quality["quality run / issue"]
+    Route --> Checkpoint["ingestion task checkpoint"]
+    Price --> Validate["daily-price validation"]
 ```
 
 操作顺序：
 
 ```text
-j21 research bulk-unmatched summary/list
-j21 research bulk-unmatched classify
-j21 ingest bulk-unmatched-route --dry-run
-j21 ingest bulk-unmatched-route --execute --yes
+j21 reconcile bulk-unmatched summary/list
+j21 reconcile bulk-unmatched classify
+j21 reconcile bulk-unmatched status --run-id ...
+j21 reconcile bulk-unmatched route --dry-run --run-id ...
+j21 reconcile bulk-unmatched route --execute --yes --run-id ...
 j21 validate daily-price
 ```
 
-`fdp.bulk_unmatched.classify_bulk_unmatched_observations()` 只接受 exact
-source-date/current `provider_symbol` identity match。Fund 路由到 `fund_daily_price`；
-preferred/notes/bond/warrant/unknown 不会被猜测写进 canonical price table。route 时重新通过
-`parse_daily_price_rows()` 校验价格，并保留 observed symbol/provider symbol。
+`src/fdp/get_data/reconcile/bulk_unmatched.py` 是统一 Job adapter；CLI 和 Menu 都调用
+`BulkUnmatchedReconcileJob`。`src/fdp/get_data/reconcile/workflow.py` 负责创建、解析和保存
+`checkpoint_json`；`src/fdp/bulk_unmatched.py` 负责 SELECT、身份决策和完整 natural-key group
+路由；`src/fdp/menu/reconcile_ui.py` 只负责 Rich 展示，不拥有业务规则。
+
+Classifier 默认每批 5,000 rows，用 `(trade_date, observation_id)` keyset cursor 读取固定
+snapshot。MySQL 查询使用 `(market, classification_status, trade_date, observation_id)` 复合
+索引。CLI 默认只处理 `unresolved`；Menu 默认处理
+`unresolved + needs_instrument + unknown`。`ambiguous` 和 `non_price_asset` 必须显式使用高级
+选项。整个 reconcile 路径不会构造 EODHD client，任务和 API log 验证值均为 0。
+
+身份规则：有效日期内唯一 identifier history 是 high-confidence；没有历史冲突的唯一 current
+provider symbol 是 medium-confidence；无日期 CUSIP/ISIN/FIGI 只能辅助审计。多个 owner、历史
+冲突或 EODHD type 不兼容都留在 staging，不猜测合并。
+
+Router 每批最多处理 1,000 个完整 `(instrument_id, trade_date)` 组合。dated-history winner
+优先，其余 alias 标为 `shadowed`。相同 provider symbol 可以刷新 EODHD row；不同 symbol 只有
+新的 high-confidence 判定可以替换已明确记录为 medium-confidence 的 canonical identity。
+同级、降级或旧 confidence 不明时禁止覆盖，保留原 row，并写
+`identity_route_conflict` quality issue。route 时仍通过 `parse_daily_price_rows()` 校验 OHLCV，
+并保留 source 当日 symbol/provider symbol。
+
+一个 batch 内的 staging 更新、canonical upsert、identity audit、quality issue 和 checkpoint
+共用一个 transaction。失败只回滚当前 batch，先前提交保留。`Ctrl+C` 后用同一 `run_id`
+继续；scope 不一致会拒绝 resume。旧 `research bulk-unmatched` 和
+`ingest bulk-unmatched-route` 在 v0.4 只是带 warning 的兼容代理，v0.5 删除。
+每批及最终 validation 同时检查
+`observations_selected = routed + shadowed + route_failed` 和 `canonical writes = routed`；
+不闭合时不得报告 success。价格 payload 校验失败写 `invalid_ohlcv` 或 `api_rejected_row`，
+不能误记为 identity conflict。
 
 ## 10. 质量、Repair 与 Quarantine
 
@@ -426,7 +458,8 @@ SELECT 权限。没有 ingest/repair/migration HTTP route；页面只复制 CLI�
 
 `src/fdp/storage/tables.py` 管理 Data Core 的 runtime table contract；物理变化必须通过
 Alembic。`app_log` snapshot 当前由迁移历史管理，不应重新混入 `us_share` canonical
-metadata。
+metadata。`system` 每张表的用途、写入者、读取者、保留策略和删除边界见
+[`system_tables.md`](system_tables.md)。
 
 ETF/Fund 历史混表已通过 `j21 migrate fund-daily-price` 的 plan/copy/verify/finalize workflow
 拆开。Alembic 只建 schema/checkpoint；数千万行 copy/compact swap 在可恢复 Job 中运行，

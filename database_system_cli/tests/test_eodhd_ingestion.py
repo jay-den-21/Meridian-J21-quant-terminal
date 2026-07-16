@@ -31,6 +31,7 @@ from fdp.storage.tables import (
     ingestion_task_run,
     instrument,
     instrument_identifier_history,
+    instrument_identity_resolution_audit,
     instrument_lifecycle_event,
     market_calendar,
     stock_daily_price,
@@ -668,6 +669,12 @@ class FakeAliasResolver:
             instrument=self.instrument_row,
             matched_by=matched_by,
             reason=None,
+            confidence="high" if matched_by == "identifier_history" else "medium",
+            evidence_type=(
+                "dated_provider_symbol_history"
+                if matched_by == "identifier_history"
+                else "unique_current_provider_symbol"
+            ),
         )
 
 
@@ -677,6 +684,8 @@ class FakeAmbiguousAliasResolver(FakeAliasResolver):
             instrument=self.instrument_row,
             matched_by="current_provider_symbol",
             reason=None,
+            confidence="medium",
+            evidence_type="unique_current_provider_symbol",
         )
 
 
@@ -753,9 +762,31 @@ def test_load_bulk_daily_prices_uses_one_api_call_and_split_table_upserts() -> N
         None,
         stock_daily_price,
         etf_daily_price,
+        instrument_identity_resolution_audit,
         bulk_unmatched_daily_price_observation,
         ingestion_task_run,
     ]
+
+
+def test_latest_bulk_daily_exposes_the_provider_trade_date() -> None:
+    class LatestBulkClient(FakeBulkClient):
+        def get_bulk_eod(self, exchange, *, trade_date=None, symbols=None):
+            assert trade_date is None
+            return super().get_bulk_eod(
+                exchange,
+                trade_date=date(2023, 1, 3),
+                symbols=symbols,
+            )
+
+    result = load_bulk_daily_prices(
+        FakeBulkConnection(),
+        LatestBulkClient(),
+        exchange="US",
+        trade_date=None,
+        symbols=["AAPL", "SPY"],
+    )
+
+    assert result.trade_date == date(2023, 1, 3)
 
 
 def test_bulk_upserts_use_deterministic_table_and_natural_key_order() -> None:
@@ -846,6 +877,7 @@ def test_bulk_daily_prefers_dated_alias_over_conflicting_current_code() -> None:
     assert result.rows_rejected == 0
     assert result.unmatched_rows == 0
     assert result.shadowed_rows == 1
+    assert result.trade_date == date(2014, 8, 18)
 
     price_statement = next(
         statement
@@ -857,6 +889,15 @@ def test_bulk_daily_prefers_dated_alias_over_conflicting_current_code() -> None:
     assert "NEW.US" not in price_values
     assert any(str(value) == "10" for value in price_values)
     assert not any(str(value) == "99" for value in price_values)
+
+    audit_statement = next(
+        statement
+        for statement in connection.statements
+        if getattr(statement, "table", None) is instrument_identity_resolution_audit
+    )
+    audit_values = audit_statement.compile(dialect=mysql.dialect()).params.values()
+    assert "high" in audit_values
+    assert "dated_provider_symbol_history" in audit_values
 
     classified_statement = next(
         statement

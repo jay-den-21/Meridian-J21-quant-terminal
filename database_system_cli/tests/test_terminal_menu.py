@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 import pytest
 from typer.testing import CliRunner
@@ -6,7 +7,9 @@ from typer.testing import CliRunner
 import fdp.cli as cli_module
 import fdp.menu.app as menu_module
 from fdp.cli import app
+from fdp.bulk_unmatched import BulkUnmatchedSummaryRow
 from fdp.get_data.contracts import JobPreflight, JobResult, ProgressEvent
+from fdp.menu.reconcile_ui import RichReconcileProgressReporter, hold_summary_for_review
 
 
 class FakeStream:
@@ -208,3 +211,182 @@ def test_id_mapping_menu_builds_symbol_scope_for_shared_job(
         "poetry run j21 ingest id-mappings --symbols AAPL.US,MSFT.US "
         "--page-limit 1000 --max-api-calls 200"
     )
+
+
+def test_guided_reconcile_keeps_one_run_id_through_classify_route_and_validate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class ConfirmPrompts:
+        def __init__(self) -> None:
+            self.defaults: list[bool] = []
+
+        def confirm(self, message, *, default=False):
+            self.defaults.append(default)
+            return True
+
+    class FakeJob:
+        def preflight(self, **kwargs):
+            return JobPreflight(
+                job="reconcile.bulk_unmatched",
+                job_module="fdp.get_data.reconcile.bulk_unmatched",
+                target_tables=["system.bulk_unmatched_daily_price_observation"],
+                work_units=2,
+                estimated_api_calls=0,
+                parameters={"statuses": kwargs["statuses"]},
+                parameter_sources={"statuses": "menu"},
+            )
+
+        def summary(self, **kwargs):
+            return [BulkUnmatchedSummaryRow("unresolved", "stock", 2)]
+
+        def classify(self, **kwargs):
+            assert kwargs["statuses"] == ["unresolved", "needs_instrument", "unknown"]
+            calls.append(("classify", kwargs["run_id"]))
+            return JobResult(
+                job="reconcile.bulk_unmatched.classify",
+                status="success",
+                run_id=42,
+                parameters={},
+                parameter_sources={},
+                metrics={"checkpoint_phase": "route"},
+            )
+
+        def route(self, **kwargs):
+            calls.append(("route_execute" if kwargs["execute"] else "route_preview", kwargs["run_id"]))
+            return JobResult(
+                job="reconcile.bulk_unmatched.route",
+                status="success" if kwargs["execute"] else "dry_run",
+                run_id=42,
+                parameters={},
+                parameter_sources={},
+                metrics={
+                    "checkpoint_phase": "validation" if kwargs["execute"] else "route",
+                    "remaining_groups": 0,
+                },
+            )
+
+        def validate(self, **kwargs):
+            calls.append(("validate", kwargs["run_id"]))
+            return JobResult(
+                job="reconcile.bulk_unmatched.validate",
+                status="success",
+                run_id=42,
+                parameters={},
+                parameter_sources={},
+                metrics={
+                    "checkpoint_phase": "complete",
+                    "quality_issue_count": 0,
+                    "route_failed": 0,
+                },
+            )
+
+        def list(self, **kwargs):
+            return []
+
+    prompts = ConfirmPrompts()
+    monkeypatch.setattr(menu_module, "BulkUnmatchedReconcileJob", FakeJob)
+    monkeypatch.setattr(menu_module, "show_reconcile_summary", lambda *args, **kwargs: None)
+    monkeypatch.setattr(menu_module, "hold_summary_for_review", lambda *args, **kwargs: None)
+    monkeypatch.setattr(menu_module, "play_j21_logo", lambda *args, **kwargs: None)
+    monkeypatch.setattr(menu_module, "show_reconcile_final_report", lambda *args, **kwargs: None)
+
+    menu_module._run_guided_reconcile(
+        prompts,
+        "en",
+        date_from=date(2024, 1, 2),
+        date_to=date(2024, 1, 2),
+        runtime=object(),
+    )
+
+    assert calls == [
+        ("classify", None),
+        ("route_preview", 42),
+        ("route_execute", 42),
+        ("validate", 42),
+    ]
+    assert prompts.defaults == [False, False]
+
+
+def test_rich_reconcile_reporter_plain_mode_closes_on_finish(capsys) -> None:
+    reporter = RichReconcileProgressReporter(interactive=False)
+    reporter.on_event(ProgressEvent("start", "reconcile.test", 0, 2, message="run_id=1"))
+    reporter.on_event(
+        ProgressEvent(
+            "unit_completed",
+            "reconcile.test",
+            1,
+            2,
+            unit="batch-1",
+            message="checkpoint=10",
+            counters={"routed": 1},
+        )
+    )
+    reporter.on_event(ProgressEvent("finish", "reconcile.test", 2, 2, message="success"))
+
+    output = capsys.readouterr().out
+    assert "batch=batch-1" in output
+    assert "checkpoint=checkpoint=10" in output
+    assert reporter._live is None
+
+
+def test_reconcile_countdown_is_zero_wait_outside_tty() -> None:
+    started = __import__("time").monotonic()
+    hold_summary_for_review(seconds=10, language="en", interactive=False)
+    assert __import__("time").monotonic() - started < 0.1
+
+
+@pytest.mark.parametrize(
+    ("date_text", "expected_default"),
+    [("", "active"), ("2024-01-02", "all")],
+)
+def test_bulk_daily_menu_status_default_depends_on_explicit_history_date(
+    date_text: str,
+    expected_default: str,
+) -> None:
+    class StatusDefaultPrompts:
+        def __init__(self) -> None:
+            self.text_values = iter([date_text, ""])
+            self.status_default: str | None = None
+
+        def text(self, message, *, default=""):
+            return next(self.text_values)
+
+        def checkbox(self, message, choices, *, defaults=None):
+            return sorted(defaults)
+
+        def select(self, message, choices, *, default=None):
+            self.status_default = default
+            return None
+
+    prompts = StatusDefaultPrompts()
+
+    with pytest.raises(menu_module.MenuCancelled):
+        menu_module._run_bulk_daily(prompts, "en")
+
+    assert prompts.status_default == expected_default
+
+
+def test_daily_range_menu_defaults_to_active_and_inactive() -> None:
+    class RangeStatusPrompts:
+        def __init__(self) -> None:
+            self.text_values = iter(["2024-01-02", "2024-01-03"])
+            self.status_default: str | None = None
+
+        def text(self, message, *, default=""):
+            return next(self.text_values)
+
+        def checkbox(self, message, choices, *, defaults=None):
+            return sorted(defaults)
+
+        def select(self, message, choices, *, default=None):
+            self.status_default = default
+            return None
+
+    prompts = RangeStatusPrompts()
+
+    with pytest.raises(menu_module.MenuCancelled):
+        menu_module._run_daily_range(prompts, "en")
+
+    assert prompts.status_default == "all"

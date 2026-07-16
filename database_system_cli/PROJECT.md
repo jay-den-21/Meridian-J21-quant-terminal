@@ -372,6 +372,7 @@ raw_payload
 classification_status
 classified_asset_type
 matched_instrument_id
+last_classified_run_id
 reason
 source
 first_seen_at
@@ -385,7 +386,7 @@ updated_at
 - 唯一键是 `source + provider_symbol + trade_date`。
 - Bulk 重跑时只能刷新 raw payload、价格字段、`run_id` 和 `last_seen_at`，不能把已分类状态重置成 `unresolved`。
 - `classification_status = unresolved` 表示尚未处理。
-- `classification_status = matched` 表示严格 identity 匹配到已入库 stock/ETF/Fund/index instrument，可由 gated route 命令转入正式价格表。
+- `classification_status = matched` 表示通过 dated-history high-confidence 或无历史冲突的唯一 current-symbol medium-confidence 规则匹配到已入库 stock/ETF/Fund/index instrument，可由 gated route 命令转入正式价格表。
 - `classification_status = needs_instrument` 表示 EODHD type 看起来像 canonical price asset，但本库还没有可严格匹配的 instrument。
 - `classification_status = shadowed` 表示同一 instrument/date 的低优先级 old/current alias，原始行保留但不覆盖 dated winner。
 - `classification_status = ambiguous` 表示多个 identity owner 或无法唯一选出 dated winner。
@@ -395,6 +396,7 @@ updated_at
 - `classification_status = routed` 表示已转入对应 split daily price table。
 - `classification_status = route_failed` 表示转写时 OHLCV 校验失败或字段不足。
 - `COUNT(*)` 统计的是全部历史 observations，可能包含大量 `resolved` rows；统计当前 backlog 必须显式过滤 `classification_status`。
+- `last_classified_run_id` 记录最近修改该 observation 分类状态的 reconcile run，支持批次审计和续跑核对。
 
 ### 5.5c `system.identifier_mapping_unmatched_observation`
 
@@ -425,7 +427,36 @@ created_at/updated_at
 - pending row 不得自动创建 instrument，也不得仅凭 CIK/LEI/ISIN/CUSIP/FIGI 合并 instrument。
 - 后续 instrument master 补全并可严格匹配时，可标为 `resolved`，但 raw evidence 保留。
 
-### 5.5d `app_log` snapshot tables
+### 5.5d `system.instrument_identity_resolution_audit`
+
+该表保存 Bulk provider symbol 绑定 canonical instrument 时使用的身份证据和置信度。它按
+`instrument + provider_symbol + decision signature` 聚合观察区间，不按每个价格日期复制一行。
+
+```text
+audit_id
+instrument_id
+provider_symbol
+market/source
+match_method
+confidence
+evidence_type
+resolver_version
+observed_from/observed_to
+first_run_id/last_run_id
+reason
+supersedes_audit_id
+created_at/updated_at
+```
+
+规则：
+
+- 有效日期内唯一 identifier history 为 `high`。
+- 没有历史冲突的唯一 current provider symbol 为 `medium`，可以写入 canonical，但必须留下审计。
+- CUSIP/ISIN/FIGI 等无日期 mapping 只能辅助验证，不能升级为 high confidence。
+- Fundamental 等新证据只复核 medium 区间；新结论通过 `supersedes_audit_id` 保留旧结论。
+- 若后续证明价格绑错，只生成 repair plan，不自动移动历史价格。
+
+### 5.5e `app_log` snapshot tables
 
 `app_log` 是 app/API 查询响应日志层，不是 canonical market data schema。`us_share` 只保留 `instrument`、identifier history、market calendar、lifecycle event 和正式价格表；API playground、instrument search、screener、quote、live OHLCV、websocket event 这类临时查询产物不继续放在 `us_share`。
 
@@ -500,6 +531,7 @@ api_calls
 error_message
 config_hash
 code_version
+checkpoint_json
 ```
 
 `status` 建议值：
@@ -512,6 +544,10 @@ failed
 partial_failed
 cancelled
 ```
+
+`checkpoint_json` 只用于可恢复 Job。Guided Bulk reconcile 保存 phase、日期/market/status
+scope、classify keyset cursor、route 计数、quality run IDs 和累计结果。每一批业务数据修改与
+checkpoint 使用同一 transaction；失败批次不得推进内存或数据库 cursor。
 
 ### 5.8 `system.api_call_log`
 
@@ -587,9 +623,13 @@ invalid_ohlcv
 null_required_field
 api_rejected_row
 price_on_non_trading_day
+asset_type_mismatch
+identity_route_conflict
 ```
 
 异常值不得自动修正。缺失交易日不得插空价格行。
+`identity_route_conflict` 表示不同 provider symbol 的新结论没有足够高的 confidence 覆盖现有
+canonical identity；原始价格不动，问题等待人工 review。
 
 ### 5.11 `system.repair_plan`
 
@@ -636,7 +676,7 @@ Terminal menu -/
 - 解析参数，记录参数来自 CLI/menu 还是 Python Job default。
 - 在 API 调用和数据库写入前执行只读 preflight。
 - 返回目标表、work units、API-call/storage 估算和 warning。
-- 通过 UI-neutral progress event 报告进度；CLI 显示稳定文本，菜单使用 `tqdm`。
+- 通过 UI-neutral progress event 报告进度；CLI 显示稳定文本，普通 ingest 菜单使用 `tqdm`，Guided Reconcile 使用 Rich Live 展示真实批次、速度、ETA、checkpoint 和计数。
 - 返回带 `schema_version` 的 `JobResult`；`--output json` 供未来 AI skill/automation 使用。
 
 参数优先级固定为：
@@ -731,6 +771,7 @@ call EODHD bulk endpoint for US/date
 match source-date identifier history, then current provider symbol and compatible type
 matched rows validate OHLCV
 matched rows upsert into stock/ETF/Fund/index daily table by asset_type
+matched identity evidence upsert into system.instrument_identity_resolution_audit
 unmatched rows upsert into system.bulk_unmatched_daily_price_observation
 write task state and api call summary
 ```
@@ -778,20 +819,27 @@ Stock、ETF、Fund 和 staging 数据；三张 canonical 表的 table/master mis
 Bulk unmatched 后处理流程：
 
 ```text
-j21 research bulk-unmatched summary/list
-j21 research bulk-unmatched classify
-j21 ingest bulk-unmatched-route --dry-run
-j21 ingest bulk-unmatched-route --execute --yes
+j21 reconcile bulk-unmatched summary/list
+j21 reconcile bulk-unmatched classify
+j21 reconcile bulk-unmatched status --run-id <ID>
+j21 reconcile bulk-unmatched route --dry-run --run-id <ID>
+j21 reconcile bulk-unmatched route --execute --yes --run-id <ID>
 j21 validate daily-price
 ```
 
 原则：
 
 - daily ingest 主路径必须快，只做精确匹配、正式表 upsert、unmatched staging，不做复杂猜测。
-- classifier 只允许严格 provider_symbol 匹配到已入库 `instrument_id`。
-- 只有 high-confidence stock/ETF/Fund/index rows 才能 route 到正式 price table。
+- reconcile 只使用本地数据库，不构造 EODHD client，API cost 固定为 0。
+- classifier 优先 source-date identifier history；没有历史冲突的唯一 current provider symbol 可以作为 medium-confidence 结果。
+- high-confidence 和有持久审计的 medium-confidence stock/ETF/Fund/index rows 可以 route 到正式 price table。
 - preferred、notes、bond、warrant、unknown 暂无 canonical price table，保留在 staging。
 - 不确定的 rows 保持 unresolved/needs_instrument/non_price_asset，等待 instrument 补全或人工确认。
+- classifier 默认每批 5,000 rows；router 默认每批 1,000 个完整 `(instrument_id, trade_date)` groups。
+- staging/canonical/audit/quality/checkpoint 在同一 batch transaction 提交；失败批次回滚，已提交批次可按 `run_id` 继续。
+- 每批及最终 validation 验证 `observations_selected = routed + shadowed + route_failed`，并要求 canonical write count 等于 routed count；不闭合时 workflow 为 `partial_failed`。
+- 不同 provider symbol 只有新的 high-confidence 可以替换已明确为 medium-confidence 的 canonical identity；同级、降级或旧 confidence 未知时保留原 row 并记录 `identity_route_conflict`。
+- 旧 `research bulk-unmatched` 与 `ingest bulk-unmatched-route` 在 v0.4 保留 warning compatibility，v0.5 删除。
 
 ### 6.5 Validate quality
 
@@ -865,9 +913,19 @@ route；`current_active` 是当前状态，`price_observed` 不是 PIT universe�
 数据拉取有两个等价入口：
 
 - `poetry run j21 ingest ...`：参数稳定、适合 AI/自动化，可用 `--output json` 获取机器可读结果。
+- `poetry run j21 reconcile bulk-unmatched ...`：本地 staging 后处理，支持 summary/list/classify/route/status，API cost 为 0。
 - `poetry run j21 menu`：中英文方向键菜单，显示 Job module、参数来源、目标表、预算和等价 CLI，人工确认后才执行并显示进度条。
 
-`j21 menu` 直接调用 `fdp.get_data` Job，不会通过 subprocess 调用 CLI。菜单当前只覆盖 ingest workflows；validate、repair、quarantine 和 research 仍使用确定性 CLI。
+`j21 menu` 直接调用 `fdp.get_data` Job，不会通过 subprocess 调用 CLI。Bulk 完成后，Menu
+展示 staging 统计，等待 10 秒或 Enter 跳过，再分别以默认 `No` 请求 classify 和 route
+确认；route 之前总是先 dry-run，执行后自动调用 daily-price validation 并显示最终报告。
+Menu 也可从 Reference / reconcile 独立新建或按 `run_id` 继续 workflow。普通 ingest 使用
+`tqdm`，reconcile 使用 Rich Live；非 TTY reporter 退回普通文本。repair、quarantine 和普通
+research 查询仍使用确定性 CLI。
+
+Bulk Menu lifecycle 默认值：不填日期的最新单日为 `active`；显式历史单日和
+`daily-range` 为 `all`。`instrument_status` 是本地 instrument 匹配范围，不是 EODHD Bulk
+response 字段。
 
 术语：
 
@@ -891,11 +949,12 @@ poetry run j21 ingest daily --market US --date 2026-05-20 --asset-types stock,et
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --dry-run
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --instrument-status all --execute --yes --parallel --workers 4
 poetry run j21 migrate fund-daily-price --phase verify --run-id 1
-poetry run j21 research bulk-unmatched summary --from 2024-01-01 --to 2024-01-31
-poetry run j21 research bulk-unmatched list --from 2024-01-01 --to 2024-01-31 --status unresolved
-poetry run j21 research bulk-unmatched classify --from 2024-01-01 --to 2024-01-31
-poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --dry-run
-poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --execute --yes
+poetry run j21 reconcile bulk-unmatched summary --from 2024-01-01 --to 2024-01-31
+poetry run j21 reconcile bulk-unmatched list --from 2024-01-01 --to 2024-01-31 --status unresolved
+poetry run j21 reconcile bulk-unmatched classify --from 2024-01-01 --to 2024-01-31 --statuses unresolved --batch-size 5000
+poetry run j21 reconcile bulk-unmatched status --run-id 123
+poetry run j21 reconcile bulk-unmatched route --from 2024-01-01 --to 2024-01-31 --run-id 123 --dry-run
+poetry run j21 reconcile bulk-unmatched route --from 2024-01-01 --to 2024-01-31 --run-id 123 --execute --yes
 poetry run j21 validate daily-price --market US --from 2024-01-01 --to 2024-12-31
 poetry run j21 repair plan-daily-price --market US --from 2024-01-01 --to 2024-12-31
 poetry run j21 quarantine plan-daily-price --market US --from 2024-01-01 --to 2024-12-31 --issue-types duplicate_key,invalid_ohlcv,price_on_non_trading_day
@@ -962,8 +1021,11 @@ if still invalid:
 - `j21 ingest history --instrument-status inactive` 能只按 inactive symbol 写入对应 split daily table，避免重复请求 active instrument。
 - Bulk EOD unmatched rows 能写入 staging 表，重跑不覆盖已分类状态。
 - Bulk historical tests 覆盖 source-date identifier、FB/META reused ticker、missing Type、alias shadowing、inactive/all 和 ambiguity。
-- Bulk unmatched classifier 只做严格 identity 匹配；Fund 可写 `fund_daily_price`，preferred/notes/bond/unknown 不自动写入正式 price table。
-- Bulk unmatched route 必须先 dry-run；只有 `--execute --yes` 才能把 matched stock/ETF/Fund/index rows 写入正式 price table。
+- Bulk unmatched classifier 覆盖 dated-history high confidence、无冲突 current-symbol medium confidence、类型冲突、多 owner、snapshot/keyset 和失败续跑。
+- classify 和 route 的每批 mutation/checkpoint 必须同 transaction；模拟 commit failure 后 cursor 不得越过最后成功批次。
+- Bulk unmatched route 必须先 dry-run；只有 `--execute --yes` 才能按完整 natural-key group 写入 matched stock/ETF/Fund/index rows。
+- Route 覆盖 dated winner/shadowed、相同 symbol refresh、high-over-medium upgrade、同级/降级/unknown-confidence 拒绝覆盖、quality issue 和幂等 audit aggregation。
+- 新旧 CLI compatibility、JSON stdout、Menu 默认 No、Rich non-TTY fallback、resume/status 均需测试，且 reconcile 路径 API calls 恒为 0。
 - Fund split verifier 覆盖 conservation、natural-key duplicate、cross-table type 和 sample checksum。
 - 本地指标 fixture 与 EODHD Technical parity 覆盖 adjusted/raw、warm-up 和 weighted budget。
 - 平级 Terminal 覆盖只读 SQL guard、无 write route、CSV injection、desktop/mobile overflow 和 canvas pixel。

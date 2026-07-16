@@ -11,6 +11,7 @@ from fdp.storage.upsert import (
     build_fund_daily_price_upsert,
     build_identifier_history_upsert,
     build_identifier_mapping_unmatched_upsert,
+    build_identity_resolution_audit_upsert,
     build_index_daily_price_upsert,
     build_instrument_upsert,
     build_instrument_lifecycle_event_upsert,
@@ -121,6 +122,37 @@ def test_identifier_mapping_unmatched_upsert_keeps_first_seen_identity() -> None
     assert "last_seen_at = VALUES(last_seen_at)" not in update_clause
     assert "first_seen_at" not in update_clause
     assert "mapping_fingerprint" not in update_clause
+
+
+def test_identity_resolution_audit_upsert_widens_observed_interval() -> None:
+    statement = build_identity_resolution_audit_upsert(
+        {
+            "instrument_id": 1,
+            "provider_symbol": "FB.US",
+            "market": "US",
+            "source": "EODHD",
+            "match_method": "identifier_history",
+            "confidence": "high",
+            "evidence_type": "dated_provider_symbol_history",
+            "resolver_version": "v1",
+            "observed_from": date(2022, 1, 3),
+            "observed_to": date(2022, 1, 3),
+            "first_run_id": 71,
+            "last_run_id": 71,
+            "reason": "dated identifier history winner",
+            "supersedes_audit_id": 70,
+        }
+    )
+
+    sql = str(statement.compile(dialect=mysql.dialect()))
+    update_clause = sql.split("ON DUPLICATE KEY UPDATE", maxsplit=1)[1]
+
+    assert "INSERT INTO `system`.instrument_identity_resolution_audit" in sql
+    assert "observed_from = least(" in update_clause
+    assert "observed_to = greatest(" in update_clause
+    assert "last_run_id = VALUES(last_run_id)" in update_clause
+    assert "supersedes_audit_id = coalesce(" in update_clause
+    assert "first_run_id" not in update_clause
 
 
 def test_lifecycle_event_upsert_targets_source_event_key() -> None:

@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     MetaData,
     Numeric,
     String,
@@ -358,6 +359,73 @@ ingestion_task_run = Table(
     Column("error_message", Text),
     Column("config_hash", String(128)),
     Column("code_version", String(64)),
+    Column("checkpoint_json", JSON),
+    schema=SYSTEM_SCHEMA,
+)
+
+# system.instrument_identity_resolution_audit keeps the evidence used when a
+# Bulk provider symbol is attached to one canonical instrument. Repeated dates
+# extend the observed interval instead of creating one audit row per price.
+instrument_identity_resolution_audit = Table(
+    "instrument_identity_resolution_audit",
+    metadata,
+    Column("audit_id", BigInteger, primary_key=True, autoincrement=True),
+    Column(
+        "instrument_id",
+        BigInteger,
+        ForeignKey(f"{US_SHARE_SCHEMA}.instrument.instrument_id"),
+        nullable=False,
+    ),
+    Column("provider_symbol", String(128), nullable=False),
+    Column("market", String(16), nullable=False),
+    Column("source", String(64), nullable=False),
+    Column("match_method", String(64), nullable=False),
+    Column("confidence", String(16), nullable=False),
+    Column("evidence_type", String(64), nullable=False),
+    Column("resolver_version", String(32), nullable=False),
+    Column("observed_from", Date, nullable=False),
+    Column("observed_to", Date, nullable=False),
+    Column(
+        "first_run_id",
+        BigInteger,
+        ForeignKey(f"{SYSTEM_SCHEMA}.ingestion_task_run.run_id"),
+    ),
+    Column(
+        "last_run_id",
+        BigInteger,
+        ForeignKey(f"{SYSTEM_SCHEMA}.ingestion_task_run.run_id"),
+    ),
+    Column("reason", String(512)),
+    Column(
+        "supersedes_audit_id",
+        BigInteger,
+        ForeignKey(f"{SYSTEM_SCHEMA}.instrument_identity_resolution_audit.audit_id"),
+    ),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        server_onupdate=func.current_timestamp(),
+    ),
+    UniqueConstraint(
+        "instrument_id",
+        "provider_symbol",
+        "market",
+        "source",
+        "match_method",
+        "confidence",
+        "evidence_type",
+        "resolver_version",
+        name="uq_identity_resolution_decision",
+    ),
+    Index(
+        "ix_identity_resolution_instrument_symbol",
+        "instrument_id",
+        "provider_symbol",
+    ),
+    Index("ix_identity_resolution_last_run", "last_run_id"),
     schema=SYSTEM_SCHEMA,
 )
 
@@ -615,6 +683,7 @@ bulk_unmatched_daily_price_observation = Table(
         BigInteger,
         ForeignKey(f"{US_SHARE_SCHEMA}.instrument.instrument_id"),
     ),
+    Column("last_classified_run_id", BigInteger),
     Column("reason", Text),
     Column("source", String(32), nullable=False),
     Column("first_seen_at", DateTime, nullable=False, server_default=func.current_timestamp()),
@@ -640,6 +709,13 @@ bulk_unmatched_daily_price_observation = Table(
         name="uq_bulk_unmatched_source_symbol_date",
     ),
     Index("ix_bulk_unmatched_date_status", "trade_date", "classification_status"),
+    Index(
+        "ix_bulk_unmatched_market_status_date_id",
+        "market",
+        "classification_status",
+        "trade_date",
+        "observation_id",
+    ),
     Index("ix_bulk_unmatched_provider_symbol", "provider_symbol"),
     Index("ix_bulk_unmatched_matched_instrument", "matched_instrument_id"),
     schema=SYSTEM_SCHEMA,

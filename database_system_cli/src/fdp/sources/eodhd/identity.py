@@ -13,7 +13,9 @@ from fdp.sources.eodhd.instruments import normalize_eodhd_asset_type
 from fdp.storage.tables import instrument, instrument_identifier_history
 
 IdentityMatchSource = Literal["identifier_history", "current_provider_symbol"]
+IdentityConfidence = Literal["high", "medium"]
 InstrumentStatus = Literal["active", "inactive", "all"]
+IDENTITY_RESOLVER_VERSION = "bulk-v1"
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,41 @@ class InstrumentIdentityResolution:
     matched_by: IdentityMatchSource | None
     reason: str | None
     candidate_instrument_ids: tuple[int, ...] = ()
+    confidence: IdentityConfidence | None = None
+    evidence_type: str | None = None
+    resolver_version: str = IDENTITY_RESOLVER_VERSION
+
+    def audit_row(
+        self,
+        *,
+        provider_symbol: str,
+        trade_date: date,
+        run_id: int,
+        market: str,
+        source: str = "EODHD",
+        supersedes_audit_id: int | None = None,
+    ) -> dict[str, object]:
+        """Build one aggregate identity-audit input for a resolved Bulk row."""
+        if self.instrument is None or self.matched_by is None or self.confidence is None:
+            raise ValueError("only resolved identities can produce an audit row")
+        if self.evidence_type is None:
+            raise ValueError("resolved identity is missing evidence_type")
+        return {
+            "instrument_id": int(self.instrument["instrument_id"]),
+            "provider_symbol": provider_symbol.strip().upper(),
+            "market": market.upper(),
+            "source": source,
+            "match_method": self.matched_by,
+            "confidence": self.confidence,
+            "evidence_type": self.evidence_type,
+            "resolver_version": self.resolver_version,
+            "observed_from": trade_date,
+            "observed_to": trade_date,
+            "first_run_id": run_id,
+            "last_run_id": run_id,
+            "reason": _resolved_reason(self),
+            "supersedes_audit_id": supersedes_audit_id,
+        }
 
 
 class DatedInstrumentIdentityResolver:
@@ -120,27 +157,29 @@ class DatedInstrumentIdentityResolver:
             return _unresolved(f"asset_type_not_selected:{observed_asset_type}")
 
         all_history = self._history_by_provider_symbol.get(normalized_provider_symbol, [])
-        dated_history = [row for row in all_history if _is_valid_on(row, trade_date)]
+        authoritative_history = [row for row in all_history if _has_validity_bound(row)]
+        dated_history = [
+            row for row in authoritative_history if _is_valid_on(row, trade_date)
+        ]
         if dated_history:
             return _resolve_candidates(
                 dated_history,
                 observed_asset_type=observed_asset_type,
                 matched_by="identifier_history",
+                confidence="high",
+                evidence_type="dated_provider_symbol_history",
                 mismatch_reason="identifier_history_asset_type_mismatch",
                 ambiguous_reason="ambiguous_identifier_history",
             )
 
         current_candidates = self._current_by_provider_symbol.get(normalized_provider_symbol, [])
-        if all_history and current_candidates:
+        if authoritative_history and current_candidates:
             if provider_type_missing:
-                historical_ids = {int(row["instrument_id"]) for row in all_history}
-                current_ids = {int(row["instrument_id"]) for row in current_candidates}
-                if historical_ids != current_ids:
-                    return _unresolved(
-                        "identifier_not_valid_on_trade_date",
-                        candidate_rows=[*all_history, *current_candidates],
-                    )
-            historical_types = {str(row["asset_type"]) for row in all_history}
+                return _unresolved(
+                    "identifier_not_valid_on_trade_date",
+                    candidate_rows=[*authoritative_history, *current_candidates],
+                )
+            historical_types = {str(row["asset_type"]) for row in authoritative_history}
             current_types = {str(row["asset_type"]) for row in current_candidates}
             if (
                 observed_asset_type is not None
@@ -149,7 +188,7 @@ class DatedInstrumentIdentityResolver:
             ):
                 return _unresolved(
                     "identifier_not_valid_on_trade_date",
-                    candidate_rows=[*all_history, *current_candidates],
+                    candidate_rows=[*authoritative_history, *current_candidates],
                 )
 
         if current_candidates:
@@ -157,14 +196,24 @@ class DatedInstrumentIdentityResolver:
                 current_candidates,
                 observed_asset_type=observed_asset_type,
                 matched_by="current_provider_symbol",
+                confidence="medium",
+                evidence_type="unique_current_provider_symbol",
                 mismatch_reason="current_provider_symbol_asset_type_mismatch",
                 ambiguous_reason="ambiguous_current_provider_symbol",
             )
-        if all_history:
+        if authoritative_history:
             return _unresolved(
                 "identifier_not_valid_on_trade_date",
-                candidate_rows=all_history,
+                candidate_rows=authoritative_history,
             )
+        if all_history:
+            candidate_ids = {int(row["instrument_id"]) for row in all_history}
+            reason = (
+                "ambiguous_identifier_history"
+                if len(candidate_ids) > 1
+                else "undated_identifier_history_not_authoritative"
+            )
+            return _unresolved(reason, candidate_rows=all_history)
         return _unresolved("provider_symbol_not_found")
 
 
@@ -206,11 +255,17 @@ def _is_valid_on(row: dict[str, object], trade_date: date) -> bool:
     )
 
 
+def _has_validity_bound(row: dict[str, object]) -> bool:
+    return row.get("valid_from") is not None or row.get("valid_to") is not None
+
+
 def _resolve_candidates(
     rows: list[dict[str, object]],
     *,
     observed_asset_type: str | None,
     matched_by: IdentityMatchSource,
+    confidence: IdentityConfidence,
+    evidence_type: str,
     mismatch_reason: str,
     ambiguous_reason: str,
 ) -> InstrumentIdentityResolution:
@@ -227,6 +282,8 @@ def _resolve_candidates(
         instrument=next(iter(compatible_by_id.values())),
         matched_by=matched_by,
         reason=None,
+        confidence=confidence,
+        evidence_type=evidence_type,
     )
 
 
@@ -248,3 +305,11 @@ def _unresolved(
         reason=reason,
         candidate_instrument_ids=candidate_ids,
     )
+
+
+def _resolved_reason(resolution: InstrumentIdentityResolution) -> str:
+    if resolution.matched_by == "identifier_history":
+        return "dated identifier history winner"
+    if resolution.matched_by == "current_provider_symbol":
+        return "unique current provider symbol without dated conflict"
+    raise ValueError("resolved identity has no supported match method")

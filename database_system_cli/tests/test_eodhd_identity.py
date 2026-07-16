@@ -59,8 +59,12 @@ def test_dated_history_wins_over_reused_current_provider_symbol() -> None:
 
     assert historical.instrument["instrument_id"] == 1
     assert historical.matched_by == "identifier_history"
+    assert historical.confidence == "high"
+    assert historical.evidence_type == "dated_provider_symbol_history"
     assert current_reuse.instrument["instrument_id"] == 2
     assert current_reuse.matched_by == "current_provider_symbol"
+    assert current_reuse.confidence == "medium"
+    assert current_reuse.evidence_type == "unique_current_provider_symbol"
 
 
 def test_future_history_interval_blocks_current_fallback_for_same_asset_type() -> None:
@@ -127,6 +131,7 @@ def test_identity_resolution_allows_unique_exact_symbol_when_bulk_type_is_missin
 
     assert result.instrument["instrument_id"] == 1
     assert result.matched_by == "current_provider_symbol"
+    assert result.confidence == "medium"
 
 
 def test_identity_resolution_uses_dated_history_when_bulk_type_is_missing() -> None:
@@ -150,7 +155,7 @@ def test_identity_resolution_uses_dated_history_when_bulk_type_is_missing() -> N
     assert result.matched_by == "identifier_history"
 
 
-def test_missing_bulk_type_allows_provider_current_code_for_same_instrument() -> None:
+def test_missing_bulk_type_does_not_bypass_future_dated_history() -> None:
     meta = _instrument(1, "META", "stock")
     resolver = DatedInstrumentIdentityResolver(
         current_rows=[meta],
@@ -166,8 +171,57 @@ def test_missing_bulk_type_allows_provider_current_code_for_same_instrument() ->
         eodhd_type=None,
     )
 
-    assert result.instrument["instrument_id"] == 1
-    assert result.matched_by == "current_provider_symbol"
+    assert result.instrument is None
+    assert result.reason == "identifier_not_valid_on_trade_date"
+
+
+def test_undated_history_is_not_treated_as_point_in_time_evidence() -> None:
+    old = _instrument(1, "OLD", "stock")
+    resolver = DatedInstrumentIdentityResolver(
+        current_rows=[],
+        history_rows=[
+            _history(old, "OLD.US", valid_from=None, valid_to=None),
+        ],
+        asset_types=["stock"],
+    )
+
+    result = resolver.resolve(
+        provider_symbol="OLD.US",
+        trade_date=date(2014, 8, 18),
+        eodhd_type="Common Stock",
+    )
+
+    assert result.instrument is None
+    assert result.reason == "undated_identifier_history_not_authoritative"
+    assert result.candidate_instrument_ids == (1,)
+
+
+def test_resolved_identity_builds_aggregate_audit_row() -> None:
+    resolver = DatedInstrumentIdentityResolver(
+        current_rows=[_instrument(1, "AAPL", "stock")],
+        history_rows=[],
+        asset_types=["stock"],
+    )
+    result = resolver.resolve(
+        provider_symbol="AAPL.US",
+        trade_date=date(2024, 1, 2),
+        eodhd_type="Common Stock",
+    )
+
+    audit = result.audit_row(
+        provider_symbol="aapl.us",
+        trade_date=date(2024, 1, 2),
+        run_id=71,
+        market="us",
+    )
+
+    assert audit["instrument_id"] == 1
+    assert audit["provider_symbol"] == "AAPL.US"
+    assert audit["confidence"] == "medium"
+    assert audit["observed_from"] == date(2024, 1, 2)
+    assert audit["observed_to"] == date(2024, 1, 2)
+    assert audit["first_run_id"] == 71
+    assert audit["last_run_id"] == 71
 
 
 def test_missing_bulk_type_does_not_cross_reused_identifier_owners() -> None:

@@ -162,7 +162,10 @@ class BulkDailyJob:
             work_units_completed=1,
             work_units_failed=failed,
             failures=failures,
-            metrics={"rows_shadowed": result.shadowed_rows},
+            metrics={
+                "rows_shadowed": result.shadowed_rows,
+                "provider_trade_date": result.trade_date,
+            },
             error_message=result.error_message,
             preflight=active_preflight,
         )

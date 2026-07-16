@@ -93,14 +93,14 @@ The official endpoint, fields, filters, 1000-row maximum, pagination shape, and
 one-call request cost are documented by
 [EODHD ID Mapping API](https://eodhd.com/financial-apis/id-mapping-api-cusip-isin-figi-lei-cik-%E2%86%94-symbol).
 
-## Historical Stock, ETF, And Fund EOD
+## Historical Stock, ETF, Fund, And Index EOD
 
 Load a small explicit symbol set:
 
 ```bash
 poetry run j21 ingest history \
   --symbols AAPL,MSFT,SPY \
-  --asset-types stock,etf,fund \
+  --asset-types stock,etf,fund,index \
   --from 2024-01-01 \
   --to 2024-01-31 \
   --instrument-status active
@@ -110,7 +110,8 @@ poetry run j21 ingest history \
 as `AAPL.US`; lookup is performed through the instrument master. Use
 `--instrument-status inactive` to fetch only inactive/delisted symbols, or
 `all` for both. Empty symbols are rejected because full-universe history should
-use Bulk EOD.
+use Bulk EOD. `instrument_status` always controls the local instrument lookup;
+it is not a status field returned by the historical or Bulk endpoint.
 
 Each symbol is committed independently under one aggregate task run. An isolated
 404/no-data symbol is recorded and the batch continues. Authentication,
@@ -220,29 +221,57 @@ rows into split daily price tables. Bulk EOD rows that cannot match the current
 instrument universe are stored in `system.bulk_unmatched_daily_price_observation`
 instead of being discarded.
 
-Inspect unmatched rows:
+The canonical command family is `j21 reconcile bulk-unmatched`. Every command in
+this family reads only local MySQL data and has a fixed EODHD API cost of zero.
+
+Inspect the backlog or a bounded sample:
 
 ```bash
-poetry run j21 research bulk-unmatched summary --from 2024-01-01 --to 2024-01-31
-poetry run j21 research bulk-unmatched list --from 2024-01-01 --to 2024-01-31 --status unresolved
+poetry run j21 reconcile bulk-unmatched summary \
+  --from 2024-01-01 --to 2024-01-31
+
+poetry run j21 reconcile bulk-unmatched list \
+  --from 2024-01-01 --to 2024-01-31 \
+  --status unresolved --limit 50
 ```
 
-Classify unresolved rows with strict provider-symbol matching:
+Classify in committed batches. CLI defaults to `unresolved`; `--statuses` can add
+`needs_instrument,unknown`. Reprocessing `ambiguous` or `non_price_asset` requires
+the explicit `--advanced` gate.
 
 ```bash
-poetry run j21 research bulk-unmatched classify --from 2024-01-01 --to 2024-01-31
+poetry run j21 reconcile bulk-unmatched classify \
+  --from 2024-01-01 --to 2024-01-31 \
+  --statuses unresolved \
+  --batch-size 5000
 ```
 
-Preview routeable high-confidence rows:
+The result prints one `run_id`. A stopped or intentionally limited run resumes from
+its last committed checkpoint:
 
 ```bash
-poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --dry-run
+poetry run j21 reconcile bulk-unmatched status --run-id <RUN_ID>
+
+poetry run j21 reconcile bulk-unmatched classify \
+  --from 2024-01-01 --to 2024-01-31 \
+  --statuses unresolved \
+  --run-id <RUN_ID>
 ```
 
-Execute only after reviewing the preview:
+Preview complete `(instrument_id, trade_date)` groups before writing. The default is
+dry-run; execute requires both `--execute` and `--yes`.
 
 ```bash
-poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --execute --yes
+poetry run j21 reconcile bulk-unmatched route \
+  --from 2024-01-01 --to 2024-01-31 \
+  --run-id <RUN_ID> \
+  --dry-run
+
+poetry run j21 reconcile bulk-unmatched route \
+  --from 2024-01-01 --to 2024-01-31 \
+  --run-id <RUN_ID> \
+  --execute --yes \
+  --batch-size 1000
 ```
 
 Routing only writes rows that strictly matched an existing stock/ETF/Fund/index
@@ -251,7 +280,26 @@ Routing only writes rows that strictly matched an existing stock/ETF/Fund/index
 Historical Bulk identity order is source-date identifier history, current provider symbol,
 optional EODHD Type compatibility, then exact instrument. Old/current aliases for one natural
 key are not resolved by response order: the unique dated alias wins and the lower-priority row
-remains staged as `shadowed`.
+remains staged as `shadowed`. Dated history is high-confidence. A unique current provider symbol
+without a historical conflict is medium-confidence and can route with a persistent identity audit.
+CUSIP/ISIN/FIGI mappings without dates can support review but cannot create high confidence.
+
+The router keeps every ticker candidate for one natural key in the same batch. A different
+provider symbol cannot replace an equal, lower, or unknown-confidence canonical row. Such conflicts
+remain staged and create `identity_route_conflict` in the existing data-quality tables. Each batch
+commits staging updates, canonical rows, identity audit, quality issues, and its checkpoint in one
+transaction.
+
+Compatibility commands remain available in v0.4 and write a migration warning to stderr:
+
+```bash
+poetry run j21 research bulk-unmatched summary --from 2024-01-01 --to 2024-01-31
+poetry run j21 research bulk-unmatched list --from 2024-01-01 --to 2024-01-31 --status unresolved
+poetry run j21 research bulk-unmatched classify --from 2024-01-01 --to 2024-01-31
+poetry run j21 ingest bulk-unmatched-route --from 2024-01-01 --to 2024-01-31 --dry-run
+```
+
+They are scheduled for removal in v0.5. New automation should use the `reconcile` family now.
 
 ## Daily-Price Asset-Type Reconcile
 

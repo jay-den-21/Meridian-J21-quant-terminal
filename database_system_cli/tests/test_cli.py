@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from typer.testing import CliRunner
 import fdp.cli as cli_module
 from fdp.cli import app
 from fdp.get_data.contracts import JobResult
+from fdp.get_data.reconcile.workflow import new_reconcile_checkpoint
 from fdp.sources.eodhd.retry import EodhdApiEvent
 
 
@@ -211,6 +213,174 @@ def test_cli_registers_bulk_unmatched_commands() -> None:
     assert "--status" in list_result.output
     assert classify.exit_code == 0
     assert "--limit" in classify.output
+
+
+def test_cli_registers_guided_bulk_reconcile_commands() -> None:
+    runner = CliRunner()
+    root = runner.invoke(app, ["reconcile", "bulk-unmatched", "--help"])
+
+    assert root.exit_code == 0
+    for command in ("summary", "list", "classify", "route", "status"):
+        assert command in root.output
+    classify = runner.invoke(app, ["reconcile", "bulk-unmatched", "classify", "--help"])
+    route = runner.invoke(app, ["reconcile", "bulk-unmatched", "route", "--help"])
+    assert "--statuses" in classify.output
+    assert "--batch-size" in classify.output
+    assert "--run-id" in classify.output
+    assert "--execute" in route.output
+    assert "--batch-size" in route.output
+
+
+def test_cli_requires_advanced_flag_for_risky_reclassification_states() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "reconcile",
+            "bulk-unmatched",
+            "classify",
+            "--from",
+            "2024-01-02",
+            "--to",
+            "2024-01-02",
+            "--statuses",
+            "unresolved,ambiguous",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "requires --advanced" in result.output
+
+
+def test_reconcile_classify_json_stdout_is_one_job_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        cli_module.BulkUnmatchedReconcileJob,
+        "classify",
+        lambda self, **kwargs: JobResult(
+            job="reconcile.bulk_unmatched.classify",
+            status="success",
+            run_id=71,
+            parameters={},
+            parameter_sources={},
+            api_calls=0,
+            metrics={"remaining_eligible": 0, "checkpoint_phase": "route"},
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "reconcile",
+            "bulk-unmatched",
+            "classify",
+            "--from",
+            "2024-01-02",
+            "--to",
+            "2024-01-02",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["run_id"] == 71
+
+
+def test_reconcile_status_text_shows_safe_cursors_and_resume_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkpoint = new_reconcile_checkpoint(
+        date_from=date(2024, 1, 2),
+        date_to=date(2024, 1, 3),
+        market="US",
+        source_statuses=["unresolved"],
+        status_counts={"unresolved": 10},
+        snapshot_max_by_status={"unresolved": 99},
+    )
+    checkpoint["classify"].update(
+        {
+            "rows_processed": 5,
+            "batches_committed": 1,
+            "last_trade_date": "2024-01-02",
+            "last_observation_id": 55,
+        }
+    )
+    monkeypatch.setattr(
+        cli_module.BulkUnmatchedReconcileJob,
+        "status",
+        lambda self, **kwargs: {
+            "status": "partial_failed",
+            "checkpoint": checkpoint,
+            "api_calls": 0,
+            "resume_hint": "resume-command",
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["reconcile", "bulk-unmatched", "status", "--run-id", "71"],
+    )
+
+    assert result.exit_code == 0
+    assert "checkpoint=2024-01-02/55" in result.output
+    assert "api_calls=0" in result.output
+    assert "resume_hint=resume-command" in result.output
+
+
+def test_legacy_bulk_reconcile_help_remains_available_in_v04() -> None:
+    result = CliRunner().invoke(
+        app,
+        [
+            "research",
+            "bulk-unmatched",
+            "summary",
+            "--from",
+            "bad-date",
+            "--to",
+            "2024-01-02",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "DEPRECATED v0.4" in result.stderr
+    assert "j21 reconcile bulk-unmatched summary" in result.stderr
+
+
+def test_history_cli_accepts_index_as_a_supported_historical_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, **kwargs):
+        captured.update(kwargs)
+        return JobResult(
+            job="ingest.history",
+            status="success",
+            run_id=9,
+            parameters={},
+            parameter_sources={},
+        )
+
+    monkeypatch.setattr(cli_module.HistoricalDailyJob, "run", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "ingest",
+            "history",
+            "--symbols",
+            "GSPC.INDX",
+            "--from",
+            "2024-01-01",
+            "--to",
+            "2024-01-03",
+            "--asset-types",
+            "index",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["symbols"] == ["GSPC.INDX"]
 
 
 def test_cli_registers_daily_price_validate_command() -> None:

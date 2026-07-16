@@ -98,6 +98,7 @@ def _stale_html_pairs(*, repo_root: Path, cli_root: Path) -> set[str]:
         (cli_root / "docs" / "architecture.md", cli_root / "docs" / "architecture.html"),
         (cli_root / "docs" / "cli_commands.md", cli_root / "docs" / "cli_commands.html"),
         (cli_root / "docs" / "terminal_menu.md", cli_root / "docs" / "terminal_menu.html"),
+        (cli_root / "docs" / "system_tables.md", cli_root / "docs" / "system_tables.html"),
         (
             cli_root / "docs" / "technical_indicator_parity_report.md",
             cli_root / "docs" / "technical_indicator_parity_report.html",

@@ -14,8 +14,10 @@ from fdp.storage import (
     identifier_mapping_unmatched_observation,
     index_daily_price,
     index_instrument,
+    ingestion_task_run,
     instrument,
     instrument_identifier_history,
+    instrument_identity_resolution_audit,
     instrument_lifecycle_event,
     market_calendar,
     metadata,
@@ -47,6 +49,7 @@ def test_initial_metadata_contains_project_tables() -> None:
     assert f"{SYSTEM_SCHEMA}.quarantined_daily_price_row" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.bulk_unmatched_daily_price_observation" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.identifier_mapping_unmatched_observation" in metadata.tables
+    assert f"{SYSTEM_SCHEMA}.instrument_identity_resolution_audit" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.fund_daily_price_split_run" in metadata.tables
     assert fund_daily_price_split_run.schema == SYSTEM_SCHEMA
 
@@ -149,6 +152,46 @@ def test_identifier_mapping_unmatched_observation_preserves_reconciliation_evide
         set(constraint.columns.keys())
         for constraint in identifier_mapping_unmatched_observation.constraints
     ]
+
+
+def test_guided_reconcile_storage_tracks_checkpoint_and_identity_evidence() -> None:
+    assert "checkpoint_json" in ingestion_task_run.c
+    assert "last_classified_run_id" in bulk_unmatched_daily_price_observation.c
+    assert {
+        "audit_id",
+        "instrument_id",
+        "provider_symbol",
+        "market",
+        "source",
+        "match_method",
+        "confidence",
+        "evidence_type",
+        "resolver_version",
+        "observed_from",
+        "observed_to",
+        "first_run_id",
+        "last_run_id",
+        "reason",
+        "supersedes_audit_id",
+        "created_at",
+        "updated_at",
+    } == set(instrument_identity_resolution_audit.c.keys())
+    assert {
+        "instrument_id",
+        "provider_symbol",
+        "market",
+        "source",
+        "match_method",
+        "confidence",
+        "evidence_type",
+        "resolver_version",
+    } in [
+        set(constraint.columns.keys())
+        for constraint in instrument_identity_resolution_audit.constraints
+    ]
+    assert "ix_bulk_unmatched_market_status_date_id" in {
+        index.name for index in bulk_unmatched_daily_price_observation.indexes
+    }
 
 
 def test_lifecycle_event_records_instrument_state_changes() -> None:

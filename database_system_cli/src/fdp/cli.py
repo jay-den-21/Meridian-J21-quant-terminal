@@ -7,7 +7,11 @@ import typer
 from sqlalchemy import create_engine
 from typer.main import get_command
 
-from fdp.assets import CANONICAL_ASSET_TYPES, US_BULK_EOD_ASSET_TYPES
+from fdp.assets import (
+    CANONICAL_ASSET_TYPES,
+    HISTORICAL_EOD_ASSET_TYPES,
+    US_BULK_EOD_ASSET_TYPES,
+)
 from fdp.get_data import (
     ActiveInstrumentsJob,
     BulkDailyJob,
@@ -35,10 +39,6 @@ from fdp.migrate import (
     plan_fund_daily_prices,
     reconcile_daily_price_asset_types,
     verify_fund_daily_prices,
-)
-from fdp.bulk_unmatched import (
-    list_bulk_unmatched_observations,
-    summarize_bulk_unmatched_observations,
 )
 from fdp.config import (
     EODHD_OFFICIAL_MAX_REQUESTS_PER_MINUTE,
@@ -88,16 +88,22 @@ quarantine_app = typer.Typer(help="Create and manage human-confirmed quarantine 
 research_app = typer.Typer(help="Read stored database data for research code.")
 migrate_app = typer.Typer(help="Run operator-controlled resumable data migrations.")
 bulk_unmatched_app = typer.Typer(help="Inspect and classify Bulk EOD unmatched rows.")
+reconcile_app = typer.Typer(help="Reconcile staged data into canonical database tables.")
+reconcile_bulk_unmatched_app = typer.Typer(
+    help="Inspect, classify, route, and track Bulk EOD unmatched rows."
+)
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(validate_app, name="validate")
 app.add_typer(repair_app, name="repair")
 app.add_typer(quarantine_app, name="quarantine")
 app.add_typer(research_app, name="research")
 app.add_typer(migrate_app, name="migrate")
+app.add_typer(reconcile_app, name="reconcile")
 research_app.add_typer(bulk_unmatched_app, name="bulk-unmatched")
+reconcile_app.add_typer(reconcile_bulk_unmatched_app, name="bulk-unmatched")
 
 DAILY_PRICE_ASSET_TYPES = {"stock", "etf", "fund", "index"}
-HISTORICAL_ASSET_TYPES = set(US_BULK_EOD_ASSET_TYPES)
+HISTORICAL_ASSET_TYPES = set(HISTORICAL_EOD_ASSET_TYPES)
 BULK_ASSET_TYPES = set(US_BULK_EOD_ASSET_TYPES)
 QUARANTINE_DAILY_PRICE_ISSUE_TYPES = {
     "duplicate_key",
@@ -336,6 +342,7 @@ def ingest_instruments(
     ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
+    """Load the current active EODHD instrument universe and symbol changes."""
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
 
@@ -384,12 +391,15 @@ def ingest_history(
     asset_types: str = typer.Option(
         "stock,etf,fund",
         "--asset-types",
-        help="Comma-separated historical asset types: stock,etf,fund.",
+        help="Historical price types: stock,etf,fund,index.",
     ),
     instrument_status: str = typer.Option(
         "active",
         "--instrument-status",
-        help="Instrument status to match: active, inactive, or all.",
+        help=(
+            "Local instrument-master scope used to resolve symbols: active, inactive, or all; "
+            "this is not an EODHD response field."
+        ),
     ),
     include_inactive: bool | None = typer.Option(
         None,
@@ -399,6 +409,7 @@ def ingest_history(
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
+    """Load stock, ETF, Fund, or index EOD history for explicit local instruments."""
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
 
@@ -540,7 +551,7 @@ def ingest_delisted_instruments(
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
-    """Load inactive/delisted stock and ETF instruments from EODHD."""
+    """Load inactive/delisted stock, ETF, and Fund instruments from EODHD."""
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
 
@@ -674,11 +685,15 @@ def ingest_daily(
     instrument_status: str = typer.Option(
         "active",
         "--instrument-status",
-        help="Instrument universe used for identity resolution: active or all.",
+        help=(
+            "Local instrument-master scope used for identity resolution: active or all; "
+            "this is not an EODHD Bulk response field."
+        ),
     ),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
+    """Load one Bulk EOD date and match it against the selected local instrument scope."""
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
 
@@ -734,7 +749,10 @@ def ingest_daily_range(
     instrument_status: str = typer.Option(
         "active",
         "--instrument-status",
-        help="Instrument universe used for identity resolution: active or all.",
+        help=(
+            "Local instrument-master scope used for identity resolution: active or all; "
+            "this is not an EODHD Bulk response field."
+        ),
     ),
     bytes_per_row: int = typer.Option(
         600,
@@ -883,10 +901,18 @@ def ingest_bulk_unmatched_route(
         help="Preview by default; use --execute --yes to write price tables.",
     ),
     yes: bool = typer.Option(False, "--yes", help="Required with --execute."),
-    limit: int | None = typer.Option(None, "--limit", help="Optional max rows to route."),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="Optional max complete instrument/date groups to route.",
+    ),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     """Route classified Bulk EOD unmatched observations into split daily price tables."""
+    _emit_reconcile_deprecation(
+        "j21 ingest bulk-unmatched-route",
+        "j21 reconcile bulk-unmatched route",
+    )
     if limit is not None and limit <= 0:
         raise typer.BadParameter("limit must be positive")
     if not dry_run and not yes:
@@ -903,6 +929,7 @@ def ingest_bulk_unmatched_route(
             asset_types=parsed_asset_types,
             limit=limit,
             execute=not dry_run,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
             override_source="cli",
         )
     except ValueError as exc:
@@ -913,7 +940,8 @@ def ingest_bulk_unmatched_route(
     mode = "dry_run" if result.status == "dry_run" else "executed"
     typer.echo(
         "bulk-unmatched-route "
-        f"mode={mode} date_from={parsed_from} date_to={parsed_to} "
+        f"mode={mode} run_id={result.run_id or '-'} "
+        f"date_from={parsed_from} date_to={parsed_to} "
         f"routeable={result.rows_matched} rows_inserted={result.rows_inserted} "
         f"rows_rejected={result.rows_rejected}"
     )
@@ -1286,6 +1314,249 @@ def quarantine_run(
         raise typer.Exit(code=1)
 
 
+@reconcile_bulk_unmatched_app.command("summary")
+def reconcile_bulk_unmatched_summary(
+    date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
+    market: str = typer.Option("US", "--market", help="Market code to inspect."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Summarize the current staging backlog; this command makes no API calls."""
+    output_mode = _parse_output_format(output)
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    rows = BulkUnmatchedReconcileJob().summary(
+        date_from=parsed_from,
+        date_to=parsed_to,
+        market=market,
+    )
+    if output_mode == "json":
+        typer.echo(
+            json.dumps(
+                [row.to_dict() for row in rows],
+                default=_json_cli_default,
+                sort_keys=True,
+            )
+        )
+        return
+    typer.echo(
+        f"bulk-unmatched summary date_from={parsed_from} date_to={parsed_to} "
+        f"groups={len(rows)} api_calls=0"
+    )
+    for row in rows:
+        typer.echo(
+            "  "
+            f"status={row.classification_status} "
+            f"asset_type={row.classified_asset_type or '-'} count={row.row_count}"
+        )
+
+
+@reconcile_bulk_unmatched_app.command("list")
+def reconcile_bulk_unmatched_list(
+    date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
+    status: str | None = typer.Option(None, "--status", help="Optional classification status."),
+    market: str = typer.Option("US", "--market", help="Market code to inspect."),
+    limit: int = typer.Option(50, "--limit", help="Maximum observations to print."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """List a bounded staging sample; this command makes no API calls."""
+    if limit <= 0:
+        raise typer.BadParameter("limit must be positive")
+    output_mode = _parse_output_format(output)
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    rows = BulkUnmatchedReconcileJob().list(
+        date_from=parsed_from,
+        date_to=parsed_to,
+        market=market,
+        status=status,
+        limit=limit,
+    )
+    if output_mode == "json":
+        typer.echo(json.dumps(rows, default=_json_cli_default, sort_keys=True))
+        return
+    typer.echo(f"bulk-unmatched list rows={len(rows)} api_calls=0")
+    _print_bulk_unmatched_rows(rows, limit=limit)
+
+
+@reconcile_bulk_unmatched_app.command("classify")
+def reconcile_bulk_unmatched_classify(
+    date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
+    market: str = typer.Option("US", "--market", help="Market code to classify."),
+    statuses: str = typer.Option(
+        "unresolved",
+        "--statuses",
+        help="Comma-separated source states; CLI default is unresolved only.",
+    ),
+    advanced: bool = typer.Option(
+        False,
+        "--advanced",
+        help="Required to reclassify ambiguous or non_price_asset observations.",
+    ),
+    batch_size: int = typer.Option(5_000, "--batch-size", help="Rows per committed batch."),
+    limit: int | None = typer.Option(None, "--limit", help="Optional max rows this command."),
+    run_id: int | None = typer.Option(None, "--run-id", help="Resume a prior reconcile run."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Classify staging rows in checkpointed local batches; API cost is always zero."""
+    parsed_statuses = _parse_statuses(statuses) or ["unresolved"]
+    advanced_statuses = {"ambiguous", "non_price_asset"} & set(parsed_statuses)
+    if advanced_statuses and not advanced:
+        raise typer.BadParameter(
+            "ambiguous/non_price_asset classification requires --advanced"
+        )
+    output_mode = _parse_output_format(output)
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    try:
+        result = BulkUnmatchedReconcileJob().classify(
+            date_from=parsed_from,
+            date_to=parsed_to,
+            market=market,
+            statuses=parsed_statuses,
+            batch_size=batch_size,
+            limit=limit,
+            run_id=run_id,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
+            override_source="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
+    typer.echo(
+        "bulk-unmatched classify "
+        f"run_id={result.run_id} status={result.status} "
+        f"processed={result.work_units_completed}/{result.work_units_total} "
+        f"matched={result.rows_matched} rejected={result.rows_rejected} "
+        f"remaining={result.metrics['remaining_eligible']} "
+        f"phase={result.metrics['checkpoint_phase']} api_calls=0"
+    )
+    if result.error_message:
+        typer.echo(f"resume_hint={result.error_message}")
+
+
+@reconcile_bulk_unmatched_app.command("route")
+def reconcile_bulk_unmatched_route(
+    date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End trade date in YYYY-MM-DD format."),
+    asset_types: str = typer.Option(
+        "stock,etf,fund,index",
+        "--asset-types",
+        help="Canonical target tables: stock,etf,fund,index.",
+    ),
+    market: str = typer.Option("US", "--market", help="Market code to route."),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--execute",
+        help="Preview by default; use --execute --yes for atomic writes.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Required with --execute."),
+    batch_size: int = typer.Option(
+        1_000,
+        "--batch-size",
+        help="Complete instrument/date groups per committed batch.",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        help="Optional max complete instrument/date groups this command.",
+    ),
+    run_id: int | None = typer.Option(
+        None,
+        "--run-id",
+        help="Continue the run created by classify; standalone execute creates one.",
+    ),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Preview or route complete natural-key groups; API cost is always zero."""
+    if not dry_run and not yes:
+        raise typer.BadParameter("route execution requires --yes")
+    output_mode = _parse_output_format(output)
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    parsed_assets = _parse_asset_types(asset_types, supported=DAILY_PRICE_ASSET_TYPES)
+    try:
+        result = BulkUnmatchedReconcileJob().route(
+            date_from=parsed_from,
+            date_to=parsed_to,
+            market=market,
+            asset_types=parsed_assets,
+            batch_size=batch_size,
+            limit=limit,
+            execute=not dry_run,
+            run_id=run_id,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
+            override_source="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
+    typer.echo(
+        "bulk-unmatched route "
+        f"run_id={result.run_id or '-'} status={result.status} "
+        f"groups={result.work_units_completed}/{result.work_units_total} "
+        f"routed={result.rows_matched} inserted={result.rows_inserted} "
+        f"shadowed={result.metrics.get('shadowed', 0)} "
+        f"route_failed={result.metrics.get('route_failed', 0)} "
+        f"remaining={result.metrics.get('remaining_groups', 0)} api_calls=0"
+    )
+    if result.error_message:
+        typer.echo(f"resume_hint={result.error_message}")
+
+
+@reconcile_bulk_unmatched_app.command("status")
+def reconcile_bulk_unmatched_status(
+    run_id: int = typer.Option(..., "--run-id", help="Reconcile workflow run ID."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Read one persisted reconcile checkpoint; API cost is always zero."""
+    output_mode = _parse_output_format(output)
+    try:
+        payload = BulkUnmatchedReconcileJob().status(run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if output_mode == "json":
+        typer.echo(json.dumps(payload, default=_json_cli_default, sort_keys=True))
+        return
+    checkpoint = payload["checkpoint"]
+    route_checkpoint = checkpoint["route"]
+    route_observations = route_checkpoint.get(
+        "observations_selected",
+        int(route_checkpoint["routed"])
+        + int(route_checkpoint["shadowed"])
+        + int(route_checkpoint["route_failed"]),
+    )
+    typer.echo(
+        "bulk-unmatched status "
+        f"run_id={run_id} status={payload['status']} phase={checkpoint['phase']} "
+        f"api_calls={payload['api_calls']}"
+    )
+    typer.echo(
+        "  classify "
+        f"rows={checkpoint['classify']['rows_processed']} "
+        f"batches={checkpoint['classify']['batches_committed']} "
+        f"checkpoint={checkpoint['classify'].get('last_trade_date') or '-'}"
+        f"/{checkpoint['classify'].get('last_observation_id') or '-'}"
+    )
+    typer.echo(
+        "  route "
+        f"groups={route_checkpoint['groups_processed']} "
+        f"observations={route_observations} "
+        f"routed={route_checkpoint['routed']} "
+        f"shadowed={route_checkpoint['shadowed']} "
+        f"failed={route_checkpoint['route_failed']} "
+        f"audits={route_checkpoint['identity_audits']} "
+        f"checkpoint={route_checkpoint.get('last_trade_date') or '-'}"
+        f"/{route_checkpoint.get('last_instrument_id') or '-'}"
+    )
+    typer.echo(
+        "  validation "
+        f"quality_runs={len(checkpoint['validation']['quality_check_run_ids'])} "
+        f"issues={checkpoint['validation']['issue_count']}"
+    )
+    typer.echo(f"  resume_hint={payload['resume_hint']}")
+
+
 @bulk_unmatched_app.command("summary")
 def research_bulk_unmatched_summary(
     date_from: str = typer.Option(..., "--from", help="Start trade date in YYYY-MM-DD format."),
@@ -1294,27 +1565,16 @@ def research_bulk_unmatched_summary(
     as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text."),
 ) -> None:
     """Summarize Bulk EOD unmatched staging rows by status and asset type."""
-    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
-    engine = create_engine(database_url_from_env())
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        rows = summarize_bulk_unmatched_observations(
-            connection,
-            date_from=parsed_from,
-            date_to=parsed_to,
-            market=market,
-        )
-
-    if as_json:
-        typer.echo(json.dumps([row.to_dict() for row in rows], default=_json_cli_default, indent=2))
-        return
-    typer.echo(f"bulk-unmatched summary rows={len(rows)}")
-    for row in rows:
-        typer.echo(
-            "  "
-            f"status={row.classification_status} "
-            f"asset_type={row.classified_asset_type or '-'} count={row.row_count}"
-        )
+    _emit_reconcile_deprecation(
+        "j21 research bulk-unmatched summary",
+        "j21 reconcile bulk-unmatched summary",
+    )
+    reconcile_bulk_unmatched_summary(
+        date_from=date_from,
+        date_to=date_to,
+        market=market,
+        output="json" if as_json else "text",
+    )
 
 
 @bulk_unmatched_app.command("list")
@@ -1327,26 +1587,18 @@ def research_bulk_unmatched_list(
     as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text."),
 ) -> None:
     """List bounded Bulk EOD unmatched staging rows for operator review."""
-    if limit <= 0:
-        raise typer.BadParameter("limit must be positive")
-    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
-    engine = create_engine(database_url_from_env())
-    with engine.begin() as connection:
-        ensure_runtime_schemas(connection)
-        rows = list_bulk_unmatched_observations(
-            connection,
-            date_from=parsed_from,
-            date_to=parsed_to,
-            market=market,
-            status=status,
-            limit=limit,
-        )
-
-    if as_json:
-        typer.echo(json.dumps(rows, default=_json_cli_default, indent=2))
-        return
-    typer.echo(f"bulk-unmatched list rows={len(rows)}")
-    _print_bulk_unmatched_rows(rows, limit=limit)
+    _emit_reconcile_deprecation(
+        "j21 research bulk-unmatched list",
+        "j21 reconcile bulk-unmatched list",
+    )
+    reconcile_bulk_unmatched_list(
+        date_from=date_from,
+        date_to=date_to,
+        status=status,
+        market=market,
+        limit=limit,
+        output="json" if as_json else "text",
+    )
 
 
 @bulk_unmatched_app.command("classify")
@@ -1358,27 +1610,20 @@ def research_bulk_unmatched_classify(
     as_json: bool = typer.Option(False, "--json", help="Print JSON instead of text."),
 ) -> None:
     """Classify unresolved unmatched rows using strict provider-symbol matches."""
-    if limit is not None and limit <= 0:
-        raise typer.BadParameter("limit must be positive")
-    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
-    result = BulkUnmatchedReconcileJob().classify(
-            date_from=parsed_from,
-            date_to=parsed_to,
-            market=market,
-            limit=limit,
-            override_source="cli",
+    _emit_reconcile_deprecation(
+        "j21 research bulk-unmatched classify",
+        "j21 reconcile bulk-unmatched classify",
     )
-
-    if as_json:
-        typer.echo(json.dumps(result.metrics, default=_json_cli_default, indent=2))
-        return
-    metrics = result.metrics
-    typer.echo(
-        "bulk-unmatched classify "
-        f"scanned={metrics['scanned']} matched={metrics['matched']} "
-        f"ambiguous={metrics['ambiguous']} "
-        f"needs_instrument={metrics['needs_instrument']} "
-        f"non_price_asset={metrics['non_price_asset']} unknown={metrics['unknown']}"
+    reconcile_bulk_unmatched_classify(
+        date_from=date_from,
+        date_to=date_to,
+        market=market,
+        statuses="unresolved",
+        advanced=False,
+        batch_size=5_000,
+        limit=limit,
+        run_id=None,
+        output="json" if as_json else "text",
     )
 
 
@@ -1679,6 +1924,14 @@ def _json_cli_default(value: object) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
+
+
+def _emit_reconcile_deprecation(old_command: str, new_command: str) -> None:
+    """Keep v0.4 aliases visible while directing automation to the v0.5 path."""
+    typer.echo(
+        f"DEPRECATED v0.4: {old_command}; use {new_command}; old path removed in v0.5",
+        err=True,
+    )
 
 
 def _parse_output_format(output: str) -> str:

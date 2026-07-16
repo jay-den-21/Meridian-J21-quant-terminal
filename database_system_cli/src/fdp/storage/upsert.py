@@ -18,6 +18,7 @@ from fdp.storage.tables import (
     index_daily_price,
     instrument,
     instrument_identifier_history,
+    instrument_identity_resolution_audit,
     instrument_lifecycle_event,
     market_calendar,
     stock_daily_price,
@@ -144,6 +145,35 @@ def build_identifier_mapping_unmatched_upsert(rows: Row | Sequence[Row]) -> Inse
             "resolved_at",
             "updated_at",
         ],
+    )
+
+
+def build_identity_resolution_audit_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Aggregate repeated Bulk identity decisions into one observed interval.
+
+    Input: one or more identity decisions with an observed date and workflow run.
+    Output: MySQL upsert that widens the interval while preserving first evidence.
+    Flow: strict resolver decision -> decision unique key -> interval/audit refresh.
+    """
+    if not rows:
+        raise ValueError("rows must not be empty")
+    statement = insert(instrument_identity_resolution_audit).values(rows)
+    return statement.on_duplicate_key_update(
+        observed_from=func.least(
+            instrument_identity_resolution_audit.c.observed_from,
+            statement.inserted.observed_from,
+        ),
+        observed_to=func.greatest(
+            instrument_identity_resolution_audit.c.observed_to,
+            statement.inserted.observed_to,
+        ),
+        last_run_id=statement.inserted.last_run_id,
+        reason=statement.inserted.reason,
+        supersedes_audit_id=func.coalesce(
+            instrument_identity_resolution_audit.c.supersedes_audit_id,
+            statement.inserted.supersedes_audit_id,
+        ),
+        updated_at=func.current_timestamp(),
     )
 
 
