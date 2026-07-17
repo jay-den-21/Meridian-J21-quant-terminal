@@ -15,6 +15,7 @@ from fdp.get_data import (
     ActiveInstrumentsJob,
     BulkDailyJob,
     BulkUnmatchedReconcileJob,
+    CorporateActionsHistoryJob,
     DailyRangeJob,
     DelistedInstrumentsJob,
     EtfDailyJob,
@@ -33,6 +34,9 @@ from fdp.get_data.reference import (
     DEFAULT_MAX_API_CALLS as ID_MAPPING_DEFAULT_MAX_API_CALLS,
 )
 from fdp.get_data.reference import DEFAULT_PAGE_LIMIT as ID_MAPPING_DEFAULT_PAGE_LIMIT
+from fdp.get_data.corporate_actions import (
+    DEFAULT_MAX_API_CALLS as CORPORATE_ACTION_DEFAULT_MAX_API_CALLS,
+)
 from fdp.get_data.registry import INGEST_JOB_DEFINITIONS
 from fdp.menu.i18n import Language, tr
 from fdp.menu.progress import TqdmProgressReporter
@@ -423,6 +427,152 @@ def _run_id_mappings(session: PromptSession, language: Language) -> None:
             reporter=reporter,
             override_source="menu",
             preflight=preflight,
+        ),
+    )
+
+
+def _run_corporate_actions(session: PromptSession, language: Language) -> None:
+    runtime = JobRuntime.from_env()
+    job = CorporateActionsHistoryJob()
+    scope = session.select(
+        tr(language, "corporate_action_scope"),
+        [
+            (tr(language, "corporate_action_full_scope"), "full"),
+            (tr(language, "corporate_action_symbols"), "symbols"),
+        ],
+        default="full",
+    )
+    if scope is None:
+        raise MenuCancelled
+    symbols = None
+    if scope == "symbols":
+        symbols = _csv(_text(session, tr(language, "symbols"), default="AAPL,MSFT"))
+    action_types = session.checkbox(
+        tr(language, "corporate_action_types"),
+        [("Dividend", "dividend"), ("Split", "split")],
+        defaults={"dividend", "split"},
+    )
+    if not action_types:
+        raise MenuCancelled
+    instrument_status = session.select(
+        tr(language, "status"),
+        [("Active", "active"), ("Inactive / delisted", "inactive"), ("All", "all")],
+        default="active",
+    )
+    if instrument_status is None:
+        raise MenuCancelled
+
+    date_from = _date_value(
+        session,
+        tr(language, "date_from"),
+        allow_blank=True,
+    )
+    date_to = _date_value(
+        session,
+        tr(language, "date_to"),
+        allow_blank=True,
+    )
+    if date_from is not None and date_to is not None and date_to < date_from:
+        raise ValueError("date_to must be greater than or equal to date_from")
+
+    limit = None
+    parallel = None
+    workers = None
+    batch_size = None
+    max_requests_per_minute = None
+    max_api_calls = None
+    if _advanced(session, language):
+        limit = _optional_int(session, tr(language, "limit"))
+        parallel_mode = session.select(
+            tr(language, "parallel"),
+            [("Parallel", True), ("Sequential", False)],
+            default=True,
+        )
+        if parallel_mode is None:
+            raise MenuCancelled
+        parallel = bool(parallel_mode)
+        workers = _int_value(session, tr(language, "workers"), default=4)
+        batch_size = _int_value(session, "Checkpoint batch size", default=100)
+        max_requests_per_minute = _int_value(
+            session,
+            tr(language, "max_rpm"),
+            default=runtime.config.max_requests_per_minute,
+        )
+        if max_requests_per_minute > 1000:
+            raise ValueError("max requests per minute must be less than or equal to 1000")
+        max_api_calls = _int_value(
+            session,
+            tr(language, "max_calls"),
+            default=CORPORATE_ACTION_DEFAULT_MAX_API_CALLS,
+        )
+
+    preflight = job.preflight(
+        symbols=symbols,
+        action_types=action_types,
+        instrument_status=instrument_status,
+        market="US",
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        parallel=parallel,
+        workers=workers,
+        batch_size=batch_size,
+        max_requests_per_minute=max_requests_per_minute,
+        max_api_calls=max_api_calls,
+        runtime=runtime,
+        override_source="menu",
+    )
+    args: list[Any] = [
+        "ingest",
+        "corporate-actions",
+        "--action-types",
+        ",".join(action_types),
+        "--instrument-status",
+        instrument_status,
+    ]
+    if symbols is not None:
+        args.extend(["--symbols", ",".join(symbols)])
+    if date_from is not None:
+        args.extend(["--from", date_from])
+    if date_to is not None:
+        args.extend(["--to", date_to])
+    if limit is not None:
+        args.extend(["--limit", limit])
+    if parallel is not None:
+        args.append("--parallel" if parallel else "--sequential")
+    if workers is not None:
+        args.extend(["--workers", workers])
+    if batch_size is not None:
+        args.extend(["--batch-size", batch_size])
+    if max_requests_per_minute is not None:
+        args.extend(["--max-requests-per-minute", max_requests_per_minute])
+    if max_api_calls is not None:
+        args.extend(["--max-api-calls", max_api_calls])
+    args.extend(["--execute", "--yes"])
+    command = _command(*args)
+    _confirm_and_run(
+        session,
+        language,
+        preflight,
+        command,
+        lambda reporter: job.run(
+            symbols=symbols,
+            action_types=action_types,
+            instrument_status=instrument_status,
+            market="US",
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            parallel=parallel,
+            workers=workers,
+            batch_size=batch_size,
+            max_requests_per_minute=max_requests_per_minute,
+            max_api_calls=max_api_calls,
+            execute=True,
+            runtime=runtime,
+            reporter=reporter,
+            preflight=preflight,
+            override_source="menu",
         ),
     )
 
@@ -1083,5 +1233,6 @@ JOB_HANDLERS: dict[str, Callable[[PromptSession, Language], None]] = {
     "daily_range": _run_daily_range,
     "market_calendar": _run_calendar,
     "id_mappings": _run_id_mappings,
+    "corporate_actions": _run_corporate_actions,
     "bulk_unmatched": _run_bulk_unmatched,
 }

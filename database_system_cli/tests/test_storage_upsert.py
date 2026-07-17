@@ -5,6 +5,7 @@ from sqlalchemy.dialects import mysql
 
 from fdp.storage.upsert import (
     build_bulk_unmatched_daily_price_observation_upsert,
+    build_corporate_action_upsert,
     build_crypto_daily_price_upsert,
     build_etf_daily_price_upsert,
     build_forex_daily_price_upsert,
@@ -175,6 +176,27 @@ def test_lifecycle_event_upsert_targets_source_event_key() -> None:
     assert "event_type = VALUES(event_type)" in sql
     assert "provider_symbol = VALUES(provider_symbol)" in sql
     assert "updated_at = CURRENT_TIMESTAMP" in sql
+
+
+def test_corporate_action_upsert_refreshes_event_details() -> None:
+    statement = build_corporate_action_upsert(
+        {
+            "instrument_id": 1,
+            "symbol": "AAPL",
+            "provider_symbol": "AAPL.US",
+            "action_type": "dividend",
+            "action_date": date(2025, 5, 12),
+            "cash_amount": Decimal("0.25"),
+            "source": "EODHD",
+        }
+    )
+
+    sql = str(statement.compile(dialect=mysql.dialect()))
+    update_clause = sql.split("ON DUPLICATE KEY UPDATE", maxsplit=1)[1]
+    assert "INSERT INTO us_share.corporate_action" in sql
+    assert "cash_amount = VALUES(cash_amount)" in update_clause
+    assert "provider_symbol = VALUES(provider_symbol)" in update_clause
+    assert "updated_at = CURRENT_TIMESTAMP" in update_clause
 
 
 def test_market_calendar_upsert_updates_calendar_flags() -> None:

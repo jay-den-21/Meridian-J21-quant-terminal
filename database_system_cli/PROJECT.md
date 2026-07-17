@@ -350,6 +350,60 @@ updated_at
 - delisted workflow 更新 `instrument.is_active = false`；只有当数据源提供可靠日期时才更新 `instrument.delisted_date`。当前 EODHD `exchange-symbol-list?delisted=1` 返回字段不含 delisting date，因此该列可能保持 `NULL`。
 - 每日价格表不加 `is_active` / `delisted_date` 物理列；读取层通过 join 暴露。
 
+### 5.5a `us_share.corporate_action`
+
+`corporate_action` 只保存可归属到 canonical stock `instrument_id` 的历史现金分红与拆股
+事件。ETF/Fund 不属于该 workflow。它不改写价格表，也不直接生成复权因子；研究层可在
+明确口径后利用这些事件独立计算 total return 或 adjustment factor。
+
+```text
+corporate_action_id
+instrument_id
+symbol
+provider_symbol
+action_type
+action_date
+declaration_date
+record_date
+payment_date
+period
+cash_amount
+unadjusted_cash_amount
+currency
+split_ratio
+split_numerator
+split_denominator
+source
+created_at
+updated_at
+```
+
+规则：
+
+- `action_type = dividend` 时，`action_date` 是 ex-dividend date，现金字段必须为正数。
+- `action_type = split` 时，`action_date` 是拆股生效日，原始 ratio 与 numerator/denominator 同时保留。
+- 唯一键为 `instrument_id + action_type + action_date + source`；精确重复折叠，同日冲突不使用 last-row-wins，而是写入 `system.data_quality_issue` 等待审查。
+- `provider_symbol` 是请求 EODHD 时使用的当前 provider symbol，不宣称它就是事件日有效 ticker；PIT ticker 仍由 `instrument_identifier_history` 管理。
+- 事件日有效的 identifier history 优先于当前 ticker；若没有 dated prior owner，唯一 current
+  endpoint owner 可以保留 pre-rename history。dated ETF/Fund owner 不入库，重叠 owner 写入
+  DQ，禁止按公司名猜测。
+- EODHD 历史 `/div/{ticker}` 与 `/splits/{ticker}` 每次 HTTP attempt 各计 1 unit；retry 和 `/user` 额度预检都进入任务 hard budget。
+- 旧混合范围数据只能通过备份保护的 `migrate corporate-action-identities` 收口；最终
+  `corporate_action JOIN instrument WHERE asset_type != 'stock'` 必须为 0，而 ETF/Fund master
+  和 daily-price tables 保持不变。
+
+2026-07-18 的真实 stock-only 收口和初次回填已经完成：清理前备份为
+`/private/tmp/j21-corporate-action-stock-only-precleanup-20260718-012824.sql.gz`
+（13,956,633 bytes，SHA-256
+`3799743d0355c1a9f4be9c1e7e4df73c78f30023cec3aa875e66c1b1148257ff`）。身份收口迁移
+182 行、合并 205 行并删除 334,467 行最终归属 ETF/Fund 的旧事件；重跑 plan 后待迁移、
+待合并和待删除均为 0，只保留 8 条重叠 stock owner 证据供人工复核。Corporate Action
+任务 run `7030..7038` 合计严格使用 99,800 API units；其中最终 inactive-stock run `7038`
+完成 23,846 个 instrument、47,694 units、抓取 352,772 行、接受 352,718 行。最终表有
+867,857 行（dividend 833,703、split 34,154），非 stock rows、natural-key duplicates 和
+invalid typed rows 均为 0。本轮拒绝证据分为 30 条身份歧义、22 条明确 non-stock owner 和
+2 条非法 split ratio，均未进入 canonical table。
+
 ### 5.5b `system.bulk_unmatched_daily_price_observation`
 
 `bulk_unmatched_daily_price_observation` 保存 EODHD Bulk EOD 返回、但在快速 ingest 阶段无法匹配当前 instrument universe 的原始日频观测。它是 staging/audit 表，不是正式价格表。
@@ -738,6 +792,28 @@ write task state and api call summary
 
 该 workflow 必须幂等。重跑可以更新 `instrument` 当前生命周期状态，但不能重复制造 lifecycle event。
 
+### 6.2b Corporate actions history
+
+初次回填使用 EODHD 单标的历史接口，而不是按日期的 full-exchange Bulk 接口：
+
+```text
+CLI / Menu / Python
+-> CorporateActionsHistoryJob preflight
+-> select deterministic stock-only instrument scope
+-> User API allowance check
+-> GET /api/div/{provider_symbol} and/or /api/splits/{provider_symbol}
+-> event-date identity resolver + strict parser + short per-instrument transaction
+-> corporate_action upsert + api_call_log + data_quality_issue
+-> batch checkpoint in ingestion_task_run
+```
+
+命令默认 dry-run；真实执行要求 `--execute --yes`。省略 `--symbols` 时按 instrument master
+选择全量 stock scope，`--instrument-status active|inactive|all` 控制本地 universe。asset type
+固定为 stock，不提供 ETF/Fund selector。一个 work unit
+包含一只 instrument 的所有已选 action types。并发 worker 只并行网络获取；写库使用短事务，
+不会在等待 HTTP 时持有数据库锁。`--max-api-calls` 是包含 preflight、retry 和 resume 的整个
+task 上限，checkpoint 允许中断后用同一 `run_id` 继续。
+
 ### 6.3 Historical backfill
 
 首次建库按 ticker 回填近 20 年历史。
@@ -945,6 +1021,10 @@ poetry run j21 ingest history --market US --symbols AAPL,MSFT,SPY --asset-types 
 poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --include-inactive
 poetry run j21 ingest history --market US --symbols OLD.US --from 2020-01-01 --to 2020-01-31 --instrument-status inactive
 poetry run j21 ingest delisted-instruments --market US
+poetry run j21 ingest corporate-actions --symbols AAPL.US,MSFT.US,META.US --action-types dividend,split --instrument-status active --max-api-calls 7 --execute --yes
+poetry run j21 ingest corporate-actions --action-types dividend,split --instrument-status active --max-api-calls 1000 --parallel --workers 16 --compact-progress --execute --yes
+poetry run j21 ingest corporate-actions --resume-run-id 123 --parallel --workers 32 --compact-progress --execute --yes
+poetry run j21 migrate corporate-action-identities --phase plan
 poetry run j21 ingest daily --market US --date 2026-05-20 --asset-types stock,etf,fund --instrument-status active
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --dry-run
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --instrument-status all --execute --yes --parallel --workers 4
@@ -1053,6 +1133,8 @@ point-in-time universe membership。
 ## 11. 官方参考资料
 
 - EODHD Historical / Market Data: https://eodhd.com/
+- EODHD Dividends and Splits API: https://eodhd.com/financial-apis/api-splits-dividends
+- EODHD Bulk EOD, Splits and Dividends API: https://eodhd.com/financial-apis/bulk-api-eod-splits-dividends
 - EODHD ID Mapping API: https://eodhd.com/financial-apis/id-mapping-api-cusip-isin-figi-lei-cik-%E2%86%94-symbol
 - EODHD API Limits: https://eodhd.com/financial-apis/api-limits
 - EODHD User API: https://eodhd.com/financial-apis/user-api

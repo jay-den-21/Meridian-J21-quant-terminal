@@ -1,5 +1,6 @@
 import json
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -210,6 +211,67 @@ def test_id_mapping_menu_builds_symbol_scope_for_shared_job(
     assert captured["command"] == (
         "poetry run j21 ingest id-mappings --symbols AAPL.US,MSFT.US "
         "--page-limit 1000 --max-api-calls 200"
+    )
+
+
+def test_corporate_action_menu_builds_full_scope_for_shared_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class CorporateActionPrompts:
+        def __init__(self) -> None:
+            self.select_answers = iter(["full", "active"])
+            self.checkbox_answers = iter(
+                [["dividend", "split"], ["stock", "etf"]]
+            )
+
+        def select(self, message, choices, *, default=None):
+            return next(self.select_answers)
+
+        def checkbox(self, message, choices, *, defaults=None):
+            return next(self.checkbox_answers)
+
+        def text(self, message, *, default=""):
+            return ""
+
+        def confirm(self, message, *, default=False):
+            return False
+
+    class FakeJob:
+        def preflight(self, **kwargs):
+            captured["preflight_kwargs"] = kwargs
+            return JobPreflight(
+                job="ingest.corporate_actions",
+                job_module="fdp.get_data.corporate_actions.get_history",
+                target_tables=["corporate_action"],
+                work_units=10,
+                estimated_api_calls=21,
+                parameters={"selected_instruments": 10},
+                parameter_sources={},
+            )
+
+        def run(self, **kwargs):
+            raise AssertionError("confirmation adapter must own execution")
+
+    def capture_confirmation(session, language, preflight, command, runner):
+        captured["command"] = command
+
+    runtime = SimpleNamespace(config=SimpleNamespace(max_requests_per_minute=600))
+    monkeypatch.setattr(menu_module.JobRuntime, "from_env", lambda: runtime)
+    monkeypatch.setattr(menu_module, "CorporateActionsHistoryJob", FakeJob)
+    monkeypatch.setattr(menu_module, "_confirm_and_run", capture_confirmation)
+
+    menu_module._run_corporate_actions(CorporateActionPrompts(), "en")
+
+    kwargs = captured["preflight_kwargs"]
+    assert kwargs["symbols"] is None
+    assert kwargs["action_types"] == ["dividend", "split"]
+    assert "asset_types" not in kwargs
+    assert kwargs["instrument_status"] == "active"
+    assert captured["command"] == (
+        "poetry run j21 ingest corporate-actions --action-types dividend,split "
+        "--instrument-status active --execute --yes"
     )
 
 

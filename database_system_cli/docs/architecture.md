@@ -30,6 +30,7 @@ CLI / terminal menu / Python caller
 | `src/fdp/cli.py` | Typer command、参数解析、文本/JSON 输出 | provider/SQL 业务流程 |
 | `src/fdp/menu/` | 双语 TTY、确认页、等价命令、tqdm | API、预算、写库逻辑 |
 | `src/fdp/get_data/` | Job、preflight、runtime、progress、result、registry | 原始 payload parser |
+| `src/fdp/get_data/corporate_actions/` | dividend/split universe、预算、并发、checkpoint/resume | provider payload mapping |
 | `src/fdp/sources/eodhd/` | HTTP、retry/rate limit、parser、provider ingest | UI 和 research query |
 | `src/fdp/storage/` | SQLAlchemy table contract、schema guard、upsert | migration 历史 |
 | `alembic/` | MySQL 物理 schema revision | 运行时业务逻辑 |
@@ -231,6 +232,52 @@ current-only 或 PIT。同一 instrument/type 的多个 validated values 作为 
 不能按 provider 返回顺序任取第一值。
 MySQL 通过 generated `valid_from_key` 只在唯一约束内部把 `NULL` 归一化，业务字段本身不伪造日期。
 外部 ID 只 enrich 已通过 provider symbol 严格定位的 `instrument_id`，不能反向触发 fuzzy merge。
+
+### 6.4 Dividend And Split History
+
+```mermaid
+sequenceDiagram
+    participant U as CLI/Menu/Python
+    participant J as CorporateActionsHistoryJob
+    participant E as EODHD div/splits
+    participant P as parser/provider ingest
+    participant DB as MySQL
+
+    U->>J: symbols or canonical universe + hard budget
+    J->>DB: deterministic instrument selection / resume checkpoint
+    J->>E: User API allowance preflight
+    loop bounded instrument batches
+        J->>E: GET div and/or splits by provider_symbol
+        E-->>P: provider payload
+        P->>DB: short transaction: API audit + canonical upsert + DQ issues
+        J->>DB: committed batch checkpoint
+    end
+    J-->>U: rows, failures, API units, resume cursor
+```
+
+`src/fdp/get_data/corporate_actions/get_history.py` owns universe selection、whole-task weighted
+budget、bounded parallel fetch、fatal stop、checkpoint 和 resume。HTTP calls occur outside database
+transactions。`src/fdp/sources/eodhd/corporate_actions.py` 显式映射 dividend/split payload；
+无效的零/负现金值、无效 ratio 和同日冲突写入 quality issue，不做 silent coercion。
+`src/fdp/sources/eodhd/ingest/corporate_actions.py` 在短事务内一起提交 API evidence、canonical
+rows 和 DQ issue，并串行化这些短写事务以避免并发 deadlock。
+
+该 Job 的 universe 固定为 `instrument.asset_type='stock'`，CLI/Menu 没有 ETF/Fund selector。
+每个历史事件先经过 `CorporateActionIdentityResolver`：事件日有效的 provider-symbol history
+优先；没有 dated prior owner 时，唯一 current endpoint owner 可以保留 pre-rename history；
+dated non-stock owner 会被拒绝，重叠历史 owner 会进入 DQ。旧混合范围数据通过
+`j21 migrate corporate-action-identities` 在备份后先迁移 dated stock rows，再删除所有剩余
+non-stock corporate-action rows；该命令不改 ETF/Fund instrument 或 price tables。
+
+2026-07-18 的真实收口与回填最终得到 867,857 条 stock corporate-action rows；非股票行、
+natural-key duplicates 和 invalid typed rows 均为 0。任务 run `7030..7038` 合计使用
+99,800 API units；最终 inactive-stock run `7038` 完成 23,846 个 instrument。解析器仍会
+读取非股票 ticker owner 作为冲突排除证据，但 API 请求范围和 canonical 写入范围始终只含
+stock。
+
+初次历史回填使用 one-unit-per-symbol `/div/{ticker}` 和 `/splits/{ticker}`。Full-exchange
+date Bulk 每 action type/date 计 100 units，留给后续 daily incremental workflow。Menu 和 Typer
+调用同一 Job；默认 dry-run，真实请求和写库必须显式确认。
 
 ## 7. Historical EOD 路径
 
@@ -452,7 +499,7 @@ SELECT 权限。没有 ingest/repair/migration HTTP route；页面只复制 CLI�
 
 | Schema | 内容 | 例子 |
 | --- | --- | --- |
-| `us_share` | canonical instrument/market data | identity/lifecycle/calendar、六种 asset daily price |
+| `us_share` | canonical instrument/market data | identity/lifecycle/corporate actions/calendar、六种 asset daily price |
 | `system` | 运行审计、DQ、人工 workflow、staging | task/API log、issues、repair/quarantine plan、bulk/ID-mapping unmatched |
 | `app_log` | API playground/search/snapshot 临时响应 | quote/search/screener/live snapshot |
 
@@ -498,6 +545,7 @@ poetry run python -m compileall -q src tests scripts
 poetry run alembic heads
 poetry run j21 --help
 poetry run j21 ingest --help
+poetry run j21 ingest corporate-actions --help
 ```
 
 大规模真实 ingest 不属于架构验证；没有用户明确授权时，只运行 dry-run、small smoke 或

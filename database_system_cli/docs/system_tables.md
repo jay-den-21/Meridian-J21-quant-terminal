@@ -27,6 +27,12 @@ canonical market data；正式 instrument 和价格仍位于 `us_share`。本页
 | `quarantined_daily_price_row` | 在删除 canonical 坏行前保存原 payload 和 hash | quarantine executor | 恢复、审计、post-action verification | 永久保留，除非另有合规归档方案 | 否 |
 | `fund_daily_price_split_run` | 保存 ETF/Fund 大表拆分的 backup、checkpoint 和验收证据 | fund split migration Job | migration status、审计 | 迁移完成后仍长期保留 | 否 |
 
+Corporate Actions 的 provider-row 拒绝也写入 `data_quality_issue`：
+`corporate_action_identity_unresolved` 表示事件日 ticker owner 不唯一，
+`corporate_action_non_stock_owner` 表示 dated owner 明确属于 ETF/Fund，
+`invalid_dividend` / `invalid_split` 才表示事件字段本身不合法。身份或资产类别不满足
+stock-only 约束的证据不得自动改绑或写入 canonical `us_share.corporate_action`。
+
 ## Guided Reconcile 关系
 
 ```mermaid

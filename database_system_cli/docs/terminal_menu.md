@@ -73,7 +73,13 @@ Historical EOD：
 
 - stock daily
 - ETF daily
+- Fund daily
 - benchmark index daily
+
+Corporate actions：
+
+- dividend history
+- split history
 
 Bulk EOD：
 
@@ -101,6 +107,23 @@ Validate、repair、quarantine 和普通 research 查询暂时保留为 CLI-only
 current-only 或 PIT history；同一 instrument/type 的多个 validated values 会全部保留。
 若分页已完成但仍有 unmatched/invalid 行，结果为 `partial_failed` 且 `next_offset` 为空；
 这表示后续需要 reconcile，不需要重复拉取整套分页。
+
+### Dividends And Splits
+
+Corporate Actions wizard 可以选择：
+
+- 全部本地 stock scope，或少量明确 stock symbols/provider symbols。
+- `dividend`、`split`，或两者。
+- `active`、`inactive/delisted`、`all`。
+- 可选 action date range；留空表示供应商可返回的最大历史。
+
+该 workflow 的 asset type 固定为 `stock`，Menu 不提供 ETF/Fund 选择，也不会向它们发出
+dividend/split 请求。
+
+高级参数包含 instrument limit、并发、workers、checkpoint batch size、每分钟请求上限和
+hard API-call budget。该预算包含 User API preflight 和重试；确认页显示真正的总预计成本，
+默认仍为取消。每个 instrument 独立提交，坏 provider row 进入 data quality issue，批次完成
+后保存 checkpoint。Menu 与 `j21 ingest corporate-actions` 调用同一个 Job。
 
 ### Bulk Unmatched Guided Reconcile
 

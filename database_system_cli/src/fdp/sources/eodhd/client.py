@@ -299,6 +299,67 @@ class EodhdClient:
             api_units=100 + len(normalized_symbols),
         )
 
+    def get_dividends(
+        self,
+        provider_symbol: str,
+        *,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> EodhdApiResponse:
+        """Fetch historical dividend events for one EODHD provider symbol."""
+        return self._get_corporate_action_history(
+            provider_symbol,
+            endpoint_prefix="div",
+            object_name="dividend",
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+    def get_splits(
+        self,
+        provider_symbol: str,
+        *,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> EodhdApiResponse:
+        """Fetch historical split events for one EODHD provider symbol."""
+        return self._get_corporate_action_history(
+            provider_symbol,
+            endpoint_prefix="splits",
+            object_name="split",
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+    def _get_corporate_action_history(
+        self,
+        provider_symbol: str,
+        *,
+        endpoint_prefix: str,
+        object_name: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> EodhdApiResponse:
+        normalized_symbol = provider_symbol.strip().upper()
+        if not normalized_symbol:
+            raise ValueError("provider_symbol must not be empty")
+        if date_from is not None and date_to is not None and date_to < date_from:
+            raise ValueError("date_to must be greater than or equal to date_from")
+
+        endpoint = f"/{endpoint_prefix}/{normalized_symbol}"
+        query_params = {"api_token": self.api_key, "fmt": "json"}
+        if date_from is not None:
+            query_params["from"] = date_from.isoformat()
+        if date_to is not None:
+            query_params["to"] = date_to.isoformat()
+        query = urlencode(query_params)
+        return self._get_json_list(
+            endpoint=endpoint,
+            url=f"{self.base_url}{endpoint}?{query}",
+            object_name=object_name,
+            api_units=1,
+        )
+
     def get_technical(
         self,
         provider_symbol: str,

@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 import fdp.cli as cli_module
 from fdp.cli import app
-from fdp.get_data.contracts import JobResult
+from fdp.get_data.contracts import JobPreflight, JobResult
 from fdp.get_data.reconcile.workflow import new_reconcile_checkpoint
 from fdp.sources.eodhd.retry import EodhdApiEvent
 
@@ -50,6 +50,47 @@ def test_json_mode_eodhd_progress_is_written_to_stderr(capsys: pytest.CaptureFix
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "/technical/AAPL.US" in captured.err
+
+
+def test_compact_cli_progress_suppresses_success_noise_but_keeps_retries(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    reporter = cli_module.CliProgressReporter(unit_every=100, api_events=False)
+    reporter.on_api_event(
+        EodhdApiEvent(kind="request", endpoint="/div/AAPL.US", attempt=1, max_attempts=2)
+    )
+    reporter.on_event(
+        cli_module.ProgressEvent(
+            "unit_completed",
+            "ingest.corporate_actions",
+            1,
+            200,
+            unit="AAPL.US",
+        )
+    )
+    assert capsys.readouterr().out == ""
+
+    reporter.on_api_event(
+        EodhdApiEvent(
+            kind="retry",
+            endpoint="/div/AAPL.US",
+            attempt=2,
+            max_attempts=2,
+            retry_delay_seconds=61,
+        )
+    )
+    reporter.on_event(
+        cli_module.ProgressEvent(
+            "unit_completed",
+            "ingest.corporate_actions",
+            100,
+            200,
+            unit="MSFT.US",
+        )
+    )
+    output = capsys.readouterr().out
+    assert "EODHD retrying" in output
+    assert "completed=100/200" in output
 
 
 def test_cli_history_routes_fund_asset_type_to_fund_job(
@@ -192,6 +233,23 @@ def test_cli_registers_guarded_asset_type_reconcile() -> None:
 
     assert help_result.exit_code == 0
     assert "--chunk-size" in help_result.output
+    assert unsafe_execute.exit_code != 0
+    assert "requires --execute --yes" in unsafe_execute.output
+
+
+def test_cli_registers_guarded_stock_only_corporate_action_reconcile() -> None:
+    runner = CliRunner()
+    help_result = runner.invoke(
+        app,
+        ["migrate", "corporate-action-identities", "--help"],
+    )
+    unsafe_execute = runner.invoke(
+        app,
+        ["migrate", "corporate-action-identities", "--phase", "execute"],
+    )
+
+    assert help_result.exit_code == 0
+    assert "--backup-file" in help_result.output
     assert unsafe_execute.exit_code != 0
     assert "requires --execute --yes" in unsafe_execute.output
 
@@ -541,6 +599,75 @@ def test_cli_registers_id_mapping_ingest_command() -> None:
     assert "--symbols" in result.output
     assert "--start-offset" in result.output
     assert "--max-api-calls" in result.output
+
+
+def test_cli_registers_guarded_corporate_action_ingest_command() -> None:
+    result = CliRunner().invoke(app, ["ingest", "corporate-actions", "--help"])
+
+    assert result.exit_code == 0
+    assert "--action-types" in result.output
+    assert "--asset-types" not in result.output
+    assert "--instrument-sta" in result.output
+    assert "--max-api-calls" in result.output
+    assert "--execute" in result.output
+    assert "--resume-run-id" in result.output
+
+
+def test_corporate_action_cli_passes_scope_to_shared_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, **kwargs):
+        captured.update(kwargs)
+        preflight = JobPreflight(
+            job="ingest.corporate_actions",
+            job_module="fdp.get_data.corporate_actions.get_history",
+            target_tables=["corporate_action"],
+            work_units=2,
+            estimated_api_calls=5,
+            parameters={"eligible_instruments": 2},
+            parameter_sources={},
+        )
+        return JobResult(
+            job="ingest.corporate_actions",
+            status="success",
+            run_id=51,
+            parameters={},
+            parameter_sources={},
+            rows_fetched=4,
+            rows_inserted=4,
+            api_calls=5,
+            work_units_total=2,
+            work_units_completed=2,
+            preflight=preflight,
+        )
+
+    monkeypatch.setattr(cli_module.CorporateActionsHistoryJob, "run", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "ingest",
+            "corporate-actions",
+            "--symbols",
+            "AAPL,MSFT.US",
+            "--action-types",
+            "dividend,split",
+            "--instrument-status",
+            "all",
+            "--max-api-calls",
+            "5",
+            "--execute",
+            "--yes",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["symbols"] == ["AAPL", "MSFT.US"]
+    assert captured["action_types"] == ["dividend", "split"]
+    assert captured["instrument_status"] == "all"
+    assert captured["max_api_calls"] == 5
+    assert captured["execute"] is True
 
 
 def test_id_mapping_cli_passes_symbol_scope_to_shared_job_as_json(

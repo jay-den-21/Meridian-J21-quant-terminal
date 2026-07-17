@@ -1,4 +1,12 @@
 from fdp.sources.eodhd.client import EodhdApiResponse, EodhdClient
+from fdp.sources.eodhd.corporate_actions import (
+    ParsedCorporateActionRows,
+    RejectedCorporateActionRow,
+    parse_dividend_row,
+    parse_dividend_rows,
+    parse_split_row,
+    parse_split_rows,
+)
 from fdp.sources.eodhd.calendar import build_market_calendar_rows
 from fdp.sources.eodhd.instruments import (
     ParsedInstrumentRows,
@@ -22,6 +30,12 @@ from fdp.sources.eodhd.prices import (
 __all__ = [
     "EodhdApiResponse",
     "EodhdClient",
+    "ParsedCorporateActionRows",
+    "RejectedCorporateActionRow",
+    "parse_dividend_row",
+    "parse_dividend_rows",
+    "parse_split_row",
+    "parse_split_rows",
     "ParsedDailyPriceRows",
     "ParsedInstrumentRows",
     "ParsedSymbolChangeRows",

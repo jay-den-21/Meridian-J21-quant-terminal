@@ -16,6 +16,7 @@ from fdp.get_data import (
     ActiveInstrumentsJob,
     BulkDailyJob,
     BulkUnmatchedReconcileJob,
+    CorporateActionsHistoryJob,
     DailyRangeJob,
     DelistedInstrumentsJob,
     EtfDailyJob,
@@ -31,12 +32,17 @@ from fdp.get_data.reference import (
     DEFAULT_MAX_API_CALLS as ID_MAPPING_DEFAULT_MAX_API_CALLS,
 )
 from fdp.get_data.reference import DEFAULT_PAGE_LIMIT as ID_MAPPING_DEFAULT_PAGE_LIMIT
+from fdp.get_data.corporate_actions import (
+    DEFAULT_MAX_API_CALLS as CORPORATE_ACTION_DEFAULT_MAX_API_CALLS,
+)
 from fdp.get_data.reporting import format_eodhd_event
 from fdp.migrate import (
     copy_fund_daily_prices,
     finalize_fund_daily_prices,
+    plan_corporate_action_identity_reconcile,
     plan_daily_price_asset_type_reconcile,
     plan_fund_daily_prices,
+    reconcile_corporate_action_identities,
     reconcile_daily_price_asset_types,
     verify_fund_daily_prices,
 )
@@ -115,11 +121,27 @@ QUARANTINE_DAILY_PRICE_ISSUE_TYPES = {
 class CliProgressReporter:
     """Stable line-oriented reporter; JSON mode sends events to stderr."""
 
-    def __init__(self, *, stderr: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        stderr: bool = False,
+        unit_every: int = 1,
+        api_events: bool = True,
+    ) -> None:
+        if unit_every <= 0:
+            raise ValueError("unit_every must be positive")
         self.stderr = stderr
+        self.unit_every = unit_every
+        self.api_events = api_events
 
     def on_event(self, event: ProgressEvent) -> None:
         if event.kind not in {"unit_completed", "unit_failed", "finish"}:
+            return
+        if (
+            event.kind == "unit_completed"
+            and event.completed % self.unit_every != 0
+            and event.completed != event.total
+        ):
             return
         counters = " ".join(f"{key}={value}" for key, value in event.counters.items())
         message = (
@@ -131,6 +153,8 @@ class CliProgressReporter:
         typer.echo(message, err=self.stderr)
 
     def on_api_event(self, event: EodhdApiEvent) -> None:
+        if not self.api_events and event.kind not in {"retry", "failed"}:
+            return
         typer.echo(format_eodhd_event(event), err=self.stderr)
 
 
@@ -239,6 +263,54 @@ def migrate_daily_price_asset_types(
             f"  {group['source_asset_type']} -> {group['target_asset_type']}: "
             f"rows={group['rows_count']} instruments={group['instruments_count']}"
         )
+
+
+@migrate_app.command("corporate-action-identities")
+def migrate_corporate_action_identities(
+    phase: str = typer.Option(..., "--phase", help="Migration phase: plan or execute."),
+    chunk_size: int = typer.Option(1_000, "--chunk-size", help="Rows per transaction."),
+    backup_file: Path | None = typer.Option(
+        None,
+        "--backup-file",
+        help="Existing out-of-repo backup required before destructive execute.",
+    ),
+    execute: bool = typer.Option(False, "--execute", help="Required for execute phase."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm identity moves and deletions."),
+    as_json: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Reassign dated stock events and remove ETF/Fund corporate-action rows."""
+    normalized_phase = phase.strip().lower()
+    if normalized_phase not in {"plan", "execute"}:
+        raise typer.BadParameter("phase must be plan or execute")
+    if chunk_size <= 0:
+        raise typer.BadParameter("chunk-size must be positive")
+    if normalized_phase == "execute":
+        if not (execute and yes):
+            raise typer.BadParameter("execute phase requires --execute --yes")
+        if backup_file is None or not backup_file.is_file():
+            raise typer.BadParameter("execute phase requires an existing --backup-file")
+
+    engine = create_engine(database_url_from_env())
+    try:
+        if normalized_phase == "plan":
+            with engine.connect() as connection:
+                ensure_runtime_schemas(connection)
+                result = plan_corporate_action_identity_reconcile(connection)
+        else:
+            with engine.connect() as connection:
+                ensure_runtime_schemas(connection)
+            result = reconcile_corporate_action_identities(engine, chunk_size=chunk_size)
+    except (RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    payload = {"phase": normalized_phase, **asdict(result)}
+    if as_json:
+        typer.echo(json.dumps(payload, default=_json_cli_default, indent=2))
+        return
+    typer.echo(
+        "corporate-action-identities "
+        + " ".join(f"{key}={value}" for key, value in payload.items())
+    )
 
 
 @migrate_app.command("fund-daily-price")
@@ -543,6 +615,155 @@ def ingest_id_mappings(
         f"invalid={result.rows_rejected} api_calls={result.api_calls} "
         f"next_offset={result.metrics.get('next_offset')}"
     )
+
+
+@ingest_app.command("corporate-actions")
+def ingest_corporate_actions(
+    symbols: str | None = typer.Option(
+        None,
+        "--symbols",
+        help=(
+            "Optional comma-separated stock symbols/provider symbols; "
+            "omitted selects the full stock scope."
+        ),
+    ),
+    action_types: str = typer.Option(
+        "dividend,split",
+        "--action-types",
+        help="Comma-separated event types: dividend,split.",
+    ),
+    instrument_status: str = typer.Option(
+        "active",
+        "--instrument-status",
+        help="Local instrument-master scope: active,inactive,all.",
+    ),
+    market: str = typer.Option("US", "--market", help="Internal market code."),
+    date_from: str | None = typer.Option(
+        None,
+        "--from",
+        help="Optional first corporate-action date in YYYY-MM-DD format.",
+    ),
+    date_to: str | None = typer.Option(
+        None,
+        "--to",
+        help="Optional last corporate-action date in YYYY-MM-DD format.",
+    ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        min=1,
+        help="Optional deterministic instrument limit after local filters.",
+    ),
+    parallel: bool | None = typer.Option(
+        None,
+        "--parallel/--sequential",
+        help="Use bounded per-instrument parallelism; default is parallel.",
+    ),
+    workers: int | None = typer.Option(
+        None,
+        "--workers",
+        min=1,
+        help="Parallel workers; omitted uses the Job default.",
+    ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help="Checkpoint batch size; omitted uses the Job default.",
+    ),
+    max_requests_per_minute: int | None = typer.Option(
+        None,
+        "--max-requests-per-minute",
+        min=1,
+        max=1000,
+        help="Request-rate override at or below EODHD's official ceiling.",
+    ),
+    max_api_calls: int | None = typer.Option(
+        None,
+        "--max-api-calls",
+        min=2,
+        help=(
+            "Hard total API-unit cap including User API preflight and retries; "
+            f"new runs default to {CORPORATE_ACTION_DEFAULT_MAX_API_CALLS}."
+        ),
+    ),
+    resume_run_id: int | None = typer.Option(
+        None,
+        "--resume-run-id",
+        min=1,
+        help="Resume an interrupted run with the same scope and original budget.",
+    ),
+    compact_progress: bool = typer.Option(
+        False,
+        "--compact-progress/--verbose-progress",
+        help="Report every 100 instruments and only retry/failed API events.",
+    ),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--execute",
+        help="Plan by default; use --execute --yes for API calls and writes.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Required with --execute."),
+    source: str = typer.Option("eodhd", "--source", help="Source provider."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Backfill canonical stock dividend and split histories from EODHD."""
+    if source.strip().lower() != "eodhd":
+        raise typer.BadParameter("only eodhd is supported")
+    if not dry_run and not yes:
+        raise typer.BadParameter("--execute requires --yes")
+    parsed_symbols = None if symbols is None else _parse_csv_values(symbols, "symbols")
+    parsed_actions = _parse_csv_values(action_types, "action-types")
+    parsed_status = instrument_status.strip().lower()
+    if parsed_status not in {"active", "inactive", "all"}:
+        raise typer.BadParameter("instrument-status must be active, inactive, or all")
+    parsed_from = _parse_optional_date(date_from, field_name="from")
+    parsed_to = _parse_optional_date(date_to, field_name="to")
+    if parsed_from is not None and parsed_to is not None and parsed_to < parsed_from:
+        raise typer.BadParameter("to must be greater than or equal to from")
+    output_mode = _parse_output_format(output)
+    try:
+        result = CorporateActionsHistoryJob().run(
+            symbols=parsed_symbols,
+            action_types=parsed_actions,
+            instrument_status=parsed_status,
+            market=market,
+            date_from=parsed_from,
+            date_to=parsed_to,
+            limit=limit,
+            parallel=parallel,
+            workers=workers,
+            batch_size=batch_size,
+            max_requests_per_minute=max_requests_per_minute,
+            max_api_calls=max_api_calls,
+            resume_run_id=resume_run_id,
+            execute=not dry_run,
+            reporter=CliProgressReporter(
+                stderr=output_mode == "json",
+                unit_every=100 if compact_progress else 1,
+                api_events=not compact_progress,
+            ),
+            override_source="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
+    preflight = result.preflight
+    if preflight is None:
+        raise RuntimeError("corporate-actions result is missing preflight details")
+    typer.echo(
+        "corporate-actions "
+        f"run_id={result.run_id or '-'} status={result.status} "
+        f"eligible={preflight.parameters['eligible_instruments']} "
+        f"selected={preflight.work_units} estimated_api_calls={preflight.estimated_api_calls} "
+        f"fetched={result.rows_fetched} inserted={result.rows_inserted} "
+        f"rejected={result.rows_rejected} api_calls={result.api_calls}"
+    )
+    for warning in preflight.warnings:
+        typer.echo(f"warning={warning}")
+    if result.status == "dry_run":
+        typer.echo("dry-run only; rerun with --execute --yes to ingest this scope")
 
 
 @ingest_app.command("delisted-instruments")
@@ -1812,6 +2033,14 @@ def _parse_asset_types(asset_types: str, *, supported: set[str] | None = None) -
             f"unsupported asset type(s): {', '.join(unsupported)}; expected {expected}"
         )
     return parsed
+
+
+def _parse_csv_values(value: str, field_name: str) -> list[str]:
+    """Parse a non-empty comma-separated CLI value with stable de-duplication."""
+    parsed = [item.strip() for item in value.split(",") if item.strip()]
+    if not parsed:
+        raise typer.BadParameter(f"{field_name} must contain at least one value")
+    return list(dict.fromkeys(parsed))
 
 
 def _resolve_history_instrument_status(

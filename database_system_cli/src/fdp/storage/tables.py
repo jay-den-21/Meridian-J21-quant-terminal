@@ -190,6 +190,57 @@ instrument_lifecycle_event = Table(
     schema=US_SHARE_SCHEMA,
 )
 
+# `provider_symbol` is the EODHD symbol used to retrieve the event. Historical
+# ticker validity remains owned by instrument_identifier_history.
+corporate_action = Table(
+    "corporate_action",
+    metadata,
+    Column("corporate_action_id", BigInteger, primary_key=True, autoincrement=True),
+    Column(
+        "instrument_id",
+        BigInteger,
+        ForeignKey(f"{US_SHARE_SCHEMA}.instrument.instrument_id"),
+        nullable=False,
+    ),
+    Column("symbol", String(64), nullable=False),
+    Column("provider_symbol", String(128), nullable=False),
+    Column("action_type", String(32), nullable=False),
+    Column("action_date", Date, nullable=False),
+    Column("declaration_date", Date),
+    Column("record_date", Date),
+    Column("payment_date", Date),
+    Column("period", String(32)),
+    Column("cash_amount", Numeric(20, 8)),
+    Column("unadjusted_cash_amount", Numeric(20, 8)),
+    Column("currency", String(16)),
+    Column("split_ratio", String(64)),
+    Column("split_numerator", Numeric(20, 8)),
+    Column("split_denominator", Numeric(20, 8)),
+    Column("source", String(32), nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        server_onupdate=func.current_timestamp(),
+    ),
+    UniqueConstraint(
+        "instrument_id",
+        "action_type",
+        "action_date",
+        "source",
+        name="uq_corporate_action_identity",
+    ),
+    Index("ix_corporate_action_symbol_date", "symbol", "action_date"),
+    Index(
+        "ix_corporate_action_provider_symbol_date",
+        "provider_symbol",
+        "action_date",
+    ),
+    schema=US_SHARE_SCHEMA,
+)
+
 
 def _asset_daily_price_table(
     table_name: str,

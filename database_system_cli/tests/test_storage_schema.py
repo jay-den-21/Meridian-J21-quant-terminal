@@ -2,6 +2,7 @@ from fdp.storage import (
     SYSTEM_SCHEMA,
     US_SHARE_SCHEMA,
     bulk_unmatched_daily_price_observation,
+    corporate_action,
     crypto_daily_price,
     DAILY_PRICE_TABLES,
     data_quality_issue,
@@ -43,6 +44,7 @@ def test_initial_metadata_contains_project_tables() -> None:
     assert f"{US_SHARE_SCHEMA}.forex_daily_price" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.crypto_daily_price" in metadata.tables
     assert f"{US_SHARE_SCHEMA}.market_calendar" in metadata.tables
+    assert f"{US_SHARE_SCHEMA}.corporate_action" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.data_quality_issue" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.repair_plan" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.quarantine_plan" in metadata.tables
@@ -211,6 +213,33 @@ def test_lifecycle_event_records_instrument_state_changes() -> None:
     assert expected_columns == set(instrument_lifecycle_event.c.keys())
     assert {"source", "event_key"} in [
         set(constraint.columns.keys()) for constraint in instrument_lifecycle_event.constraints
+    ]
+
+
+def test_corporate_action_preserves_provider_event_details() -> None:
+    assert {
+        "corporate_action_id",
+        "instrument_id",
+        "symbol",
+        "provider_symbol",
+        "action_type",
+        "action_date",
+        "declaration_date",
+        "record_date",
+        "payment_date",
+        "period",
+        "cash_amount",
+        "unadjusted_cash_amount",
+        "currency",
+        "split_ratio",
+        "split_numerator",
+        "split_denominator",
+        "source",
+        "created_at",
+        "updated_at",
+    } == set(corporate_action.c.keys())
+    assert {"instrument_id", "action_type", "action_date", "source"} in [
+        set(constraint.columns.keys()) for constraint in corporate_action.constraints
     ]
 
 

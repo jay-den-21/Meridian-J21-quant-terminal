@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from fdp.get_data.bulk import BulkDailyJob, DailyRangeJob
+from fdp.get_data.corporate_actions import CorporateActionsHistoryJob
 from fdp.get_data.historical import (
     EtfDailyJob,
     FundDailyJob,
@@ -83,6 +84,13 @@ INGEST_JOB_DEFINITIONS = (
         "job_daily_range",
         "fdp.get_data.bulk.get_daily_range",
         DailyRangeJob,
+    ),
+    IngestJobDefinition(
+        "corporate_actions",
+        "corporate_actions",
+        "job_corporate_actions",
+        "fdp.get_data.corporate_actions.get_history",
+        CorporateActionsHistoryJob,
     ),
     IngestJobDefinition(
         "market_calendar",

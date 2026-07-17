@@ -93,6 +93,70 @@ The official endpoint, fields, filters, 1000-row maximum, pagination shape, and
 one-call request cost are documented by
 [EODHD ID Mapping API](https://eodhd.com/financial-apis/id-mapping-api-cusip-isin-figi-lei-cik-%E2%86%94-symbol).
 
+## Dividends And Splits
+
+Plan a bounded active-stock backfill without calling EODHD:
+
+```bash
+poetry run j21 ingest corporate-actions \
+  --instrument-status active \
+  --action-types dividend,split \
+  --max-api-calls 200 \
+  --dry-run
+```
+
+Run a small explicit smoke after reviewing the plan:
+
+```bash
+poetry run j21 ingest corporate-actions \
+  --symbols AAPL.US,MSFT.US,META.US \
+  --action-types dividend,split \
+  --max-api-calls 7 \
+  --execute --yes
+```
+
+Omitting `--symbols` selects the deterministic local stock scope. Asset type is
+fixed to `stock`; Corporate Actions does not accept ETF or Fund instruments.
+`--instrument-status active|inactive|all` is a local instrument-master filter.
+Dates are optional because omitting `--from/--to` asks EODHD for the maximum
+available history.
+
+The hard `--max-api-calls` value includes the audited User API preflight and every
+retry. Each `/div/{symbol}` or `/splits/{symbol}` attempt costs one unit. The Job
+uses per-instrument transactions, batched checkpoints, idempotent upserts, and
+stores rejected provider rows in `system.data_quality_issue`. An interrupted run
+can continue with `--resume-run-id` only when the original scope and budget are
+unchanged.
+
+Historical rows are routed by event date when identifier history proves that a
+ticker had another owner. That dated owner wins; otherwise the unique current
+endpoint owner retains pre-rename history. A dated ETF/Fund owner is rejected, and
+ambiguous ownership becomes a quality issue rather than a guessed stock event.
+
+For a large run, add `--compact-progress`: the CLI reports every 100 completed
+instruments and still prints every retry/failure, while all API calls remain in
+`system.api_call_log`.
+
+For a large backfill, use separate active and inactive stock cohorts under explicit
+hard budgets. The historical endpoint and request cost are documented by
+[EODHD Splits and Dividends API](https://eodhd.com/financial-apis/api-splits-dividends).
+
+If a pre-stock-only run wrote ETF/Fund events, inspect and clean it only after an
+out-of-repo backup:
+
+```bash
+poetry run j21 migrate corporate-action-identities --phase plan
+poetry run j21 migrate corporate-action-identities \
+  --phase execute \
+  --backup-file /absolute/path/corporate_action.sql.gz \
+  --execute --yes
+```
+
+The reconcile first moves or merges rows with a unique dated stock owner, records
+identity conflicts in `system.data_quality_issue`, then removes all remaining
+corporate-action rows joined to non-stock instruments. It never deletes ETF/Fund
+instrument or daily-price data.
+
 ## Historical Stock, ETF, Fund, And Index EOD
 
 Load a small explicit symbol set:

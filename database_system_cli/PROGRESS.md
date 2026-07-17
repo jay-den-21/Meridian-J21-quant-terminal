@@ -123,6 +123,10 @@ Completed:
 - Guided Menu now hands successful Bulk daily/range results to a colored summary, skippable 10-second review, default-No classify/route confirmations, Rich Live measured progress, route dry-run, automatic daily-price validation, final retained-issue samples, and same-`run_id` resume. Latest daily defaults to active; explicit historical daily and daily-range default to active+inactive.
 - Harsh review hardened three non-obvious failure modes: migration rejects a same-name/wrong-shape classifier index; route enforces `selected = routed + shadowed + failed` plus canonical/routed closure; invalid price payloads use `invalid_ohlcv`/`api_rejected_row` rather than identity-conflict issues. Final gate passes 274 tests, Ruff, compileall, docs-staleness, CLI help, and live Alembic current.
 - `docs/system_tables.md/.html` now records every managed `system` table's purpose, writer, reader, retention policy, and deletion boundary; it is included in deterministic Markdown/HTML staleness validation.
+- Stock-only EODHD Corporate Actions ingestion is operational through one shared Job, `j21 ingest corporate-actions`, and the bilingual Menu. The request universe is fixed to `instrument.asset_type='stock'`; no ETF/Fund selector exists, while non-stock ticker owners are read only as collision guards.
+- Alembic `0017_corporate_actions` adopts the existing canonical table without dropping legacy rows. The backup-gated `j21 migrate corporate-action-identities` cleanup moved 182 dated stock rows, merged 205 rows, removed 334,467 ETF/Fund-owned action rows, and now plans 0 additional moves/merges/deletes; 8 overlapping stock-owner rows remain explicitly audited.
+- Corporate Action runs `7030..7038` consumed exactly the authorized 99,800 API units. Final inactive-stock run `7038` completed 23,846 instruments using 47,694 units, fetched 352,772 rows, accepted 352,718, and retained 54 rejected rows as 30 identity ambiguities, 22 proven non-stock owners, and 2 invalid split ratios.
+- Final Corporate Action verification passed: 867,857 canonical stock rows (833,703 dividends and 34,154 splits), 0 non-stock rows, 0 natural-key duplicate groups, 0 invalid typed rows, and 0 logged run-7038 symbols outside the selected inactive-stock universe. The protected pre-cleanup backup is `/private/tmp/j21-corporate-action-stock-only-precleanup-20260718-012824.sql.gz` with SHA-256 `3799743d0355c1a9f4be9c1e7e4df73c78f30023cec3aa875e66c1b1148257ff`.
 
 In progress:
 
@@ -140,3 +144,5 @@ In progress:
 - create a dedicated MySQL SELECT-only account for `research_terminal`; the application SQL guard remains defense-in-depth, not the only permission boundary
 - decide whether to persist exact/periodic table statistics for Terminal Overview instead of using labeled InnoDB estimates
 - reconcile the remaining `10,619` ID Mapping observations, starting with `10,522 missing_instrument` rows; do not create or merge instruments from CIK/LEI/CUSIP/ISIN/FIGI alone
+- review the 8 retained overlapping stock-owner Corporate Action rows and the 30 new event-date identity ambiguities before any manual reassignment; do not guess ownership
+- plan stock-only incremental dividend/split updates and targeted retry policy for isolated legacy-symbol 404s; ETF/Fund Corporate Actions remain out of scope

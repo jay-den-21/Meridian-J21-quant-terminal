@@ -1,6 +1,15 @@
 """Focused EODHD ingest workflows."""
 
 from fdp.sources.eodhd.ingest.calendar import load_market_calendar
+from fdp.sources.eodhd.ingest.corporate_actions import (
+    CorporateActionUnitResult,
+    FetchedCorporateActionUnit,
+    fetch_corporate_action_unit,
+    load_corporate_action_unit,
+    normalize_action_types,
+    persist_corporate_action_unit,
+    record_corporate_action_api_calls,
+)
 from fdp.sources.eodhd.ingest.daily import (
     load_bulk_daily_prices,
     load_daily_prices_for_instrument_ids,
@@ -37,6 +46,8 @@ __all__ = [
     "SYMBOL_CHANGE_HISTORY_SOURCE",
     "SYMBOL_CHANGE_HISTORY_START",
     "BulkDailyPriceLoadResult",
+    "CorporateActionUnitResult",
+    "FetchedCorporateActionUnit",
     "DelistedInstrumentLoadResult",
     "HistoricalDailyPriceLoadResult",
     "HistoricalDailyPriceUnitResult",
@@ -46,6 +57,8 @@ __all__ = [
     "MarketCalendarLoadResult",
     "load_exchange_symbols",
     "load_bulk_daily_prices",
+    "load_corporate_action_unit",
+    "fetch_corporate_action_unit",
     "load_daily_prices_for_instrument_ids",
     "load_delisted_instruments",
     "load_etf_daily_prices",
@@ -55,6 +68,9 @@ __all__ = [
     "load_index_daily_prices",
     "load_market_calendar",
     "load_stock_daily_prices",
+    "normalize_action_types",
+    "persist_corporate_action_unit",
+    "record_corporate_action_api_calls",
     "process_identifier_mapping_page",
     "reconcile_symbol_changes",
 ]

@@ -204,6 +204,77 @@ def test_eodhd_client_fetches_delisted_exchange_symbols() -> None:
     assert response.rows_returned == 1
 
 
+def test_eodhd_client_fetches_corporate_actions_with_optional_dates() -> None:
+    requested_urls: list[str] = []
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        requested_urls.append(request.full_url)
+        return FakeResponse([])
+
+    client = EodhdClient(api_key="test-token", transport=fake_transport)
+    dividend = client.get_dividends(
+        "aapl.us",
+        date_from=date(2020, 1, 1),
+        date_to=date(2020, 12, 31),
+    )
+    split = client.get_splits("AAPL.US")
+
+    dividend_url = urlparse(requested_urls[0])
+    dividend_query = parse_qs(dividend_url.query)
+    split_url = urlparse(requested_urls[1])
+    split_query = parse_qs(split_url.query)
+    assert dividend_url.path == "/api/div/AAPL.US"
+    assert dividend_query["from"] == ["2020-01-01"]
+    assert dividend_query["to"] == ["2020-12-31"]
+    assert split_url.path == "/api/splits/AAPL.US"
+    assert "from" not in split_query
+    assert dividend.success is True
+    assert split.success is True
+
+
+def test_eodhd_client_corporate_action_retry_respects_weighted_budget() -> None:
+    calls = 0
+    budget = WeightedApiBudget(2)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise URLError("temporary disconnect")
+        return FakeResponse([])
+
+    client = EodhdClient(
+        api_key="test-token",
+        max_retries=1,
+        retry_delay_seconds=0,
+        transport=fake_transport,
+        sleeper=lambda seconds: None,
+        api_budget=budget,
+    )
+
+    response = client.get_dividends("AAPL.US")
+
+    assert response.success is True
+    assert response.retry_count == 1
+    assert budget.snapshot().consumed == 2
+
+
+def test_eodhd_client_rejects_reversed_corporate_action_dates() -> None:
+    client = EodhdClient(
+        api_key="test-token",
+        transport=lambda request, timeout: (_ for _ in ()).throw(
+            AssertionError("transport must not run")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="date_to must be greater"):
+        client.get_splits(
+            "AAPL.US",
+            date_from=date(2025, 1, 2),
+            date_to=date(2025, 1, 1),
+        )
+
+
 def test_eodhd_client_fetches_symbol_change_history() -> None:
     requested_urls: list[str] = []
 

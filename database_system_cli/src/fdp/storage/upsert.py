@@ -10,6 +10,7 @@ from sqlalchemy.sql.dml import Insert
 
 from fdp.storage.tables import (
     bulk_unmatched_daily_price_observation,
+    corporate_action,
     crypto_daily_price,
     etf_daily_price,
     forex_daily_price,
@@ -194,6 +195,29 @@ def build_instrument_lifecycle_event_upsert(rows: Row | Sequence[Row]) -> Insert
             "symbol",
             "provider_symbol",
             "details",
+            "updated_at",
+        ],
+    )
+
+
+def build_corporate_action_upsert(rows: Row | Sequence[Row]) -> Insert:
+    """Build an idempotent upsert for canonical dividend and split events."""
+    return build_mysql_upsert(
+        corporate_action,
+        rows,
+        update_columns=[
+            "symbol",
+            "provider_symbol",
+            "declaration_date",
+            "record_date",
+            "payment_date",
+            "period",
+            "cash_amount",
+            "unadjusted_cash_amount",
+            "currency",
+            "split_ratio",
+            "split_numerator",
+            "split_denominator",
             "updated_at",
         ],
     )
