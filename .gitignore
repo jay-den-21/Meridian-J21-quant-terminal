@@ -16,6 +16,7 @@ build/
 node_modules/
 playwright-report/
 test-results/
+.playwright-cli/
 *.tsbuildinfo
 *.egg-info/
 backups/
