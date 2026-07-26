@@ -272,12 +272,15 @@ open site/index.html
 个人站和 J21 Terminal 位于仓库 sibling 根目录。需要同时检查跨产品跳转时，从仓库根目录启动静态服务器：
 
 ```bash
-python3 -m http.server 8765 --directory .
+python3 -m http.server 8766 --directory .
 ```
 
-- `http://localhost:8765/personal_site/`：Jayden21 个人首页及项目外链。
-- `http://localhost:8765/j21_terminal/`：Meridian landing 与 terminal prototype。
-- `http://localhost:8765/database_app/site/`：CodeGen 产品 / 下载页。
+- `http://localhost:8766/personal_site/`：Jayden21 个人首页及项目外链。
+- `http://localhost:8766/j21_terminal/`：Meridian landing；其真实 anchor 经现有动效进入单独启动在 `http://127.0.0.1:8765/` 的只读 Research Terminal。
+- `http://localhost:8766/database_app/site/`：CodeGen 产品 / 下载页。
+
+仓库根静态预览不得占用 `8765`；该端口保留给
+`research_terminal/` 构建后的 React UI 与同源 GET-only API。
 
 该 wrapper 会用随机本地端口绑定 `127.0.0.1` 并打开系统浏览器。生成的 `.app` 会复制 `database_app` 源码、文档和纯 Python 依赖到 bundle resources，移动 `.app` 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。目标机器需要 Python 3.11+，或用 `PYTHON_BIN` 指向兼容 Python。
 

@@ -27,7 +27,7 @@ This repository has five sibling components with independent ownership:
 - `database_system_cli/`: database ingestion, validation, repair, and research read layer.
 - `database_app/`: local EODHD API code generator and API playground.
 - `personal_site/`: Jayden21 personal homepage only.
-- `j21_terminal/`: Meridian landing page and J21 terminal prototype only.
+- `j21_terminal/`: Meridian landing page and animated handoff to the real Research Terminal only.
 - `research_terminal/`: localhost-only read-only FastAPI/React research visualization.
 
 Do not put new app work into `database_system_cli/` unless the user explicitly asks to extend the database CLI. Do not let `database_app/` write database schemas, migrations, or ingestion data.

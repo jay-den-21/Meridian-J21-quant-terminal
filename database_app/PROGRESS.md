@@ -151,9 +151,15 @@ Completed:
 - Added v1.3 static-site boundary split:
   - Restored `database_app/site/` as the CodeGen-only product/download page and kept packaging output under `site/downloads/`.
   - Moved the personal homepage, profile, custom cursors, project links, and homepage motion into the top-level `personal_site/` root.
-  - Moved the Meridian landing, exchange duel, terminal dashboard, and internal transitions into the top-level `j21_terminal/` root.
+  - Moved the Meridian landing, exchange duel, and transitions into the top-level `j21_terminal/` root.
   - Replaced same-document cross-product views with relative sibling links while preserving GSAP/no-GSAP and reduced-motion behavior.
   - Added root-level boundary tests so personal, terminal, and CodeGen page code/assets cannot silently mix again.
+- Integrated the current Research Terminal entry:
+  - Retired the static fake-data terminal dashboard from `j21_terminal/`.
+  - Preserved the Meridian landing and GSAP handoff, now targeting the real built
+    Research Terminal at `http://127.0.0.1:8765/`.
+  - Reserved `8766` for the repository-root static preview and kept `8765` for
+    the terminal UI and same-origin read-only API.
 - Added Wind study notes from the user-provided 2025 PDF and Kancloud link into `PROJECT.md`.
 - Added P1 plan for a WindPy-like Python client: `from eodhd_client import w`, `w.start()`, `w.isconnected()`, and `w.wsd`/`w.wss`/`w.wset` mappings.
 - Added tests for token store, universe normalization, and API cost estimation.
@@ -215,7 +221,7 @@ python3 -m http.server 8766 --directory .
 served `/personal_site/`, `/j21_terminal/`, and `/database_app/site/` as independent roots.
 
 Chrome headless navigation and responsive screenshots
-verified both personal project links, Meridian -> Terminal routing, 12 required local assets with HTTP 200, desktop layouts, 390px mobile layouts, and no horizontal overflow.
+verified both personal project links, Meridian landing navigation, 12 required local assets with HTTP 200, desktop layouts, 390px mobile layouts, and no horizontal overflow.
 ```
 
 Not started:
