@@ -1,0 +1,20 @@
+{
+  "name": "eodhd-claude-skills",
+  "owner": {
+    "name": "EOD Historical Data",
+    "email": "supportlevel1@eodhistoricaldata.com"
+  },
+  "metadata": {
+    "description": "Developer-first financial data for Claude — 150k+ tickers, 70+ exchanges, MCP Server with OAuth, 7 curated workflow skills, Python client, 64 endpoint docs",
+    "version": "0.6.0"
+  },
+  "plugins": [
+    {
+      "name": "eodhd-api",
+      "displayName": "EODHD Claude Skills",
+      "description": "Core EODHD financial data skill — historical prices, fundamentals, options, technicals, news, sentiment, macro indicators, ESG, risk analytics, Treasury rates, and more",
+      "source": "./",
+      "strict": true
+    }
+  ]
+}

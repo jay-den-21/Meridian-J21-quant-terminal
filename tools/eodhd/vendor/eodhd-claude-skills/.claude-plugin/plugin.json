@@ -1,0 +1,30 @@
+{
+  "name": "eodhd-api",
+  "version": "0.6.0",
+  "description": "Developer-first financial data for Claude — 150k+ tickers, 70+ exchanges, real-time & historical prices, fundamentals, options, technicals, news, sentiment, macro indicators, ESG, and more via EODHD API and MCP Server.",
+  "author": {
+    "name": "EOD Historical Data",
+    "email": "supportlevel1@eodhistoricaldata.com",
+    "url": "https://eodhd.com"
+  },
+  "keywords": [
+    "finance",
+    "financial-data",
+    "stock-market",
+    "api",
+    "mcp",
+    "market-data",
+    "fundamentals",
+    "options",
+    "technical-analysis",
+    "macro-economics",
+    "esg",
+    "treasury",
+    "earnings",
+    "dividends",
+    "screener"
+  ],
+  "homepage": "https://eodhd.com",
+  "repository": "https://github.com/EodHistoricalData/eodhd-claude-skills",
+  "license": "MIT"
+}
