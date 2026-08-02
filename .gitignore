@@ -20,6 +20,8 @@ test-results/
 *.tsbuildinfo
 *.egg-info/
 backups/
+database_app/site/assets/nasdaq.png
+database_app/site/assets/nyse-line-icon-vector.jpg
 database_system_cli/logs/
 
 .trellis/.developer

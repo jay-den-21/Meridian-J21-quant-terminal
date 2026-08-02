@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Any, Sequence
 
-from sqlalchemy import Table, or_, select
+from sqlalchemy import Table, false, or_, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql import Select
 
@@ -83,9 +83,6 @@ class DailyPriceReader:
         normalized_asset_type = asset_type.strip().lower()
         price_table = _price_table_for_asset_type(normalized_asset_type)
         resolved_from, resolved_to = self.resolve_date_range(date_from=date_from, date_to=date_to)
-        analysis_close = (
-            price_table.c.adjusted_close if adjusted else price_table.c.close
-        ).label("analysis_close")
 
         identifier_match = (
             select(1)
@@ -107,35 +104,7 @@ class DailyPriceReader:
         )
 
         return (
-            select(
-                instrument.c.instrument_id,
-                instrument.c.symbol.label("symbol"),
-                instrument.c.provider_symbol.label("provider_symbol"),
-                instrument.c.name,
-                instrument.c.exchange,
-                instrument.c.asset_type,
-                instrument.c.is_active,
-                instrument.c.delisted_date,
-                price_table.c.symbol.label("price_symbol"),
-                price_table.c.provider_symbol.label("price_provider_symbol"),
-                price_table.c.trade_date,
-                price_table.c.open,
-                price_table.c.high,
-                price_table.c.low,
-                price_table.c.close,
-                price_table.c.adjusted_close,
-                analysis_close,
-                price_table.c.volume,
-                price_table.c.currency,
-                price_table.c.source,
-                price_table.c.source_updated_at,
-            )
-            .select_from(
-                price_table.join(
-                    instrument,
-                    price_table.c.instrument_id == instrument.c.instrument_id,
-                )
-            )
+            _build_daily_prices_select(price_table=price_table, adjusted=adjusted)
             .where(
                 instrument.c.market == self.market,
                 instrument.c.asset_type == normalized_asset_type,
@@ -147,6 +116,63 @@ class DailyPriceReader:
                 ),
             )
             .order_by(instrument.c.symbol, price_table.c.trade_date)
+        )
+
+    def get_daily_prices_by_instrument_ids(
+        self,
+        *,
+        instrument_ids: Sequence[int],
+        asset_type: str = "stock",
+        date_from: DateInput = None,
+        date_to: DateInput = None,
+        adjusted: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Return daily OHLCV rows matched only by explicit instrument IDs."""
+        normalized_ids = _normalize_instrument_ids(instrument_ids)
+        if not normalized_ids:
+            return []
+        statement = self.build_daily_prices_by_instrument_ids_query(
+            instrument_ids=normalized_ids,
+            asset_type=asset_type,
+            date_from=date_from,
+            date_to=date_to,
+            adjusted=adjusted,
+        )
+        rows = self.connection.execute(statement).mappings().all()
+        return [dict(row) for row in rows]
+
+    def build_daily_prices_by_instrument_ids_query(
+        self,
+        *,
+        instrument_ids: Sequence[int],
+        asset_type: str = "stock",
+        date_from: DateInput = None,
+        date_to: DateInput = None,
+        adjusted: bool = True,
+    ) -> Select[Any]:
+        """Build an instrument-ID-only daily-price SELECT.
+
+        Input: explicit instrument IDs, asset type, date range, and price mode.
+        Output: SQLAlchemy select targeting one split daily price table.
+        Flow: validate inputs -> resolve dates -> filter IDs -> select prices.
+        """
+        normalized_ids = _normalize_instrument_ids(instrument_ids)
+        normalized_asset_type = asset_type.strip().lower()
+        price_table = _price_table_for_asset_type(normalized_asset_type)
+        resolved_from, resolved_to = self.resolve_date_range(date_from=date_from, date_to=date_to)
+        instrument_id_match = (
+            instrument.c.instrument_id.in_(normalized_ids) if normalized_ids else false()
+        )
+
+        return (
+            _build_daily_prices_select(price_table=price_table, adjusted=adjusted)
+            .where(
+                instrument.c.market == self.market,
+                instrument.c.asset_type == normalized_asset_type,
+                price_table.c.trade_date.between(resolved_from, resolved_to),
+                instrument_id_match,
+            )
+            .order_by(instrument.c.instrument_id, price_table.c.trade_date)
         )
 
     def resolve_date_range(
@@ -190,11 +216,56 @@ def _price_table_for_asset_type(asset_type: str) -> Table:
         raise ValueError(f"asset_type must be one of: {supported}") from exc
 
 
+def _build_daily_prices_select(*, price_table: Table, adjusted: bool) -> Select[Any]:
+    analysis_close = (price_table.c.adjusted_close if adjusted else price_table.c.close).label(
+        "analysis_close"
+    )
+    return select(
+        instrument.c.instrument_id,
+        instrument.c.symbol.label("symbol"),
+        instrument.c.provider_symbol.label("provider_symbol"),
+        instrument.c.name,
+        instrument.c.exchange,
+        instrument.c.asset_type,
+        instrument.c.is_active,
+        instrument.c.delisted_date,
+        price_table.c.symbol.label("price_symbol"),
+        price_table.c.provider_symbol.label("price_provider_symbol"),
+        price_table.c.trade_date,
+        price_table.c.open,
+        price_table.c.high,
+        price_table.c.low,
+        price_table.c.close,
+        price_table.c.adjusted_close,
+        analysis_close,
+        price_table.c.volume,
+        price_table.c.currency,
+        price_table.c.source,
+        price_table.c.source_updated_at,
+    ).select_from(
+        price_table.join(
+            instrument,
+            price_table.c.instrument_id == instrument.c.instrument_id,
+        )
+    )
+
+
 def _normalize_symbols(symbols: Sequence[str]) -> list[str]:
     normalized = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
     if not normalized:
         raise ValueError("symbols must contain at least one symbol")
     return normalized
+
+
+def _normalize_instrument_ids(instrument_ids: Sequence[int]) -> tuple[int, ...]:
+    normalized: set[int] = set()
+    for instrument_id in instrument_ids:
+        if isinstance(instrument_id, bool) or not isinstance(instrument_id, int):
+            raise ValueError("instrument_ids must contain only integers")
+        if instrument_id <= 0:
+            raise ValueError("instrument_ids must contain only positive integers")
+        normalized.add(instrument_id)
+    return tuple(sorted(normalized))
 
 
 def _coerce_optional_date(value: DateInput, *, field_name: str) -> date | None:

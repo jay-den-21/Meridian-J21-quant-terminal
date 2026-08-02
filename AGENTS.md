@@ -22,17 +22,23 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 # Repository Governance
 
-This repository has five sibling components with independent ownership:
+This repository has six sibling components with independent ownership:
 
 - `database_system_cli/`: database ingestion, validation, repair, and research read layer.
 - `database_app/`: local EODHD API code generator and API playground.
 - `personal_site/`: Jayden21 personal homepage only.
 - `j21_terminal/`: Meridian landing page and animated handoff to the real Research Terminal only.
 - `research_terminal/`: localhost-only read-only FastAPI/React research visualization.
+- `quant/`: isolated GTJA191 factor contracts, deterministic research harness,
+  Qlib-backed single-factor evaluation, and research evidence only.
 
 Do not put new app work into `database_system_cli/` unless the user explicitly asks to extend the database CLI. Do not let `database_app/` write database schemas, migrations, or ingestion data.
 Do not place personal-profile or terminal frontend code under `database_app/`. Cross-product navigation must use links between the sibling roots rather than embedding one product's views or assets inside another.
 Do not let `research_terminal/` execute ingest/repair/migration or arbitrary SQL; it may only read canonical/audit data and display inert CLI suggestions.
+Keep Qlib dependencies, virtual environments, provider data, caches, MLflow
+state, logs, and run artifacts inside `quant/`. The quant component may consume
+Data Core only through an approved read-only adapter or immutable export; it
+must not create schemas, run ingestion, or mutate Data Core tables.
 
 ## Scoped Context Routing
 
@@ -47,6 +53,7 @@ rules; it never overrides repository boundaries or secret-handling rules.
 | `personal_site/**` | this file |
 | `j21_terminal/**` | this file |
 | `research_terminal/**` | `research_terminal/AGENTS.md` |
+| `quant/**` | `quant/AGENTS.md` and the nearest deeper `AGENTS.md` |
 | `.trellis/**`, `.agents/**`, `.codex/**` | this file and `.trellis/workflow.md` |
 
 The current CLI code-flow and path ownership map live in
