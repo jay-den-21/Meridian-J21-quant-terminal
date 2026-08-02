@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from io import StringIO
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
 from eodhd_codegen_app.codegen import build_urls
@@ -13,8 +14,9 @@ from eodhd_codegen_app.request_model import ApiRequest
 
 
 Transport = Callable[..., Any]
-MAX_RETURN_ROWS = 5000
 MAX_EXECUTION_HTTP_REQUESTS = 50
+MAX_EXPORT_ROWS = 250_000
+MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 SINGLE_SYMBOL_RESPONSE_ENDPOINTS = {"historical_eod", "intraday", "dividends", "splits", "technical"}
 
 
@@ -27,8 +29,8 @@ class ExecutionResult:
     """Normalized result returned to the browser.
 
     Input: one or more EODHD HTTP responses.
-    Output: token-safe rows and request metadata for preview/export.
-    Flow: HTTP body -> JSON/CSV parse -> row cap -> preview result.
+    Output: token-safe full rows plus bounded preview and request metadata.
+    Flow: HTTP body -> bounded JSON/CSV parse -> full export rows + preview.
     """
 
     rows: list[dict[str, Any]]
@@ -39,12 +41,14 @@ class ExecutionResult:
     requests_made: int
     status_codes: list[int]
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(self, *, export_id: str = "") -> dict[str, Any]:
         return {
-            "rows": self.rows,
+            "rows": self.preview_rows,
             "preview_rows": self.preview_rows,
             "source_row_count": self.source_row_count,
             "returned_row_count": self.returned_row_count,
+            "export_row_count": len(self.rows),
+            "export_id": export_id,
             "truncated": self.truncated,
             "requests_made": self.requests_made,
             "status_codes": self.status_codes,
@@ -69,6 +73,7 @@ class EodhdHttpClient:
 
         rows: list[dict[str, Any]] = []
         source_row_count = 0
+        response_bytes = 0
         status_codes: list[int] = []
         urls = build_urls(request, api_token=api_key)
         if len(urls) > MAX_EXECUTION_HTTP_REQUESTS:
@@ -80,21 +85,29 @@ class EodhdHttpClient:
         for index, url in enumerate(urls):
             status_code, body = self._get(url, api_key=api_key, fmt=request.fmt)
             status_codes.append(status_code)
+            response_bytes += len(body.encode("utf-8"))
+            if response_bytes > MAX_RESPONSE_BYTES:
+                raise EodhdExecutionError(
+                    f"EODHD execution exceeds the {MAX_RESPONSE_BYTES // (1024 * 1024)} MiB safety cap"
+                )
             try:
-                parsed_rows = _parse_body(body, fmt=request.fmt)
+                parsed_rows = _redact_rows(_parse_body(body, fmt=request.fmt), api_key)
             except EodhdExecutionError as exc:
                 raise EodhdExecutionError(_redact(str(exc), api_key)) from exc
+            if source_row_count + len(parsed_rows) > MAX_EXPORT_ROWS:
+                raise EodhdExecutionError(
+                    f"EODHD response exceeds the full-export safety cap of {MAX_EXPORT_ROWS} rows"
+                )
             source_row_count += len(parsed_rows)
             rows.extend(_annotate_rows(parsed_rows, request=request, request_index=index))
 
-        truncated = len(rows) > MAX_RETURN_ROWS
-        returned_rows = rows[:MAX_RETURN_ROWS]
+        preview_rows = rows[: request.preview_limit]
         return ExecutionResult(
-            rows=returned_rows,
-            preview_rows=returned_rows[: request.preview_limit],
+            rows=rows,
+            preview_rows=preview_rows,
             source_row_count=source_row_count,
-            returned_row_count=len(returned_rows),
-            truncated=truncated,
+            returned_row_count=len(preview_rows),
+            truncated=len(rows) > len(preview_rows),
             requests_made=len(urls),
             status_codes=status_codes,
         )
@@ -105,12 +118,21 @@ class EodhdHttpClient:
             request = Request(url, headers={"Accept": accept})
             with self.transport(request, timeout=self.timeout_seconds) as response:
                 status_code = _status_code(response)
-                body = response.read().decode("utf-8")
+                body_bytes = response.read(MAX_RESPONSE_BYTES + 1)
         except HTTPError as exc:
             body = _read_error_body(exc)
             raise EodhdExecutionError(_redact(f"HTTP {exc.code}: {body}", api_key)) from exc
         except (URLError, TimeoutError) as exc:
             raise EodhdExecutionError(_redact(str(exc), api_key)) from exc
+
+        if len(body_bytes) > MAX_RESPONSE_BYTES:
+            raise EodhdExecutionError(
+                f"EODHD response exceeds the {MAX_RESPONSE_BYTES // (1024 * 1024)} MiB safety cap"
+            )
+        try:
+            body = body_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise EodhdExecutionError("EODHD response is not valid UTF-8") from exc
 
         if not 200 <= status_code < 300:
             raise EodhdExecutionError(_redact(f"HTTP {status_code}: {body[:1000]}", api_key))
@@ -167,7 +189,25 @@ def _read_error_body(exc: HTTPError) -> str:
 
 
 def _redact(text: str, api_key: str) -> str:
-    return text.replace(api_key, "[REDACTED]") if api_key else text
+    if not api_key:
+        return text
+    redacted = text.replace(api_key, "[REDACTED]")
+    encoded_api_key = quote_plus(api_key)
+    if encoded_api_key != api_key:
+        redacted = redacted.replace(encoded_api_key, "[REDACTED]")
+    return redacted
+
+
+def _redact_rows(rows: list[dict[str, Any]], api_key: str) -> list[dict[str, Any]]:
+    if not api_key:
+        return rows
+    return [
+        {
+            _redact(str(key), api_key): _redact(value, api_key) if isinstance(value, str) else value
+            for key, value in row.items()
+        }
+        for row in rows
+    ]
 
 
 def _coerce_json_row(row: Any) -> dict[str, Any]:

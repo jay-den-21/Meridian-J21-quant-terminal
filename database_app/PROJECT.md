@@ -23,7 +23,9 @@ v0.4 把产品形态从普通 web form 推向本地桌面工具：主窗口使�
 
 v0.5 把前端交互从“大块 endpoint 工作区”收敛为 single workspace：主屏只保留中英双语 function toolbar、已确认请求摘要、code generation 区域和 Execute API result 区域。所有 endpoint-specific 配置、股票池、ticker import、日期和输出格式都进入 3-step floating wizard。Wizard 内的 draft request 不会影响主屏；只有 Confirm 后才更新 codegen 和 Execute 使用的 confirmed request。
 
-v0.6 把 Stocks wizard 的候选加载从 EODHD API 改成 read-only MySQL pool browser。Pool browser 只读 `database_system_cli/.env` 中的 `FDP_DATABASE_URL` 或 `FDP_DB_*` 配置，并查询现有 `us_share.instrument`，不写数据库、不新增 schema、不消耗 EODHD API call。EODHD token 只用于 Execute API 和 Instrument Lookup。
+v0.6 把 Stocks wizard 的候选加载从 EODHD API 改成 read-only MySQL pool browser。Pool browser 只读 `database_system_cli/.env` 中的 `FDP_DATABASE_URL` 或 `FDP_DB_*` 配置，并查询现有 `us_share.instrument`，不写数据库、不新增 schema、不消耗 EODHD API call。EODHD token 只用于 Execute API 和 Instrument Search。
+
+Instrument Universe / 证券目录作为独立入口加入 function toolbar。它用三步向导选择资产类别、受控交易所和目录参数，覆盖 Stocks、ETFs、Funds、Indices、Forex、Crypto、Government Bonds 和 Reference Rates / Benchmarks。打开向导只读取本地 DB facets/counts；全球交易所目录只有在用户点击 `Load EODHD exchanges (1 API call)` 后才请求 EODHD，并在当前 server 进程内缓存。目录结果不会自动带入行情函数。
 
 v1.1 加入本地 Mac 分发打包和 CodeGen 下载入口。`scripts/package_macos_app.sh` 会生成 `.app`、`.dmg`、`.pkg`，并把 DMG/PKG 复制到 `site/downloads/`，使 `site/index.html` 可以继续提供本地构建产物下载。当前是 local developer distribution：可用于本机安装和个人测试，但公开分发仍需要 Apple Developer ID signing 和 notarization。
 
@@ -64,15 +66,20 @@ Wind 学习依据：
 
 ## 3. 功能范围
 
-当前实现股票 / equity 查询工作流。前端预留 Bonds、Funds、Indices 按钮，但这些资产仍是 roadmap。
+当前行情查询工作流仍以股票 / equity 为主；独立 Instrument Universe 已支持多资产证券目录生成与执行，但不会把目录结果自动带入行情函数。
 
 已实现：
 
 - Endpoint registry / endpoint specs。
 - Dynamic UI form renderer。
 - Single-workspace frontend with a compact function toolbar。
-- P0 function cards: Historical Price / 历史行情、Bulk Last-Day EOD / 批量日终行情、Latest Snapshot / 最新快照、Intraday Bars / 分钟线、Instrument Lookup / 证券搜索。
+- P0 function cards: Instrument Universe / 证券目录、Historical Price / 历史行情、Bulk Last-Day EOD / 批量日终行情、Latest Snapshot / 最新快照、Intraday Bars / 分钟线、Instrument Search / 证券搜索。
 - 3-step floating wizard: Stocks / 选股、Parameters / 参数、Review / 确认。
+- Instrument Universe 独立 3-step wizard: Asset Class / 资产类别、Venue & Options / 市场与参数、Review / 确认。
+- Official catalog categories: Stocks、ETFs、Funds、Indices (`INDX`)、Forex (`FOREX`)、Crypto (`CC`)、Government Bonds (`GBOND`)、Reference Rates / Benchmarks (`MONEY`)；European Funds 可用 `EUFUND`。
+- Local DB 只为目录向导提供 exchange、asset type 和 counts；不重复展示 instrument 明细，也不消耗 EODHD call。
+- 全球 exchange list 必须由用户显式加载；同一 server 进程只调用 EODHD 一次并与 DB exchange 去重合并。普通交易所下拉框排除 `INDX/FOREX/CC/GBOND/MONEY/EUFUND` 虚拟 venue。
+- Index directory 只返回指数标的；index constituents 入口禁用并注明需要 Fundamentals/Marketplace 来源。
 - Read-only MySQL pool browser for stock candidates, backed by existing `us_share.instrument`。
 - Pool Resources categories: Preset Pools、Exchange、Asset Type、Index Assets、Sectors disabled。
 - Default pool: active US common stocks on NYSE/NASDAQ/AMEX/ARCA/NYSE ARCA/BATS。
@@ -85,6 +92,7 @@ Wind 学习依据：
 - Previous Execute result is retained and marked as previous/stale after a new Confirm。
 - Imported ticker validation resolves against active DB `symbol` or `provider_symbol` exact matches, case-insensitively; unknown or guessed aliases are rejected。
 - `Date helper: T+n` for business-day or calendar-day offsets into date fields。
+- Intraday second-precision time helper: interpret input as U.S. Eastern `America/New_York`, apply EST/EDT automatically, and write UTC-based UNIX timestamp seconds。
 - Program language selector that switches generated code tabs。
 - Login / Config token dialog backed by server-side token store。
 - Request validation and normalization。
@@ -95,7 +103,7 @@ Wind 学习依据：
 - Real EODHD API execution through stored local token, with `EODHD_API_KEY` as fallback。
 - JSON / CSV response parsing。
 - Data preview table。
-- Browser CSV export。
+- Server-backed full CSV export for the most recent successful execution；preview rows 只限制页面表格。
 - API key redaction。
 
 不做：
@@ -106,7 +114,7 @@ Wind 学习依据：
 - 请求模板持久化。
 - Excel `.xlsx` 导出。
 - C++ 代码生成。
-- 多资产完整支持。
+- 股票以外资产的行情/分析函数完整支持；当前多资产范围仅为 Instrument Universe 目录。
 - 官方指数成分股 universe，除非订阅/官方证据明确支持并有 membership source。
 - sector/industry member pools，除非新增官方/授权 taxonomy source。
 - 在 P0 中不展示申万、S&P/MSCI、券商行业指数等“知名行业指数池”；除非有官方/授权成分股来源。Sector/industry pools 当前禁用，不得冒充指数成分股或官方行业成员池。
@@ -161,6 +169,8 @@ financial-data-platform/
         codegen.py
         cost.py
         endpoints.py
+        execution_export.py
+        instrument_catalog.py
         request_model.py
         server.py
         token_store.py
@@ -169,18 +179,24 @@ financial-data-platform/
         static/
           index.html
           styles.css
+          instrument_catalog.js
+          timezone.js
           app.js
     tests/
       test_client.py
       test_codegen.py
       test_cost.py
       test_endpoint_registry.py
+      test_execution_export.py
+      test_instrument_catalog.py
+      test_instrument_catalog_tools.js
       test_request_model.py
       test_server_security.py
       test_token_store.py
       test_universe.py
       test_universe_db.py
       test_static_app.py
+      test_timezone_tools.js
     scripts/
       run_local.command
       package_macos_app.sh
@@ -193,11 +209,13 @@ financial-data-platform/
 - `codegen.py`：生成 direct URL、Python、curl、JavaScript。
 - `cost.py`：估算 endpoint API call cost，Bulk 请求需要后端确认。
 - `client.py`：服务器端真实 EODHD HTTP 调用、JSON/CSV 解析、token redaction、preview rows。
+- `execution_export.py`：线程安全地缓存最近一次成功执行的完整 rows，并生成带公式注入防护的 UTF-8 CSV。
+- `instrument_catalog.py`：官方资产目录映射、DB facet/count 组合、显式 EODHD exchange directory 加载和进程缓存。
 - `token_store.py`：环境变量 / 本地 app config token 状态、保存、删除；Keychain 是可选路径，不作为默认阻塞保存路径。
 - `universe.py`：DB-backed pool menu/load contract、preset pool 和 disabled taxonomy/index-constituent 边界。
 - `universe_db.py`：读取 DB env、建立 SQLAlchemy engine、只读查询 `us_share.instrument`。
 - `server.py`：HTTP route、静态文件、API response、本机请求 guard。
-- `static/`：single workspace、function toolbar、3-step request wizard、T+n date helper、代码区、结果区、样式和浏览器端交互。
+- `static/`：single workspace、function toolbar、3-step request wizard、独立 `instrument_catalog.js` 纯状态逻辑、T+n date helper、Intraday timezone/UNIX converter、代码区、结果区、样式和浏览器端交互。
 - `tests/`：验证参数边界、代码生成、执行解析、token redaction、registry 完整性、DB pool 查询边界和前端 pool state 回归点。
 
 ## 6. 运行方式
@@ -282,7 +300,7 @@ python3 -m http.server 8766 --directory .
 仓库根静态预览不得占用 `8765`；该端口保留给
 `research_terminal/` 构建后的 React UI 与同源 GET-only API。
 
-该 wrapper 会用随机本地端口绑定 `127.0.0.1` 并打开系统浏览器。生成的 `.app` 会复制 `database_app` 源码、文档和纯 Python 依赖到 bundle resources，移动 `.app` 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。目标机器需要 Python 3.11+，或用 `PYTHON_BIN` 指向兼容 Python。
+该 wrapper 会用随机本地端口绑定 `127.0.0.1` 并打开系统浏览器。生成的 `.app` 会复制 `database_app` 源码、文档和纯 Python 依赖到 bundle resources，移动 `.app` 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。启动时会先检查 `PYTHON_BIN`，再检查常见 Homebrew 和 python.org Python 3.11+ 安装路径，最后才 fallback 到 `python3`。
 
 直接启动脚本会在启动 server 前 `unset EODHD_API_KEY`，因此桌面式启动路径只使用 `Login / Config` 中保存的 token。
 
@@ -299,14 +317,14 @@ python3 -m http.server 8766 --directory .
 | Endpoint id | EODHD path | 用途 | 格式 | 状态 |
 | --- | --- | --- | --- | --- |
 | `historical_eod` | `/api/eod/{provider_symbol}` | 一个或少量 symbol 的历史 EOD OHLCV | JSON / CSV | implemented |
-| `intraday` | `/api/intraday/{provider_symbol}` | 1m/5m/1h intraday bars | JSON / CSV | implemented |
+| `intraday` | `/api/intraday/{provider_symbol}` | 1m/5m/1h bars；U.S. Eastern time helper 转 UTC UNIX seconds | JSON / CSV | implemented |
 | `live_ohlcv` | `/api/real-time/{provider_symbol}` | 最新 delayed OHLCV snapshot | JSON / CSV | implemented |
 | `bulk_last_day_eod` | `/api/eod-bulk-last-day/{exchange}` | 小规模手动 bulk last-day 查询 | JSON / CSV | implemented |
 | `dividends` | `/api/div/{provider_symbol}` | 历史分红 | JSON / CSV | implemented |
 | `splits` | `/api/splits/{provider_symbol}` | 历史拆股 | JSON / CSV | implemented |
 | `technical` | `/api/technical/{provider_symbol}` | 技术指标序列 | JSON / CSV | implemented |
 | `screener` | `/api/screener` | 股票筛选器 | JSON | implemented |
-| `exchange_symbol_list` | `/api/exchange-symbol-list/{exchange}` | 交易所 symbol list | JSON | implemented |
+| `exchange_symbol_list` | `/api/exchange-symbol-list/{exchange}` | 受控多资产证券目录 | JSON / CSV | implemented |
 | `instrument_search` | `/api/search/{query_string}` | instrument lookup | JSON | implemented |
 | `exchanges_list` | `/api/exchanges-list/` | EODHD 支持交易所列表 | JSON | implemented |
 | `exchange_details` | `/api/v2/exchange-details/{exchange}` | 交易时间和休市日 | JSON | implemented |
@@ -327,7 +345,7 @@ Inventory-only，不在当前 29.99 Extended 白名单中执行：
 App 在生成 URL 或执行 API 前做参数校验：
 
 - 只接受 registry 中 `implemented=True` 的 endpoint。
-- asset 当前只接受 `equity`。
+- asset 接受 `equity`；`exchange_symbol_list` 的独立目录请求使用受控的 `instrument`。
 - symbol 和 exchange 只允许有限安全字符。
 - 必填参数不能被 server 静默填入 UI default；API payload 必须显式带值。
 - Historical EOD 必须提供 symbols、`date_from`、`date_to`。
@@ -337,7 +355,7 @@ App 在生成 URL 或执行 API 前做参数校验：
 - 前端 selected rows、codegen payload、Execute API 使用同一批 confirmed DB provider symbols，避免 UI 显示一个 symbol 但生成 URL 使用另一个 symbol。
 - Historical EOD 日期范围最多 3660 天。
 - T+n helper 只做 UI 日期填充，不绕过后端日期范围校验；business-day 模式当前按周一到周五计算，不含交易所节假日。
-- Intraday 支持 `1m`、`5m`、`1h`；如果提供 timestamp range，会按官方区间上限校验。
+- Intraday 支持 `1m`、`5m`、`1h`；如果提供 timestamp range，会按官方区间上限校验。前端秒级 helper 始终把输入解释为 U.S. Eastern `America/New_York`，按日期自动处理 EST/EDT，再写入 EODHD 所需的 UTC-based UNIX seconds；DST 不存在/重复时刻会明确拒绝，不静默猜测。
 - Bulk EOD 默认必须提供 symbols；除非用户显式勾选 full exchange。
 - Bulk EOD 默认最多 2000 个 symbols。
 - Bulk EOD 支持 `trade_date` 或 `date_from`/`date_to`，日期范围最多 31 个 calendar days，会生成每个日期一个 bulk URL。
@@ -353,6 +371,8 @@ App 在生成 URL 或执行 API 前做参数校验：
 - Search query 最多 80 个字符。
 - Screener filters 必须是 JSON array。
 - Preview rows 限制在 1 到 500。
+- Instrument Universe 必须提供与资产类别一致的受控映射：指数/外汇/加密资产/政府债券/基准分别固定为 `INDX/FOREX/CC/GBOND/MONEY`；欧洲基金可用 `EUFUND`；Stocks/ETFs/Funds 只能从 DB 或显式 EODHD exchange directory 中选择普通交易所，并发送匹配的 `type`。
+- `delisted=1` 在 UI 中显示为独立 `Delisted mode`，不把上游语义扩写成 active 与 delisted 的并集。
 - JSON-only endpoint 不允许 CSV。
 - Bulk/high-call execute 必须通过后端 cost confirmation；前端会弹出显式确认，未确认时后端拒绝执行。
 - 本地 `Execute API` 硬限制最多 50 个 generated HTTP requests；超过上限只能生成代码，不由 preview UI 批量执行。
@@ -390,22 +410,24 @@ EODHD_API_KEY
 `/api/execute` 返回：
 
 - normalized request
-- parsed rows
 - preview rows
 - source row count
-- returned row count
+- full export row count
+- opaque export id
 - request count
 - status codes
 
-前端展示 preview table，并允许把最近一次返回的 rows 导出为 CSV。
+前端只持有 preview rows。每次成功执行后，server 在线程安全的进程内缓存中保存同次执行的完整 rows，并返回随机 `export_id`；`GET /api/exports/{execution_id}.csv` 直接导出该快照，不再次调用 EODHD。新的成功执行替换旧快照；失败执行不会覆盖最近一次成功快照。
 
 限制：
 
-- server 返回 rows 最多 5000 行。
+- 单次完整响应上限为 250,000 rows 或 64 MiB；超过任一上限显式失败，不截断、不生成 export id。
 - `Execute API` 最多执行 50 个 generated HTTP requests；更大的 symbol list 只生成代码。
 - preview table 使用用户选择的 preview limit。
-- CSV 导出在浏览器端完成。
+- Preview rows 默认 50、最大 500；该值不影响完整 CSV 行数。
+- CSV 由 server 从最近一次成功执行快照生成，字段取完整 rows 的字段并集，使用 UTF-8 BOM。
 - CSV cell 会 quote；以 `=`, `+`, `-`, `@` 开头的值会加前缀，降低 spreadsheet formula injection 风险。
+- export id 是不可预测的短生命周期进程内标识；server 重启后失效，且只保留最近一次成功执行。
 - Excel `.xlsx` 导出是 P1，不属于当前实现。
 
 ## 11. 错误处理
@@ -451,6 +473,7 @@ PYTHONPATH=src ../database_system_cli/.venv/bin/python -m pytest
 - preset/exchange/asset_type/index asset pool query semantics。
 - API cost estimation and bulk confirmation guard。
 - frontend static smoke for single workspace, wizard import/confirm, stale-result boundary, and no-key execute error path。
+- Intraday timezone conversion for winter/summer EST/EDT, second precision, UNIX round-trip, and DST gap/overlap rejection。
 
 `database_system_cli` 主线测试可单独在其目录运行，不依赖 `database_app`。
 
@@ -492,11 +515,11 @@ P1:
 P2:
 
 - C++ code generation。
-- 多资产完整支持。
+- 多资产行情/分析函数完整支持；当前多资产执行范围是 Instrument Universe 目录。
 - 抽取 shared EODHD URL/client/validation package。
 - 可选本地审计日志，但不得写入 `database_system_cli` schema。
 - 真正的 native webview/PyInstaller/Briefcase packaging。
 
 ## 15. 当前状态
 
-`database_app` 已实现 registry-driven 产品化版本，支持 14 个官方确认可用于 29.99 Extended 研究工作流的 endpoint，并保留 inventory-only 区分不在当前白名单内的 endpoint group。v0.6 已完成 read-only MySQL pool browser，Stocks wizard 的候选加载不再调用 EODHD API；Index Assets 明确为指数资产而非成分股，Sectors 在 taxonomy source 加入前禁用。v1.0 release 收口将当前本地工具作为独立子项目发布，并采用 Trellis 作为未来大任务执行层。v1.3 已把个人首页和 J21 Terminal 从 `database_app/site/` 拆到仓库 sibling 根目录，`database_app/site/` 当前只负责 CodeGen 产品说明与安装产物下载。`database_system_cli` schema 和源码未被修改。
+`database_app` 已实现 registry-driven 产品化版本，支持 14 个官方确认可用于 29.99 Extended 研究工作流的 endpoint，并保留 inventory-only 区分不在当前白名单内的 endpoint group。v0.6 已完成 read-only MySQL pool browser，Stocks wizard 的候选加载不再调用 EODHD API；Index Assets 明确为指数资产而非成分股，Sectors 在 taxonomy source 加入前禁用。当前 Instrument Universe 分支增加独立多资产目录向导、显式且单次缓存的 EODHD exchange directory 加载、受控资产/venue/type 映射，以及所有 endpoint 共用的同次执行全量 CSV 快照导出。v1.0 release 收口将当前本地工具作为独立子项目发布，并采用 Trellis 作为未来大任务执行层。v1.3 已把个人首页和 J21 Terminal 从 `database_app/site/` 拆到仓库 sibling 根目录，`database_app/site/` 当前只负责 CodeGen 产品说明与安装产物下载。`database_system_cli` schema 和源码未被修改。

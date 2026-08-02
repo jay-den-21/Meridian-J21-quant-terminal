@@ -1,6 +1,13 @@
 const state = {
   endpoints: [],
   universeMenu: { db: null, categories: [], preset_pools: [], exchanges: [], asset_types: [], unsupported: [] },
+  instrumentCatalogMenu: {
+    db: null,
+    categories: [],
+    exchanges: [],
+    eodhd_cache: { loaded: false, loaded_at: "", row_count: 0 },
+    index_constituents: null,
+  },
   currentEndpoint: "historical_eod",
   currentTab: "urls",
   draft: null,
@@ -9,12 +16,27 @@ const state = {
   currentCost: null,
   rows: [],
   executionMeta: null,
+  executionExportId: "",
   resultStale: false,
   poolLoadSeq: 0,
 };
 
 const MAX_SELECTED_SYMBOLS = 2000;
 const STRONG_WARNING_SYMBOLS = 100;
+const {
+  US_EASTERN_TIME_ZONE,
+  convertLocalDateTimeToUnix,
+  formatUnixSecondsInZone,
+} = window.TimeZoneTools;
+const {
+  STEP_LABELS: CATALOG_STEP_LABELS,
+  normalizeMenu: normalizeCatalogMenu,
+  createDraft: createCatalogDraft,
+  categoryById: catalogCategoryById,
+  requestParams: catalogRequestParams,
+  needsExchange: catalogNeedsExchange,
+  exchangeOptionLabel,
+} = window.InstrumentCatalogTools;
 const US_CLASS_SUFFIXES = new Set(["A", "B", "C", "K"]);
 const US_LISTING_SUFFIXES = new Set([
   "AMEX",
@@ -36,6 +58,12 @@ const US_LISTING_SUFFIXES = new Set([
 ]);
 
 const FUNCTION_META = {
+  exchange_symbol_list: {
+    title: "Instrument Universe",
+    cn: "证券目录",
+    description: "Retrieve an official EODHD instrument directory by asset class and venue.",
+    requiresSelection: false,
+  },
   historical_eod: {
     title: "Historical Price",
     cn: "历史行情",
@@ -61,7 +89,7 @@ const FUNCTION_META = {
     requiresSelection: true,
   },
   instrument_search: {
-    title: "Instrument Lookup",
+    title: "Instrument Search",
     cn: "证券搜索",
     description: "Search active securities by ticker, name, or identifier.",
     requiresSelection: false,
@@ -121,6 +149,14 @@ async function loadUniverseMenu() {
   state.universeMenu = await response.json();
 }
 
+async function loadInstrumentCatalogMenu() {
+  const response = await fetch("/api/instrument-catalog/menu");
+  if (!response.ok) {
+    throw new Error(`Instrument catalog menu failed with ${response.status}`);
+  }
+  state.instrumentCatalogMenu = normalizeCatalogMenu(await response.json());
+}
+
 async function loadConfigStatus() {
   const response = await fetch("/api/config");
   const data = await response.json();
@@ -175,6 +211,11 @@ function createDraft(endpointId) {
     focusedSymbol: "",
     importText: "",
     importSummary: "",
+    intradayTime: endpointId === "intraday" ? createIntradayTimeDraft(params) : null,
+    catalog:
+      endpointId === "exchange_symbol_list"
+        ? createCatalogDraft(state.instrumentCatalogMenu, previous?.params || {})
+        : null,
     review: null,
   };
 }
@@ -254,8 +295,12 @@ function buildPayloadFromDraft(draft = state.draft) {
         : selectedProviderSymbols(draft).join(",");
   }
 
+  if (draft.endpoint === "exchange_symbol_list") {
+    Object.assign(params, catalogRequestParams(state.instrumentCatalogMenu, draft.catalog));
+  }
+
   return {
-    asset: "equity",
+    asset: draft.endpoint === "exchange_symbol_list" ? "instrument" : "equity",
     endpoint: draft.endpoint,
     fmt: draft.fmt,
     preview_limit: draft.previewLimit,
@@ -283,8 +328,14 @@ function renderWizard() {
   const spec = endpointSpec();
   const meta = functionMeta(state.draft.endpoint);
   document.getElementById("wizard_title").textContent = `${meta.title} / ${meta.cn}`;
+  const stepLabels =
+    state.draft.endpoint === "exchange_symbol_list"
+      ? CATALOG_STEP_LABELS
+      : ["1 Stocks / 选股", "2 Parameters / 参数", "3 Review / 确认"];
   document.querySelectorAll(".step-pill").forEach((button) => {
-    const active = Number.parseInt(button.dataset.step, 10) === state.draft.step;
+    const stepNumber = Number.parseInt(button.dataset.step, 10);
+    button.textContent = stepLabels[stepNumber - 1];
+    const active = stepNumber === state.draft.step;
     button.classList.toggle("active", active);
   });
   document.querySelectorAll("[data-step-panel]").forEach((panel) => {
@@ -307,6 +358,11 @@ function renderSelectionStep() {
   const container = document.getElementById("selection_step");
   const spec = endpointSpec();
   const meta = functionMeta(state.draft.endpoint);
+
+  if (state.draft.endpoint === "exchange_symbol_list") {
+    renderCatalogAssetStep(container);
+    return;
+  }
 
   if (!hasSymbolParam(spec)) {
     container.innerHTML = "";
@@ -430,6 +486,57 @@ function renderSelectionStep() {
   if (!state.draft.candidatesLoaded && state.universeMenu.db?.available) {
     loadCandidates({ silent: true }).catch((error) => setStatus(error.message, true));
   }
+}
+
+function renderCatalogAssetStep(container) {
+  const menu = state.instrumentCatalogMenu;
+  const db = menu.db || { available: false, message: "Database status is unavailable." };
+  container.innerHTML = "";
+
+  const intro = document.createElement("div");
+  intro.className = "catalog-intro";
+  intro.innerHTML =
+    "<strong>Instrument Universe / 证券目录</strong>" +
+    "<span>Choose an official asset category. Local Data Core supplies menu counts; Execute uses EODHD.</span>";
+  container.appendChild(intro);
+
+  const dbStatus = document.createElement("div");
+  dbStatus.className = `catalog-db-status${db.available ? "" : " unavailable"}`;
+  dbStatus.textContent = db.available
+    ? "Local instrument facets are ready. Opening this wizard has made no EODHD API call."
+    : `Local Data Core unavailable: ${db.message || "instrument facets could not be loaded"}. Fixed EODHD categories remain available.`;
+  container.appendChild(dbStatus);
+
+  const grid = document.createElement("div");
+  grid.className = "catalog-asset-grid";
+  (menu.categories || []).forEach((category) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `catalog-asset-card${state.draft.catalog.assetId === category.id ? " active" : ""}`;
+    const venue = category.fixed_exchange ? `EODHD ${category.fixed_exchange}` : "Exchange directory";
+    button.innerHTML = `
+      <strong>${escapeHtml(category.label)}</strong>
+      <span>${escapeHtml(category.cn || "")}</span>
+      <small>${escapeHtml(venue)} | ${Number.parseInt(category.local_count || 0, 10)} local</small>
+    `;
+    button.addEventListener("click", () => {
+      state.draft.catalog.assetId = category.id;
+      state.draft.catalog.typeFilter = category.default_type || "all";
+      if (category.id !== "fund") {
+        state.draft.catalog.fundVenue = "exchange";
+      }
+      renderCatalogAssetStep(container);
+    });
+    grid.appendChild(button);
+  });
+  container.appendChild(grid);
+
+  const constituentNote = document.createElement("div");
+  constituentNote.className = "notice warning-notice";
+  constituentNote.innerHTML = `<strong>Index boundary</strong><span>${escapeHtml(
+    menu.index_constituents?.reason || "Index constituents are not enabled."
+  )} INDX returns index instruments only.</span>`;
+  container.appendChild(constituentNote);
 }
 
 function bindSelectionControls() {
@@ -1168,6 +1275,10 @@ function sourceLabel(source) {
 }
 
 function renderParameterStep(spec) {
+  if (state.draft.endpoint === "exchange_symbol_list") {
+    renderCatalogParameterStep(spec);
+    return;
+  }
   const note = document.getElementById("wizard_endpoint_note");
   note.innerHTML = "";
   const title = document.createElement("strong");
@@ -1189,6 +1300,197 @@ function renderParameterStep(spec) {
   });
   bindParamInputs(spec);
   updateDateOffsetPanel();
+  updateIntradayTimePanel();
+}
+
+function renderCatalogParameterStep(spec) {
+  const menu = state.instrumentCatalogMenu;
+  const catalog = state.draft.catalog;
+  const category = catalogCategoryById(menu, catalog.assetId);
+  const note = document.getElementById("wizard_endpoint_note");
+  note.innerHTML = "";
+  const title = document.createElement("strong");
+  title.textContent = spec.path_pattern;
+  const description = document.createElement("span");
+  description.textContent = ` ${spec.description} ${spec.call_cost_note}`;
+  note.append(title, description);
+
+  document.getElementById("date_offset_panel").classList.add("hidden");
+  document.getElementById("intraday_time_panel").classList.add("hidden");
+  const params = document.getElementById("wizard_params");
+  params.innerHTML = "";
+  if (!category) {
+    params.innerHTML = '<div class="notice error-notice">Choose an asset category in Step 1.</div>';
+    return;
+  }
+
+  if (category.venue_mode === "fixed") {
+    catalog.typeFilter = "all";
+  } else if (category.id === "etf") {
+    catalog.typeFilter = "etf";
+  } else if (category.id === "fund") {
+    catalog.typeFilter = catalog.fundVenue === "eufund" ? "all" : "fund";
+  }
+
+  const panel = document.createElement("div");
+  panel.className = "catalog-option-panel";
+  const grid = document.createElement("div");
+  grid.className = "catalog-options-grid";
+  grid.appendChild(catalogReadOnlyField("Asset class", `${category.label} / ${category.cn || ""}`));
+
+  if (category.id === "fund") {
+    const fundField = document.createElement("div");
+    fundField.className = "field";
+    const fundLabel = document.createElement("label");
+    fundLabel.htmlFor = "catalog_fund_venue";
+    fundLabel.textContent = "Fund directory";
+    const fundSelect = document.createElement("select");
+    fundSelect.id = "catalog_fund_venue";
+    fundSelect.innerHTML =
+      '<option value="exchange">Exchange-listed funds</option><option value="eufund">Europe Funds (EUFUND)</option>';
+    fundSelect.value = catalog.fundVenue;
+    fundSelect.addEventListener("change", () => {
+      catalog.fundVenue = fundSelect.value;
+      renderCatalogParameterStep(spec);
+    });
+    fundField.append(fundLabel, fundSelect);
+    grid.appendChild(fundField);
+  }
+
+  if (catalogNeedsExchange(menu, catalog)) {
+    const exchangeField = document.createElement("div");
+    exchangeField.className = "field";
+    const exchangeLabel = document.createElement("label");
+    exchangeLabel.htmlFor = "catalog_exchange";
+    exchangeLabel.textContent = "Exchange *";
+    const exchangeSelect = document.createElement("select");
+    exchangeSelect.id = "catalog_exchange";
+    if (!(menu.exchanges || []).length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No validated exchanges loaded";
+      exchangeSelect.appendChild(option);
+      exchangeSelect.disabled = true;
+      catalog.exchange = "";
+    } else {
+      (menu.exchanges || []).forEach((row) => {
+        const option = document.createElement("option");
+        option.value = row.code;
+        option.textContent = exchangeOptionLabel(row);
+        exchangeSelect.appendChild(option);
+      });
+      if (!(menu.exchanges || []).some((row) => row.code === catalog.exchange)) {
+        catalog.exchange = menu.exchanges[0].code;
+      }
+      exchangeSelect.value = catalog.exchange;
+    }
+    exchangeSelect.addEventListener("change", () => {
+      catalog.exchange = exchangeSelect.value;
+    });
+    exchangeField.append(exchangeLabel, exchangeSelect);
+    grid.appendChild(exchangeField);
+  } else {
+    const fixedExchange = category.id === "fund" ? "EUFUND" : category.fixed_exchange;
+    grid.appendChild(catalogReadOnlyField("EODHD venue", fixedExchange));
+  }
+
+  if ((category.type_options || []).length > 1) {
+    const typeField = document.createElement("div");
+    typeField.className = "field";
+    const typeLabel = document.createElement("label");
+    typeLabel.htmlFor = "catalog_type_filter";
+    typeLabel.textContent = "Instrument type";
+    const typeSelect = document.createElement("select");
+    typeSelect.id = "catalog_type_filter";
+    category.type_options.forEach((typeValue) => {
+      const option = document.createElement("option");
+      option.value = typeValue;
+      option.textContent = typeValue === "all" ? "All supported types" : typeValue.replaceAll("_", " ");
+      typeSelect.appendChild(option);
+    });
+    typeSelect.value = catalog.typeFilter;
+    typeSelect.addEventListener("change", () => {
+      catalog.typeFilter = typeSelect.value;
+    });
+    typeField.append(typeLabel, typeSelect);
+    grid.appendChild(typeField);
+  } else {
+    grid.appendChild(catalogReadOnlyField("Instrument type", catalog.typeFilter));
+  }
+
+  const modeField = document.createElement("div");
+  modeField.className = "field";
+  const modeLabel = document.createElement("label");
+  modeLabel.htmlFor = "catalog_delisted";
+  modeLabel.textContent = "Listing mode";
+  const modeSelect = document.createElement("select");
+  modeSelect.id = "catalog_delisted";
+  modeSelect.innerHTML =
+    '<option value="active">Active (default)</option><option value="delisted">Delisted mode (delisted=1)</option>';
+  modeSelect.value = catalog.delisted ? "delisted" : "active";
+  modeSelect.addEventListener("change", () => {
+    catalog.delisted = modeSelect.value === "delisted";
+  });
+  modeField.append(modeLabel, modeSelect);
+  grid.appendChild(modeField);
+  panel.appendChild(grid);
+
+  if (catalogNeedsExchange(menu, catalog)) {
+    const loadRow = document.createElement("div");
+    loadRow.className = "catalog-load-row";
+    const loadButton = document.createElement("button");
+    loadButton.type = "button";
+    loadButton.id = "catalog_load_exchanges";
+    loadButton.className = "secondary-button";
+    loadButton.disabled = Boolean(menu.eodhd_cache?.loaded);
+    loadButton.textContent = menu.eodhd_cache?.loaded
+      ? "EODHD exchanges loaded"
+      : "Load EODHD exchanges (1 API call)";
+    loadButton.addEventListener("click", loadCatalogExchanges);
+    const loadStatus = document.createElement("div");
+    loadStatus.className = "help";
+    loadStatus.textContent = menu.eodhd_cache?.loaded
+      ? `${menu.eodhd_cache.row_count} EODHD exchanges cached for this server process.`
+      : "No exchange-directory API call has been made in this server process.";
+    loadRow.append(loadButton, loadStatus);
+    panel.appendChild(loadRow);
+  }
+
+  const help = document.createElement("div");
+  help.className = "help";
+  help.textContent = `${category.help_text} Execute uses EODHD; local DB counts are menu metadata only.`;
+  panel.appendChild(help);
+  params.appendChild(panel);
+}
+
+function catalogReadOnlyField(labelText, value) {
+  const field = document.createElement("div");
+  field.className = "field";
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  const output = document.createElement("div");
+  output.className = "read-only-value";
+  output.textContent = value || "Not available";
+  field.append(label, output);
+  return field;
+}
+
+async function loadCatalogExchanges() {
+  setStatus("Loading EODHD exchange directory (1 API call)");
+  try {
+    const previousExchange = state.draft.catalog.exchange;
+    const payload = await postJson("/api/instrument-catalog/exchanges", {});
+    state.instrumentCatalogMenu = normalizeCatalogMenu(payload);
+    if ((state.instrumentCatalogMenu.exchanges || []).some((row) => row.code === previousExchange)) {
+      state.draft.catalog.exchange = previousExchange;
+    } else {
+      state.draft.catalog.exchange = state.instrumentCatalogMenu.exchanges[0]?.code || "";
+    }
+    renderCatalogParameterStep(endpointSpec());
+    setStatus(payload.cache_hit ? "Using cached EODHD exchanges" : "EODHD exchanges loaded and cached");
+  } catch (error) {
+    setStatus(error.message, true);
+  }
 }
 
 function renderParamField(param) {
@@ -1266,12 +1568,14 @@ function bindParamInputs(spec) {
     if (!element) {
       return;
     }
+    const updateDraftValue = () => {
+      state.draft.params[param.name] = readParamValue(param);
+    };
     element.addEventListener("change", () => {
-      state.draft.params[param.name] = readParamValue(param);
+      updateDraftValue();
+      syncIntradayTimeFromTimestamp(param.name, state.draft.params[param.name]);
     });
-    element.addEventListener("input", () => {
-      state.draft.params[param.name] = readParamValue(param);
-    });
+    element.addEventListener("input", updateDraftValue);
   });
 }
 
@@ -1331,10 +1635,37 @@ function renderReviewContent() {
   const rows = [
     ["Function", `${meta.title} / ${meta.cn}`],
     ["Endpoint", state.draft.endpoint],
-    ["Symbols", hasSymbolParam(endpointSpec()) ? `${selectedCount} selected` : "Not required"],
-    ["Format", state.draft.fmt.toUpperCase()],
-    ["Preview rows", String(state.draft.previewLimit)],
   ];
+  if (state.draft.endpoint === "exchange_symbol_list") {
+    const category = catalogCategoryById(state.instrumentCatalogMenu, state.draft.catalog.assetId);
+    try {
+      const catalogParams = catalogRequestParams(state.instrumentCatalogMenu, state.draft.catalog);
+      rows.push(
+        ["Asset class", category ? `${category.label} / ${category.cn || ""}` : catalogParams.catalog_asset],
+        ["Venue", catalogParams.exchange],
+        ["Type", catalogParams.type_filter],
+        ["Listing mode", catalogParams.delisted ? "Delisted mode (delisted=1)" : "Active"]
+      );
+    } catch (error) {
+      rows.push(["Catalog selection", error.message]);
+    }
+  } else {
+    rows.push(["Symbols", hasSymbolParam(endpointSpec()) ? `${selectedCount} selected` : "Not required"]);
+  }
+  rows.push(["Format", state.draft.fmt.toUpperCase()], ["Preview rows", String(state.draft.previewLimit)]);
+  if (state.draft.endpoint === "intraday") {
+    rows.splice(
+      2,
+      0,
+      ["Time input", "America/New_York (EST/EDT automatic) -> UTC UNIX seconds"],
+      [
+        "Timestamp range",
+        `${timestampDisplayValue(state.draft.params.from_timestamp)} to ${timestampDisplayValue(
+          state.draft.params.to_timestamp
+        )}`,
+      ]
+    );
+  }
   if (validation?.cost) {
     rows.push(["Estimated API calls", `${validation.cost.estimated_api_calls} (${validation.cost.message})`]);
   } else {
@@ -1397,6 +1728,17 @@ function draftWarnings() {
   if (state.draft.endpoint === "bulk_last_day_eod") {
     warnings.push("Bulk EOD can consume 100 API calls per exchange/date, plus one extra call per ticker.");
   }
+  if (state.draft.endpoint === "intraday") {
+    warnings.push(
+      "Intraday helper input is U.S. Eastern Time (America/New_York); generated from/to values are UTC-based UNIX seconds."
+    );
+  }
+  if (state.draft.endpoint === "exchange_symbol_list") {
+    warnings.push("Preview rows only limits the table. Export CSV uses all rows from the same execution.");
+    if (state.draft.catalog.assetId === "index") {
+      warnings.push("INDX returns index instruments, not index constituent memberships.");
+    }
+  }
   return warnings;
 }
 
@@ -1411,7 +1753,7 @@ async function confirmDraft() {
     state.currentEndpoint = payload.endpoint;
     renderSnippets(data.snippets);
     renderConfirmedSummary();
-    if (state.rows.length) {
+    if (state.executionMeta) {
       state.resultStale = true;
       renderMeta(state.executionMeta);
     }
@@ -1450,6 +1792,22 @@ function renderConfirmedSummary() {
   }
   if (params.trade_date) {
     chips.push(`date: ${params.trade_date}`);
+  }
+  if (state.confirmedRequest.endpoint === "exchange_symbol_list") {
+    chips.push(`asset: ${params.catalog_asset}`);
+    chips.push(`venue: ${params.exchange}`);
+    chips.push(`type: ${params.type_filter}`);
+    chips.push(params.delisted ? "delisted mode" : "active instruments");
+  }
+  if (state.confirmedRequest.endpoint === "intraday") {
+    chips.push("time input: America/New_York (EST/EDT) -> UTC UNIX seconds");
+    if (hasTimestampValue(params.from_timestamp) || hasTimestampValue(params.to_timestamp)) {
+      chips.push(
+        `UNIX range: ${timestampDisplayValue(params.from_timestamp)} to ${timestampDisplayValue(
+          params.to_timestamp
+        )}`
+      );
+    }
   }
   if (state.currentCost) {
     chips.push(`${state.currentCost.estimated_api_calls} estimated call(s)`);
@@ -1494,15 +1852,17 @@ async function executeConfirmed() {
     }
     const data = await postJson("/api/execute", payload);
     const result = data.result;
-    state.rows = result.rows || [];
+    state.rows = result.preview_rows || result.rows || [];
     state.executionMeta = result;
+    state.executionExportId = result.export_id || "";
     state.resultStale = false;
-    renderTable(result.preview_rows || []);
+    renderTable(state.rows);
     renderMeta(result);
-    document.getElementById("export_csv").disabled = state.rows.length === 0;
+    document.getElementById("export_csv").disabled =
+      !state.executionExportId || Number.parseInt(result.export_row_count || 0, 10) === 0;
     setStatus("Executed");
   } catch (error) {
-    if (state.rows.length) {
+    if (state.executionMeta) {
       state.resultStale = true;
       renderMeta(state.executionMeta, `Execution failed: ${error.message}`);
     }
@@ -1560,11 +1920,12 @@ function renderMeta(result, prefix = "") {
   }
   const parts = [
     `${result.source_row_count} source rows`,
-    `${result.returned_row_count} returned`,
+    `${result.returned_row_count} previewed`,
+    `${result.export_row_count ?? result.source_row_count} export rows`,
     `${result.requests_made} request(s)`,
   ];
   if (result.truncated) {
-    parts.push("capped for browser export");
+    parts.push("table preview only; CSV is full result");
   }
   if (state.resultStale) {
     parts.unshift("Previous result");
@@ -1575,29 +1936,31 @@ function renderMeta(result, prefix = "") {
   meta.textContent = parts.join(" | ");
 }
 
-function exportCsv() {
-  const csvText = buildCsvText(state.rows);
-  if (!csvText) {
+async function exportCsv() {
+  if (!state.executionExportId || !state.executionMeta) {
     setStatus("No executed rows to export", true);
     return;
   }
-  downloadCsvText(csvText);
-  setStatus(`Exported ${state.rows.length} row(s)`);
-}
-
-function buildCsvText(rows) {
-  if (!rows.length) {
-    return "";
+  setStatus("Preparing full CSV export");
+  try {
+    const response = await fetch(`/api/exports/${encodeURIComponent(state.executionExportId)}.csv`);
+    if (!response.ok) {
+      let message = `Export failed with ${response.status}`;
+      try {
+        const payload = await response.json();
+        message = payload.error || message;
+      } catch (error) {
+        // Preserve the HTTP status message when the server did not return JSON.
+      }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const filename = exportFilenameFromHeaders(response.headers);
+    downloadBlob(blob, filename);
+    setStatus(`Exported ${state.executionMeta.export_row_count} full row(s)`);
+  } catch (error) {
+    setStatus(error.message, true);
   }
-  const columns = orderedResultColumns(rows);
-  if (!columns.length) {
-    return "";
-  }
-  const lines = [columns.map((column) => csvCell(displayColumnName(column))).join(",")];
-  rows.forEach((row) => {
-    lines.push(columns.map((column) => csvCell(row[column])).join(","));
-  });
-  return lines.join("\n");
 }
 
 function orderedResultColumns(rows) {
@@ -1620,11 +1983,10 @@ function compactSymbolList(symbols) {
   return `${visible.join(", ")}${suffix}`;
 }
 
-function downloadCsvText(csvText) {
-  const blob = new Blob([csvText], { type: "text/csv;charset=utf-8" });
+function downloadBlob(blob, filename) {
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `eodhd_export_${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.csv`;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   const objectUrl = link.href;
@@ -1634,10 +1996,10 @@ function downloadCsvText(csvText) {
   }, 1000);
 }
 
-function csvCell(value) {
-  const text = value === null || value === undefined ? "" : String(value);
-  const safeText = /^[=+\-@]/.test(text) ? `'${text}` : text;
-  return `"${safeText.replaceAll('"', '""')}"`;
+function exportFilenameFromHeaders(headers) {
+  const disposition = headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([A-Za-z0-9._-]+)"/);
+  return match?.[1] || `eodhd_export_${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.csv`;
 }
 
 function switchTab(nextTab) {
@@ -1705,6 +2067,157 @@ function openConfig() {
 function closeConfig() {
   configModal.classList.add("hidden");
   document.getElementById("token_input").value = "";
+}
+
+function createIntradayTimeDraft(params) {
+  return {
+    fromLocal: localInputFromUnixTimestamp(params.from_timestamp),
+    toLocal: localInputFromUnixTimestamp(params.to_timestamp),
+  };
+}
+
+function localInputFromUnixTimestamp(value) {
+  if (value === "" || value === null || value === undefined) {
+    return "";
+  }
+  try {
+    return formatUnixSecondsInZone(value, US_EASTERN_TIME_ZONE).localInput;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function updateIntradayTimePanel() {
+  const panel = document.getElementById("intraday_time_panel");
+  const isIntraday = state.draft?.endpoint === "intraday";
+  panel.classList.toggle("hidden", !isIntraday);
+  if (!isIntraday) {
+    return;
+  }
+
+  if (!state.draft.intradayTime) {
+    state.draft.intradayTime = createIntradayTimeDraft(state.draft.params);
+  }
+  document.getElementById("intraday_from_local").value = state.draft.intradayTime.fromLocal;
+  document.getElementById("intraday_to_local").value = state.draft.intradayTime.toLocal;
+  renderIntradayConversion("from", state.draft.intradayTime.fromLocal);
+  renderIntradayConversion("to", state.draft.intradayTime.toLocal);
+}
+
+function previewIntradayTime(side) {
+  if (state.draft?.endpoint !== "intraday" || !state.draft.intradayTime) {
+    return;
+  }
+  const input = document.getElementById(`intraday_${side}_local`);
+  state.draft.intradayTime[`${side}Local`] = input.value;
+  renderIntradayConversion(side, input.value);
+}
+
+function renderIntradayConversion(side, localValue) {
+  const output = document.getElementById(`intraday_${side}_result`);
+  output.classList.remove("error");
+  if (!localValue) {
+    output.textContent = "Enter through seconds, then apply.";
+    return null;
+  }
+  try {
+    const converted = convertLocalDateTimeToUnix(localValue, US_EASTERN_TIME_ZONE);
+    output.textContent = conversionSummary(converted);
+    return converted;
+  } catch (error) {
+    output.classList.add("error");
+    output.textContent = error.message;
+    return null;
+  }
+}
+
+function applyIntradayTimestamps() {
+  if (state.draft?.endpoint !== "intraday" || !state.draft.intradayTime) {
+    setStatus("Open the Intraday Parameters step first", true);
+    return;
+  }
+
+  const localValues = {
+    from: state.draft.intradayTime.fromLocal,
+    to: state.draft.intradayTime.toLocal,
+  };
+  if (!localValues.from && !localValues.to) {
+    setStatus("Enter at least one U.S. Eastern date/time", true);
+    return;
+  }
+
+  const converted = {};
+  for (const side of ["from", "to"]) {
+    if (!localValues[side]) {
+      converted[side] = null;
+      continue;
+    }
+    try {
+      converted[side] = convertLocalDateTimeToUnix(localValues[side], US_EASTERN_TIME_ZONE);
+    } catch (error) {
+      renderIntradayConversion(side, localValues[side]);
+      setStatus(error.message, true);
+      return;
+    }
+  }
+
+  if (converted.from && converted.to && converted.from.unixSeconds > converted.to.unixSeconds) {
+    setStatus("Intraday From time must be earlier than or equal to To time", true);
+    return;
+  }
+
+  for (const side of ["from", "to"]) {
+    const paramName = `${side}_timestamp`;
+    const value = converted[side]?.unixSeconds ?? "";
+    state.draft.params[paramName] = value;
+    const timestampField = document.getElementById(paramId(paramName));
+    if (timestampField) {
+      timestampField.value = value === "" ? "" : String(value);
+    }
+    renderIntradayConversion(side, localValues[side]);
+  }
+  setStatus("U.S. Eastern time converted to UTC-based UNIX seconds");
+}
+
+function syncIntradayTimeFromTimestamp(paramName, value) {
+  if (
+    state.draft?.endpoint !== "intraday" ||
+    !state.draft.intradayTime ||
+    !["from_timestamp", "to_timestamp"].includes(paramName)
+  ) {
+    return;
+  }
+  const side = paramName.startsWith("from_") ? "from" : "to";
+  const key = `${side}Local`;
+  const input = document.getElementById(`intraday_${side}_local`);
+  if (value === "" || value === null || value === undefined) {
+    state.draft.intradayTime[key] = "";
+    input.value = "";
+    renderIntradayConversion(side, "");
+    return;
+  }
+  try {
+    const converted = formatUnixSecondsInZone(value, US_EASTERN_TIME_ZONE);
+    state.draft.intradayTime[key] = converted.localInput;
+    input.value = converted.localInput;
+    renderIntradayConversion(side, converted.localInput);
+  } catch (error) {
+    const output = document.getElementById(`intraday_${side}_result`);
+    output.classList.add("error");
+    output.textContent = error.message;
+  }
+}
+
+function conversionSummary(converted) {
+  return `${converted.localLabel} -> ${converted.unixSeconds} -> ${converted.utcIso}`;
+}
+
+function hasTimestampValue(value) {
+  return value !== "" && value !== null && value !== undefined;
+}
+
+function timestampDisplayValue(value) {
+  return hasTimestampValue(value) ? String(value) : "...";
 }
 
 function updateDateOffsetPanel() {
@@ -1812,6 +2325,26 @@ function setActiveFunctionCard(endpointId) {
   document.querySelectorAll(".function-card").forEach((button) => {
     button.classList.toggle("active", button.dataset.endpoint === endpointId);
   });
+}
+
+function moveWizardTo(targetStep) {
+  const nextStep = Math.min(3, Math.max(1, targetStep));
+  if (
+    state.draft.endpoint === "exchange_symbol_list" &&
+    nextStep >= 3 &&
+    nextStep > state.draft.step
+  ) {
+    try {
+      catalogRequestParams(state.instrumentCatalogMenu, state.draft.catalog);
+    } catch (error) {
+      state.draft.step = 2;
+      renderWizard();
+      setStatus(error.message, true);
+      return;
+    }
+  }
+  state.draft.step = nextStep;
+  renderWizard();
 }
 
 function setStatus(message, isError = false) {
@@ -1928,15 +2461,16 @@ function bindEvents() {
   document.getElementById("delete_token").addEventListener("click", deleteToken);
   document.getElementById("wizard_close").addEventListener("click", closeRequestWizard);
   document.getElementById("wizard_back").addEventListener("click", () => {
-    state.draft.step = Math.max(1, state.draft.step - 1);
-    renderWizard();
+    moveWizardTo(state.draft.step - 1);
   });
   document.getElementById("wizard_next").addEventListener("click", () => {
-    state.draft.step = Math.min(3, state.draft.step + 1);
-    renderWizard();
+    moveWizardTo(state.draft.step + 1);
   });
   document.getElementById("wizard_confirm").addEventListener("click", confirmDraft);
   document.getElementById("apply_date_offset").addEventListener("click", applyDateOffset);
+  document.getElementById("apply_intraday_time").addEventListener("click", applyIntradayTimestamps);
+  document.getElementById("intraday_from_local").addEventListener("input", () => previewIntradayTime("from"));
+  document.getElementById("intraday_to_local").addEventListener("input", () => previewIntradayTime("to"));
   document.getElementById("ribbon_tdays").addEventListener("click", focusDateHelper);
   document.getElementById("program_language").addEventListener("change", applyProgramLanguageChoice);
   document.querySelectorAll(".function-card").forEach((button) => {
@@ -1944,8 +2478,7 @@ function bindEvents() {
   });
   document.querySelectorAll(".step-pill").forEach((button) => {
     button.addEventListener("click", () => {
-      state.draft.step = Number.parseInt(button.dataset.step, 10);
-      renderWizard();
+      moveWizardTo(Number.parseInt(button.dataset.step, 10));
     });
   });
   document.querySelectorAll(".tab").forEach((tab) => {
@@ -1956,7 +2489,7 @@ function bindEvents() {
 document.getElementById("date_anchor").value = todayIso();
 bindEvents();
 
-Promise.all([loadEndpoints(), loadUniverseMenu(), loadConfigStatus()])
+Promise.all([loadEndpoints(), loadUniverseMenu(), loadInstrumentCatalogMenu(), loadConfigStatus()])
   .then(() => {
     setActiveFunctionCard(state.currentEndpoint);
     renderConfirmedSummary();

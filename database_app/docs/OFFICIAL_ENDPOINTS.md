@@ -45,25 +45,27 @@ All implemented endpoints are listed in `src/eodhd_codegen_app/endpoints.py` and
 | `splits` | https://eodhd.com/financial-apis/api-splits-dividends | `/api/splits/{provider_symbol}` | Corporate actions docs list `EOD+Intraday - All World Extended`. | 1 API call per symbol request. |
 | `technical` | https://eodhd.com/financial-apis/technical-indicators-api | `/api/technical/{provider_symbol}` | Docs list `EOD+Intraday - All World Extended`. | 5 API calls per request. |
 | `screener` | https://eodhd.com/financial-apis/stock-market-screener-api | `/api/screener` | Docs list `EOD+Intraday - All World Extended`. | 5 API calls per request. |
-| `exchange_symbol_list` | https://eodhd.com/financial-apis/covered-tickers-eodhd | `/api/exchange-symbol-list/{exchange}` | Official supported-tickers docs define this endpoint and parameters; pricing feature list for `EOD+Intraday - All World Extended` includes Exchange Symbols List. | 1 API call; browser preview caps rows. |
+| `exchange_symbol_list` | https://eodhd.com/financial-apis/covered-tickers-eodhd | `/api/exchange-symbol-list/{exchange}` | Official supported-tickers docs define this endpoint and parameters; pricing feature list for `EOD+Intraday - All World Extended` includes Exchange Symbols List. | 1 API call; JSON/CSV supported; preview row count does not limit the same-execution CSV export. |
 | `instrument_search` | https://eodhd.com/financial-apis/search-api-for-stocks-etfs-mutual-funds | `/api/search/{query_string}` | Docs list `EOD+Intraday - All World Extended`. | 1 API call per request. |
 | `exchanges_list` | https://eodhd.com/financial-apis/exchanges-api-list-of-tickers-and-trading-hours | `/api/exchanges-list/` | Docs list `EOD+Intraday - All World Extended`. | 1 API call. |
 | `exchange_details` | https://eodhd.com/financial-apis/exchanges-api-trading-hours-and-stock-market-holidays | `/api/v2/exchange-details/{exchange}` | Docs list `EOD+Intraday - All World Extended`. | 5 API calls per request. |
 | `symbol_change_history` | https://eodhd.com/financial-apis/us-stock-symbol-rename-history-api | `/api/symbol-change-history` | Docs list `EOD+Intraday - All World Extended`. | 5 API calls per request. |
 | `id_mapping` | https://eodhd.com/financial-apis/id-mapping-api-cusip-isin-figi-lei-cik-%E2%86%94-symbol | `/api/id-mapping` | Docs list `EOD+Intraday - All World Extended`. | 1 API call per request. |
 
+Intraday `from` and `to` are UNIX timestamps in UTC according to the official Intraday documentation. The app's helper accepts U.S. Eastern `America/New_York` wall time only as a user-facing convenience, then converts it to the documented UTC-based UNIX seconds before generation or execution.
+
 ## App-Level Guardrails
 
 These constraints are intentionally stricter than the EODHD protocol because the app is an interactive research tool, not a bulk downloader:
 
 - Historical EOD: max 2000 symbols for code generation; max 3660 days.
-- Intraday: max 2000 symbols for code generation; interval choices `1m`, `5m`, `1h`; timestamp ranges capped according to official depth notes.
+- Intraday: max 2000 symbols for code generation; interval choices `1m`, `5m`, `1h`; timestamp ranges capped according to official depth notes; helper input is `America/New_York` with explicit DST-gap/overlap rejection.
 - Live OHLCV: max 2000 symbols for code generation, grouped into 20-symbol requests because EODHD recommends 15-20 tickers per request.
 - Bulk EOD: max 2000 symbols unless `Allow full exchange request` is checked.
 - Technical indicators: max 2000 symbols for code generation.
 - Screener: `filters` must be a JSON array; `limit` capped at 100.
 - Local preview execution: capped at 50 generated HTTP requests; larger lists should use generated code outside the preview UI.
-- Preview rows: capped at 500 in the table and 5000 returned rows for browser export.
+- Preview rows: default 50 and capped at 500 in the table. The same successful execution can be exported in full up to the app safety limits of 250,000 rows or 64 MiB; export does not call EODHD again.
 - JSON-only endpoints reject CSV before URL generation.
 
 ## Inventory-Only Endpoints
@@ -81,12 +83,29 @@ If the user's subscription later adds these products, they can be promoted from 
 
 ## Universe Sources In The App
 
-The stock workflow uses two official EODHD-supported sources:
+The stock-selection workflow uses local read-only `us_share.instrument` rows for fast candidate selection. Its historical EOD/Screener endpoint behavior remains based on the official sources below:
 
 - `exchange_symbol_list`: load tickers by exchange and type.
 - `screener`: load EODHD Filtered Pools such as US large cap or US mega cap.
 
 Filtered Pools are not official S&P 500, Dow Jones, or Nasdaq 100 constituents. The UI and docs keep those distinct because the official index-constituents product is not whitelisted for the user's 29.99 Extended plan in this app.
+
+The standalone Instrument Universe workflow uses `exchange_symbol_list` with these controlled mappings:
+
+| App category | EODHD venue/type | Evidence and boundary |
+| --- | --- | --- |
+| Stocks | selected ordinary exchange + `type=stock`, `common_stock`, or `preferred_stock` | Supported-tickers docs list ordinary exchange codes and these type filters. |
+| ETFs | selected ordinary exchange + `type=etf` | Supported-tickers docs list `etf`. |
+| Funds | selected ordinary exchange + `type=fund`, or `EUFUND` + no type filter | Supported-tickers docs list `fund` and the EUFUND virtual venue. |
+| Indices | `INDX` | EODHD's own Academy documents `/exchange-symbol-list/INDX` for the list of index instruments: https://eodhd.com/financial-academy/financial-faq/indices-constituents-financial-analysis. It separately states that constituents come from Fundamentals. |
+| Forex | `FOREX` | Supported-tickers docs list the FOREX virtual venue. |
+| Crypto | `CC` | Supported-tickers docs list the CC virtual venue. |
+| Government Bonds | `GBOND` | Supported-tickers docs list the GBOND virtual venue. |
+| Reference Rates / Benchmarks | `MONEY` | Supported-tickers docs list the MONEY virtual venue. |
+
+`GET /api/instrument-catalog/menu` reads local DB facets/counts and never calls EODHD. `POST /api/instrument-catalog/exchanges` explicitly calls `/exchanges-list/` once per server process and merges that directory with DB exchanges. The Exchanges API documents the global exchange directory and JSON/CSV availability: https://eodhd.com/financial-apis/exchanges-api-list-of-tickers-and-trading-hours.
+
+The official pages have used differing wording for `delisted=1` over time (including “includes delisted” and “returns delisted only”). The app therefore labels it `Delisted mode` and does not promise an active-plus-delisted union.
 
 ## Wind API Research Notes
 

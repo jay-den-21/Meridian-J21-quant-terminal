@@ -20,8 +20,9 @@ class FakeResponse:
     def __exit__(self, *args: object) -> None:
         return None
 
-    def read(self) -> bytes:
-        return self.body.encode("utf-8")
+    def read(self, size: int = -1) -> bytes:
+        body = self.body.encode("utf-8")
+        return body if size < 0 else body[:size]
 
 
 def test_client_executes_json_request_without_returning_token() -> None:
@@ -287,3 +288,117 @@ def test_client_rejects_large_per_symbol_execution_before_http() -> None:
         )
 
     assert requested_urls == []
+
+
+def test_client_keeps_full_rows_but_serializes_preview_only() -> None:
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        return FakeResponse(json.dumps([{"code": f"S{i}"} for i in range(5)]))
+
+    api_request = validate_payload(
+        {
+            "asset": "instrument",
+            "endpoint": "exchange_symbol_list",
+            "preview_limit": 2,
+            "params": {
+                "catalog_asset": "stock",
+                "exchange": "NASDAQ",
+                "type_filter": "stock",
+            },
+        }
+    )
+    result = EodhdHttpClient(transport=fake_transport).execute(api_request, api_key="secret-token")
+    public = result.as_dict(export_id="safe-export-id-value-123")
+
+    assert len(result.rows) == 5
+    assert result.preview_rows == [{"code": "S0"}, {"code": "S1"}]
+    assert public["rows"] == result.preview_rows
+    assert public["export_row_count"] == 5
+    assert public["truncated"] is True
+
+
+def test_client_rejects_full_export_row_overflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    import eodhd_codegen_app.client as client_module
+
+    monkeypatch.setattr(client_module, "MAX_EXPORT_ROWS", 2)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        return FakeResponse(json.dumps([{"code": "A"}, {"code": "B"}, {"code": "C"}]))
+
+    api_request = validate_payload(
+        {
+            "asset": "instrument",
+            "endpoint": "exchange_symbol_list",
+            "params": {
+                "catalog_asset": "index",
+                "exchange": "INDX",
+                "type_filter": "all",
+            },
+        }
+    )
+
+    with pytest.raises(EodhdExecutionError, match="full-export safety cap"):
+        EodhdHttpClient(transport=fake_transport).execute(api_request, api_key="secret-token")
+
+
+def test_client_rejects_oversized_response_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    import eodhd_codegen_app.client as client_module
+
+    monkeypatch.setattr(client_module, "MAX_RESPONSE_BYTES", 5)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        return FakeResponse("[]      ")
+
+    api_request = validate_payload({"endpoint": "exchanges_list"})
+
+    with pytest.raises(EodhdExecutionError, match="MiB safety cap"):
+        EodhdHttpClient(transport=fake_transport).execute(api_request, api_key="secret-token")
+
+
+def test_client_rejects_aggregate_response_body_overflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    import eodhd_codegen_app.client as client_module
+
+    monkeypatch.setattr(client_module, "MAX_RESPONSE_BYTES", 15)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        return FakeResponse('[{"v":1}]')
+
+    api_request = validate_payload(
+        {
+            "endpoint": "historical_eod",
+            "preview_limit": 2,
+            "params": {
+                "symbols": "AAPL.US,MSFT.US",
+                "date_from": "2024-01-01",
+                "date_to": "2024-01-31",
+            },
+        }
+    )
+
+    with pytest.raises(EodhdExecutionError, match="execution exceeds"):
+        EodhdHttpClient(transport=fake_transport).execute(api_request, api_key="secret-token")
+
+
+def test_client_redacts_token_echoes_from_success_rows() -> None:
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        return FakeResponse('[{"echo":"secret-token","secret-token":"value"}]')
+
+    result = EodhdHttpClient(transport=fake_transport).execute(
+        validate_payload({"endpoint": "exchanges_list"}),
+        api_key="secret-token",
+    )
+
+    assert "secret-token" not in repr(result.rows)
+    assert result.rows == [{"echo": "[REDACTED]", "[REDACTED]": "value"}]
+
+
+def test_client_redacts_url_encoded_token_echoes() -> None:
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        return FakeResponse('[{"echo":"secret%2Btoken"}]')
+
+    result = EodhdHttpClient(transport=fake_transport).execute(
+        validate_payload({"endpoint": "exchanges_list"}),
+        api_key="secret+token",
+    )
+
+    assert "secret%2Btoken" not in repr(result.rows)
+    assert result.rows == [{"echo": "[REDACTED]"}]

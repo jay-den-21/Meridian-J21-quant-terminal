@@ -26,6 +26,19 @@ Completed:
   - Exchange trading hours/holidays
   - US symbol change history
   - ID mapping
+- Added standalone Instrument Universe / 证券目录 workflow:
+  - New function card immediately left of Historical Price; the former Instrument Lookup card is now Instrument Search.
+  - Independent Asset Class, Venue & Options, and Review wizard steps.
+  - Controlled Stocks, ETFs, Funds, Indices, Forex, Crypto, Government Bonds, and Reference Rates / Benchmarks mappings.
+  - DB-only menu facets/counts on wizard open; no EODHD call until the user explicitly loads the exchange directory.
+  - Explicit `/exchanges-list/` load with server-side token, process cache, DB/EODHD deduplication, and DB venues first.
+  - Index instruments through `INDX`; index constituents remain disabled and require Fundamentals/Marketplace data.
+  - JSON/CSV generation and execution for `exchange_symbol_list` without a hard-coded JSON format.
+- Replaced preview-backed pseudo-full export with same-execution server export for all endpoints:
+  - `/api/execute` returns preview rows, full row count, and an opaque export id.
+  - The server retains the latest successful full result; `GET /api/exports/{execution_id}.csv` does not call EODHD again.
+  - Full responses above 250,000 rows or 64 MiB fail explicitly instead of truncating silently.
+  - CSV uses UTF-8 BOM, complete field union, quoting, and spreadsheet formula-injection mitigation.
 - Added inventory-only documentation for:
   - Fundamentals
   - Calendar/news
@@ -111,6 +124,12 @@ Completed:
   - Anchor date plus from/to offsets.
   - Business-day mode skips weekends; calendar-day mode uses raw calendar days.
   - Writes into endpoint date fields and leaves backend range validation intact.
+- Added Intraday second-precision time helper:
+  - Helper input is explicitly U.S. Eastern `America/New_York`, independent of the browser/computer timezone.
+  - Selected dates resolve EST/EDT automatically and write UTC-based UNIX seconds into `from_timestamp` / `to_timestamp`.
+  - Live preview shows Eastern wall time, UNIX seconds, and UTC ISO time before Apply.
+  - Nonexistent spring DST-gap and ambiguous fall DST-overlap times are rejected explicitly.
+  - Review and confirmed-request summaries repeat the timezone contract.
 - Added v0.5 single-workspace request wizard:
   - Removed the large Stocks two-column workspace and task tabs from the P0 screen.
   - Added bilingual function toolbar for Historical Price, Bulk Last-Day EOD, Latest Snapshot, Intraday Bars, and Instrument Lookup.
@@ -134,7 +153,7 @@ Completed:
   - DB table/query failures return explicit unavailable payloads instead of raw server errors.
   - Pool Browser guards against stale async load responses and hidden stale exchange state.
 - Fixed v0.6 CSV export issue:
-  - Browser CSV export now builds CSV text before download and delays object URL revocation to avoid 0-byte/empty downloads.
+  - Browser CSV export built CSV text before download and delayed object URL revocation to avoid 0-byte/empty downloads. Superseded by the server-backed same-execution export contract above.
   - Historical EOD CSV execution has explicit parser coverage.
   - CSV parser tolerates leading BOM/blank whitespace in upstream CSV bodies.
 - Fixed v0.6 symbol identity and import validation issues:
@@ -144,7 +163,7 @@ Completed:
 - Added v1.1 local Mac distribution artifacts:
   - `scripts/package_macos_app.sh` now builds `dist/EODHD Code Generator.app`, `dist/EODHD-Code-Generator-1.0.0.dmg`, `dist/EODHD-Code-Generator-1.0.0.pkg`, and `dist/SHA256SUMS.txt`.
   - The `.app` bundle now includes app source/docs plus pure Python dependencies used by the DB pool browser.
-  - The launcher still unsets `EODHD_API_KEY`, requires Python 3.11+, and uses the Login / Config token path for normal desktop startup.
+  - The launcher still unsets `EODHD_API_KEY`, requires Python 3.11+, searches common Homebrew/python.org runtime paths for Finder launches, and uses the Login / Config token path for normal desktop startup.
   - Added `site/index.html`, `site/styles.css`, `site/assets/app-preview.svg`, and `site/PLAN.md` as the CodeGen product/download page and rollout plan.
   - Packaging copies DMG/PKG/checksums into `site/downloads/` so the static download buttons point at real local artifacts after a build.
 - Added the v1.2 Jayden21 / Meridian static showcase as a three-view prototype; v1.3 supersedes its mixed-directory ownership.
@@ -170,14 +189,57 @@ Completed:
 Validation latest run:
 
 ```text
+Instrument Universe branch final validation (2026-07-13)
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src ../database_system_cli/.venv/bin/python -m pytest -q
+107 passed
+
+PYTHONDONTWRITEBYTECODE=1 ../database_system_cli/.venv/bin/ruff check --no-cache src tests
+All checks passed
+
+node --check instrument_catalog.js/timezone.js/app.js
+passed
+
+node --test tests/test_timezone_tools.js tests/test_instrument_catalog_tools.js
+11 passed
+
+PYTHONDONTWRITEBYTECODE=1 database_system_cli/.venv/bin/python -m pytest -q tests/test_site_boundaries.py
+5 passed
+
+ruff check --no-cache database_app/src database_app/tests tests/test_site_boundaries.py
+All checks passed
+
+PROJECT.html stdlib HTML parse
+passed
+
+git diff --check and untracked-file whitespace scan
+passed
+
+Browser smoke on http://127.0.0.1:8011/
+verified six-card order; Instrument Universe is first; Instrument Search remains; opening the wizard makes no EODHD call; local DB facets are explicit; Stocks defaults to type=stock; virtual INDX is excluded from ordinary exchanges; INDX review/generation remains fixed and constituents-disabled; desktop and 390px layouts have no horizontal overflow.
+
+Loopback HTTP smoke
+GET /api/instrument-catalog/menu returned DB status, eight controlled categories, no virtual venues in the ordinary exchange list, and an unloaded EODHD cache. POST /api/generate for Crypto + CSV returned /exchange-symbol-list/CC?fmt=csv and token-safe Python/curl/JavaScript without executing EODHD.
+
+Independent evaluator/fix loop
+fixed aggregate 64 MiB enforcement, raw/URL-encoded token redaction in successful rows, CSV header/leading-whitespace formula injection, strict stock type mapping, virtual-venue leakage, and invalid JSON booleans in generated local-proxy Python.
+
+No real Execute or explicit EODHD exchange-directory load was run during final verification; those paths are covered with controlled fake transports to avoid spending the user's API quota.
+
+Earlier release validation:
 ../database_system_cli/.venv/bin/python -m pytest -q
-80 passed
+81 passed
 
 ../database_system_cli/.venv/bin/python -m ruff check src tests
 All checks passed
 
 node --check src/eodhd_codegen_app/static/app.js
 passed
+
+node --check src/eodhd_codegen_app/static/timezone.js
+passed
+
+node --test tests/test_timezone_tools.js
+6 passed
 
 zsh -n scripts/package_macos_app.sh
 passed
@@ -200,8 +262,11 @@ GET /api/endpoints returned 200 and contained historical_eod; no __pycache__ dir
 site/index.html link audit
 10 local refs checked; missing=[].
 
-In-app browser smoke on http://127.0.0.1:8010/
+Earlier v0.5 in-app browser smoke on http://127.0.0.1:8010/
 status Ready; no task tabs or old Stocks workspace; function toolbar shows five P0 cards; DB-backed import resolves exact active DB symbols and rejects unknown/guessed aliases; Confirm generates /eod URLs; opening Intraday then closing does not change the confirmed Historical request; double-clicking an imported candidate toggles selection.
+
+Intraday helper smoke on a random loopback port
+America/New_York helper visible with second-level inputs; 2024-07-09 09:30:15 EDT converted to 1720531815 / 2024-07-09T13:30:15Z; confirmed AAPL URL contained from=1720531815 and to=1720555245; DST-gap input was rejected visibly; no browser console errors.
 
 Isolated no-token execute smoke on http://127.0.0.1:8011/
 with HOME=/private/tmp/fdp_no_token and no EODHD_API_KEY, POST /api/execute returns 502 {"error": "EODHD_API_KEY is not set"}.
@@ -228,8 +293,8 @@ Not started:
 
 - FastAPI + Jinja2 migration.
 - Excel `.xlsx` export.
-- Multi-asset support beyond reserved UI buttons.
-- Server-side streaming export for very large exchange-wide responses.
+- Multi-asset price/analytics functions beyond the Instrument Universe catalog.
+- Streaming or persistent export beyond the bounded latest-success in-process snapshot.
 - Shared package extraction with `database_system_cli`.
 - Real EODHD execution smoke with a user-provided `EODHD_API_KEY`.
 - Real official index constituents universe; current Index Assets are index instruments, not constituent memberships.

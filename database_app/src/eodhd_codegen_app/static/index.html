@@ -56,6 +56,10 @@
             <span>Click a function to configure</span>
           </div>
           <div class="function-toolbar" id="function_toolbar">
+            <button type="button" class="function-card" data-endpoint="exchange_symbol_list">
+              <strong>Instrument Universe</strong>
+              <span>证券目录</span>
+            </button>
             <button type="button" class="function-card active" data-endpoint="historical_eod">
               <strong>Historical Price</strong>
               <span>历史行情</span>
@@ -73,7 +77,7 @@
               <span>分钟线</span>
             </button>
             <button type="button" class="function-card" data-endpoint="instrument_search">
-              <strong>Instrument Lookup</strong>
+              <strong>Instrument Search</strong>
               <span>证券搜索</span>
             </button>
           </div>
@@ -181,6 +185,38 @@
             </div>
             <button type="button" id="apply_date_offset" class="secondary-button">Apply T offsets</button>
           </div>
+          <div class="intraday-time-panel hidden" id="intraday_time_panel">
+            <div class="offset-title">
+              <strong>Intraday time helper / 分钟线时间转换</strong>
+              <span>America/New_York (U.S. Eastern Time)</span>
+            </div>
+            <div class="notice warning-notice timezone-notice">
+              <strong>Timezone / 时区提示</strong>
+              <span>
+                Enter U.S. Eastern market time. EST/EDT is selected automatically for the date;
+                EODHD receives UTC-based UNIX timestamp seconds.
+              </span>
+            </div>
+            <div class="grid two">
+              <div class="field">
+                <label for="intraday_from_local">From - U.S. Eastern time</label>
+                <input id="intraday_from_local" type="datetime-local" step="1">
+                <output id="intraday_from_result" class="time-conversion-output">
+                  Enter through seconds, then apply.
+                </output>
+              </div>
+              <div class="field">
+                <label for="intraday_to_local">To - U.S. Eastern time</label>
+                <input id="intraday_to_local" type="datetime-local" step="1">
+                <output id="intraday_to_result" class="time-conversion-output">
+                  Enter through seconds, then apply.
+                </output>
+              </div>
+            </div>
+            <button type="button" id="apply_intraday_time" class="secondary-button">
+              Apply UNIX timestamps
+            </button>
+          </div>
           <div class="dynamic-grid" id="wizard_params"></div>
         </section>
 
@@ -191,7 +227,16 @@
               <select id="wizard_fmt"></select>
             </div>
             <div class="field">
-              <label for="wizard_preview_limit">Preview rows</label>
+              <div class="field-label-row">
+                <label for="wizard_preview_limit">Preview rows</label>
+                <span class="info-control">
+                  <button type="button" class="info-button" aria-label="Explain preview and CSV export">!</button>
+                  <span class="info-tooltip" role="tooltip">
+                    Preview rows only controls the on-screen table. Export CSV downloads all rows from the same
+                    executed request and does not spend another EODHD API call.
+                  </span>
+                </span>
+              </div>
               <input id="wizard_preview_limit" type="number" min="1" max="500" value="50">
             </div>
           </div>
@@ -224,6 +269,8 @@
       </div>
     </div>
 
+    <script src="/static/timezone.js"></script>
+    <script src="/static/instrument_catalog.js"></script>
     <script src="/static/app.js"></script>
   </body>
 </html>

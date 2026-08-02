@@ -168,6 +168,27 @@ EXCHANGE_PARAM = ParamSpec(
     placeholder="US",
 )
 
+CATALOG_ASSET_PARAM = ParamSpec(
+    name="catalog_asset",
+    label="Asset category",
+    kind="select",
+    required=True,
+    default="stock",
+    choices=labeled_choices(
+        (
+            ("stock", "Stocks"),
+            ("etf", "ETFs"),
+            ("fund", "Funds"),
+            ("index", "Indices"),
+            ("forex", "Forex"),
+            ("crypto", "Crypto"),
+            ("government_bond", "Government Bonds"),
+            ("benchmark", "Reference Rates / Benchmarks"),
+        )
+    ),
+    help_text="App-only category used to validate the official exchange/type mapping.",
+)
+
 SUPPORTED_ENDPOINTS: dict[str, EndpointSpec] = {
     "historical_eod": EndpointSpec(
         endpoint_id="historical_eod",
@@ -219,19 +240,21 @@ SUPPORTED_ENDPOINTS: dict[str, EndpointSpec] = {
             ),
             ParamSpec(
                 "from_timestamp",
-                "From UTC timestamp",
+                "From UNIX timestamp (UTC seconds)",
                 "number",
                 default="",
                 placeholder="1627896900",
                 min_value=0,
+                help_text="Use the America/New_York helper above or enter UTC-based UNIX seconds directly.",
             ),
             ParamSpec(
                 "to_timestamp",
-                "To UTC timestamp",
+                "To UNIX timestamp (UTC seconds)",
                 "number",
                 default="",
                 placeholder="1630575300",
                 min_value=0,
+                help_text="Use the America/New_York helper above or enter UTC-based UNIX seconds directly.",
             ),
             ParamSpec(
                 "split_datetime",
@@ -432,8 +455,9 @@ SUPPORTED_ENDPOINTS: dict[str, EndpointSpec] = {
             "for EOD+Intraday - All World Extended includes Exchange Symbols List."
         ),
         call_cost_note="1 API call; use preview limits for browser usability.",
-        formats=("json",),
+        formats=("json", "csv"),
         params=(
+            CATALOG_ASSET_PARAM,
             EXCHANGE_PARAM,
             ParamSpec(
                 "type_filter",
@@ -442,7 +466,13 @@ SUPPORTED_ENDPOINTS: dict[str, EndpointSpec] = {
                 default="all",
                 choices=choices("all", "common_stock", "preferred_stock", "stock", "etf", "fund"),
             ),
-            ParamSpec("delisted", "Include delisted", "checkbox", default=False),
+            ParamSpec(
+                "delisted",
+                "Delisted mode",
+                "checkbox",
+                default=False,
+                help_text="Sends delisted=1. EODHD docs do not consistently describe this as an active+delisted union.",
+            ),
         ),
     ),
     "instrument_search": EndpointSpec(
