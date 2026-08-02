@@ -21,6 +21,7 @@ test-results/
 *.egg-info/
 backups/
 database_system_cli/logs/
+playground/tushare2db_pro_v7_0_for_mac_on_python3_11_3/
 
 .trellis/.developer
 .trellis/.runtime/
