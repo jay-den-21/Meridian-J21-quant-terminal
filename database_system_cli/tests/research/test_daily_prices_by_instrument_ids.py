@@ -134,7 +134,10 @@ def test_instrument_id_query_reuses_asset_type_validation() -> None:
         date_to="2025-12-31",
     )
 
-    with pytest.raises(ValueError, match="stock, etf, index"):
+    with pytest.raises(
+        ValueError,
+        match="stock, etf, fund, index, forex, crypto",
+    ):
         reader.build_daily_prices_by_instrument_ids_query(
             instrument_ids=[1],
             asset_type="bond",
