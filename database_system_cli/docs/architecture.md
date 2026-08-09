@@ -41,7 +41,7 @@ flowchart LR
 | 质量与发布 | 解析、OHLCV、pending、reconcile、repair、quarantine、短事务 | `quality/`、`repair/`、`quarantine/`、`bulk_unmatched.py` |
 | 正式数据与研究访问 | 资产价格表、research reader、只读 Terminal | `us_share`、`research/`、`../research_terminal/` |
 
-关键边界：CLI、Menu、Python、未来 Skill/MCP 都只是入口 adapter；参数、预算、续跑、
+关键边界：CLI、Menu、Python、Skill/MCP 都只是入口 adapter；参数、预算、续跑、
 失败策略和结果必须收敛在同一个 `fdp.get_data` Job 中。数据源网络请求不能占用长事务；
 一个 work unit 的正式数据、待处理行、审计和 checkpoint 才在短事务内一起提交。
 
@@ -55,6 +55,7 @@ flowchart LR
 | --- | --- | --- |
 | `src/fdp/cli.py` | Typer command、参数解析、文本/JSON 输出 | provider/SQL 业务流程 |
 | `src/fdp/menu/` | 双语 TTY、确认页、等价命令、tqdm | API、预算、写库逻辑 |
+| `src/fdp/mcp/` | stdio MCP adapter、只读默认和写入双重授权 | 独立 ingest/SQL 业务流程 |
 | `src/fdp/get_data/` | Job、preflight、runtime、progress、result、registry | 原始 payload parser |
 | `src/fdp/get_data/corporate_actions/` | dividend/split universe、预算、并发、checkpoint/resume | provider payload mapping |
 | `src/fdp/sources/eodhd/` | HTTP、retry/rate limit、parser、provider ingest | UI 和 research query |
@@ -76,7 +77,7 @@ repo AGENTS.md -> database_system_cli/AGENTS.md -> nearest scoped AGENTS.md
 
 ```mermaid
 flowchart TB
-    A["CLI / 双语Menu / Python"] --> B["fdp.get_data Job"]
+    A["CLI / 双语Menu / Python / Skill-MCP"] --> B["fdp.get_data Job"]
     C["EODHD Client"] --> B
     B --> D["Parser + Identity Resolver"]
     D --> E["Pre-write Validation"]
@@ -92,11 +93,11 @@ flowchart TB
 `fdp/cli.py` 直接调用各自 service/read layer。`j21 menu` 当前只覆盖 registry 中的
 ingest/reconcile workflows。
 
-目标中的 Daily 自动续跑、`--new-run`、默认自动处理、Skill/MCP 和 1m Parquet 合约尚未在
-本节所述当前代码中实现；它们由 `08-10-resumable-bulk-daily-workflow` 与
-`08-10-intraday-1m-contract-validation` 两个独立任务交付。
+Daily 自动续跑、`--new-run`、默认自动处理、Skill 和 MCP 已由
+`08-10-resumable-bulk-daily-workflow` 交付。1m Parquet 合约仍属于独立的
+`08-10-intraday-1m-contract-validation` 任务；Massive 和 PIT 不在本轮范围。
 
-## 4. 三种入口如何汇合
+## 4. 四种入口如何汇合
 
 ### 4.1 Typer CLI
 
@@ -141,6 +142,16 @@ result = job.run(...)
 ```text
 CLI/menu/Python explicit value -> Job module default -> ValueError
 ```
+
+### 4.4 Skill 与 MCP
+
+`.agents/skills/j21-daily-ingest/` 是操作说明，不复制业务代码。`j21-mcp` 以 stdio 启动
+`fdp.mcp.server`，并把 `daily_preflight`、`daily_range_preflight`、`task_list`、
+`task_status`、`daily_execute` 和 `daily_range_execute` 映射回相同的 Job/TaskLedger。
+
+MCP 默认只读。执行工具必须同时满足服务端 `J21_MCP_ENABLE_WRITES=1` 和单次调用
+`confirm_execute=true`；它仍受 Daily task fingerprint、live lease、`max_api_calls`、
+自动续跑和质量流程约束。stdio stdout 只用于 MCP protocol，不能混入日志或进度文本。
 
 ## 5. Shared Job 内部流程
 
@@ -329,39 +340,62 @@ Arca 记录的 Sandy `2012-10-29/30`。这些日期写 source
 ```text
 j21 ingest daily
 -> BulkDailyJob.run()
--> load_bulk_daily_prices()
--> EodhdClient.get_bulk_eod(exchange, date, optional symbols)
--> load active/all temporal identity map for selected asset types
--> dated identifier history -> current provider symbol -> optional Type compatibility
--> batch natural-key arbitration: unique dated alias wins; lower alias is shadowed
-   -> matched: parse_daily_price_rows -> stock/ETF/Fund/index upsert
-   -> unmatched: bulk_unmatched_daily_price_observation upsert
--> finish task/API audit -> JobResult
+-> resolve explicit/latest ready New York trading date
+-> delegate the one-date scope to DailyRangeJob
+-> use the same task ledger, fetch/publish, reconcile, and validation contract
 ```
 
-单日流程使用一个 transaction。unmatched 不是垃圾，也不会被丢掉；它保留原始 payload、
-vendor type、价格字段、首次/最近观察时间和分类状态，等待后续 instrument 补全或人工判断。
+Stock/ETF 的 latest readiness 是纽约时间交易日 16:30；选择 Fund 时等待到下一日 06:30。
+单日和多日不再维护两套写库逻辑。unmatched 不是垃圾，也不会被丢掉；它保留原始 payload、
+vendor type、价格字段、首次/最近观察时间和分类状态，等待自动或人工后处理。
 
 ### 8.2 多日 Daily Range
 
 ```text
 j21 ingest daily-range --from ... --to ...
 -> DailyRangeJob.preflight()
--> verify complete market_calendar coverage
--> select is_trading_day=true dates
--> estimate API calls and storage
--> User API preflight + thread-safe weighted attempt ledger
--> dry-run by default
--> --execute --yes
--> one load_bulk_daily_prices transaction per trading date
--> optional bounded ThreadPoolExecutor
--> aggregate committed per-day results
+-> plan calendar/instrument prerequisites
+-> build immutable task fingerprint and per-date fingerprints
+-> estimate only unfinished provider work
+-> dry-run by default; --execute --yes enters execution
+-> exact completed task: return prior result with 0 provider calls
+-> exact incomplete task: acquire stale/available lease and resume
+-> overlapping task: reuse only verified dates
+-> optional --new-run: create fresh task, unless live equivalent lease exists
+-> refresh prerequisites + audited User API budget check
+-> for each remaining date:
+   claim work unit
+   fetch outside DB transaction
+   compare recent verified baseline; retry once when response is materially thin
+   short transaction: published rows + pending rows + API audit + checkpoint
+-> unless --manual: local classify -> route -> daily-price validate
+-> mark verified dates and finalize task
 ```
 
 `--instrument-status active` 适合每日增量；历史 backfill 使用 `all`。每次 HTTP attempt 在发出前
 扣除真实 weighted units，retry 同样计费，预算不足时不发送请求。并发只改变“多个交易日同时
-进行”，不改变单日事务、upsert 唯一键或 audit 语义。出现 fatal
-条件后取消尚未启动的 future，同时收集已经开始的 future，保证结果计数等于真实提交。
+进行”，不改变短事务、upsert 唯一键或 audit 语义。长时间 provider/reconcile 阶段由后台
+heartbeat 续租；同 scope 的 live lease 会拒绝第二个进程。出现 fatal 条件后取消尚未启动的
+future，同时收集已经开始的 future，保证结果计数等于真实提交。
+
+任务身份固定包含 source、market、exchange、日期范围、排序后的 asset types、local
+instrument status、symbol filter 和 data-contract version。workers、语言、输出格式、限速和
+本次预算不是身份字段。`held` 表示响应偏薄或需要复核：有效数据可发布，但该日期不成为可
+复用完成证据，后续同 scope 会再次尝试。逐日要求 source-row 闭合：
+`fetched = published + pending + rejected`；不闭合时该 work unit 保持失败/可续跑。
+
+```mermaid
+flowchart LR
+    Run["ingestion_task_run<br/>task fingerprint + lease"] --> Unit["ingestion_task_work_unit<br/>one trading date"]
+    Unit --> Fetch["HTTP fetch outside transaction"]
+    Fetch --> Tx["short publish transaction"]
+    Tx --> Price["asset price tables"]
+    Tx --> Pending["unmatched pending rows"]
+    Tx --> API["api_call_log"]
+    Tx --> Unit
+    Unit --> Reconcile["local classify / route / validate"]
+    Reconcile --> Verified["verified reusable evidence"]
+```
 
 ## 9. Bulk Unmatched Reconcile
 

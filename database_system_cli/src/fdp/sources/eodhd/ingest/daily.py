@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
 from fdp.assets import CANONICAL_ASSET_TYPES
-from fdp.sources.eodhd.client import EodhdClient
+from fdp.sources.eodhd.client import EodhdApiResponse, EodhdClient
 from fdp.sources.eodhd.identity import (
     DatedInstrumentIdentityResolver,
     InstrumentIdentityResolution,
@@ -259,7 +259,6 @@ def load_bulk_daily_prices(
     """
     normalized_exchange = exchange.strip().upper()
     normalized_asset_types = asset_types or ["stock", "etf", "fund"]
-    normalized_symbols = normalize_symbols(symbols or [])
     run_id = create_task_run(
         connection,
         market=market,
@@ -268,31 +267,111 @@ def load_bulk_daily_prices(
         date_from=trade_date,
         date_to=trade_date,
     )
+    response = fetch_bulk_daily_prices(
+        client,
+        exchange=normalized_exchange,
+        trade_date=trade_date,
+        symbols=symbols,
+    )
+    return _persist_bulk_daily_prices(
+        connection,
+        response,
+        run_id=run_id,
+        work_unit_id=None,
+        exchange=normalized_exchange,
+        trade_date=trade_date,
+        market=market,
+        asset_types=normalized_asset_types,
+        instrument_status=instrument_status,
+        identity_resolver=identity_resolver,
+        finalize_run=True,
+    )
 
-    response = client.get_bulk_eod(
+
+def fetch_bulk_daily_prices(
+    client: EodhdClient,
+    *,
+    exchange: str = "US",
+    trade_date: date | None = None,
+    symbols: list[str] | None = None,
+) -> EodhdApiResponse:
+    """Fetch one Bulk EOD response without opening or holding a DB transaction."""
+    normalized_exchange = exchange.strip().upper()
+    normalized_symbols = normalize_symbols(symbols or [])
+    return client.get_bulk_eod(
         normalized_exchange,
         trade_date=trade_date,
         symbols=normalized_symbols or None,
     )
+
+
+def publish_bulk_daily_prices(
+    connection: Connection,
+    response: EodhdApiResponse,
+    *,
+    run_id: int,
+    work_unit_id: int,
+    exchange: str = "US",
+    trade_date: date | None = None,
+    market: str = "US",
+    asset_types: list[str] | None = None,
+    instrument_status: InstrumentStatus = "active",
+    identity_resolver: DatedInstrumentIdentityResolver | None = None,
+) -> BulkDailyPriceLoadResult:
+    """Validate and publish one already-fetched Bulk EOD response atomically."""
+    return _persist_bulk_daily_prices(
+        connection,
+        response,
+        run_id=run_id,
+        work_unit_id=work_unit_id,
+        exchange=exchange,
+        trade_date=trade_date,
+        market=market,
+        asset_types=asset_types,
+        instrument_status=instrument_status,
+        identity_resolver=identity_resolver,
+        finalize_run=False,
+    )
+
+
+def _persist_bulk_daily_prices(
+    connection: Connection,
+    response: EodhdApiResponse,
+    *,
+    run_id: int,
+    work_unit_id: int | None,
+    exchange: str,
+    trade_date: date | None,
+    market: str,
+    asset_types: list[str] | None,
+    instrument_status: InstrumentStatus,
+    identity_resolver: DatedInstrumentIdentityResolver | None,
+    finalize_run: bool,
+) -> BulkDailyPriceLoadResult:
+    normalized_exchange = exchange.strip().upper()
+    normalized_asset_types = asset_types or ["stock", "etf", "fund"]
+
     record_api_call(
         connection,
         run_id=run_id,
         response=response,
+        work_unit_id=work_unit_id,
         date_from=trade_date,
         date_to=trade_date,
     )
     if not response.success:
-        finish_task_run(
-            connection,
-            run_id=run_id,
-            status="failed",
-            rows_fetched=0,
-            rows_inserted=0,
-            rows_updated=0,
-            rows_rejected=0,
-            api_calls=1,
-            error_message=response.error_message,
-        )
+        if finalize_run:
+            finish_task_run(
+                connection,
+                run_id=run_id,
+                status="failed",
+                rows_fetched=0,
+                rows_inserted=0,
+                rows_updated=0,
+                rows_rejected=0,
+                api_calls=1,
+                error_message=response.error_message,
+            )
         return BulkDailyPriceLoadResult(
             run_id=run_id,
             status="failed",
@@ -524,17 +603,18 @@ def load_bulk_daily_prices(
         rejected_rows=len(rejected_rows),
         unmatched_rows=unmatched_rows,
     )
-    finish_task_run(
-        connection,
-        run_id=run_id,
-        status=status,
-        rows_fetched=response.rows_returned,
-        rows_inserted=rows_inserted,
-        rows_updated=0,
-        rows_rejected=rows_rejected,
-        api_calls=1,
-        error_message=error_message,
-    )
+    if finalize_run:
+        finish_task_run(
+            connection,
+            run_id=run_id,
+            status=status,
+            rows_fetched=response.rows_returned,
+            rows_inserted=rows_inserted,
+            rows_updated=0,
+            rows_rejected=rows_rejected,
+            api_calls=1,
+            error_message=error_message,
+        )
 
     actual_trade_date = trade_date
     if actual_trade_date is None and len(observed_trade_dates) == 1:

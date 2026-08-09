@@ -131,14 +131,17 @@ Completed:
 - Alembic `0017_corporate_actions` adopts the existing canonical table without dropping legacy rows. The backup-gated `j21 migrate corporate-action-identities` cleanup moved 182 dated stock rows, merged 205 rows, removed 334,467 ETF/Fund-owned action rows, and now plans 0 additional moves/merges/deletes; 8 overlapping stock-owner rows remain explicitly audited.
 - Corporate Action runs `7030..7038` consumed exactly the authorized 99,800 API units. Final inactive-stock run `7038` completed 23,846 instruments using 47,694 units, fetched 352,772 rows, accepted 352,718, and retained 54 rejected rows as 30 identity ambiguities, 22 proven non-stock owners, and 2 invalid split ratios.
 - Final Corporate Action verification passed: 867,857 canonical stock rows (833,703 dividends and 34,154 splits), 0 non-stock rows, 0 natural-key duplicate groups, 0 invalid typed rows, and 0 logged run-7038 symbols outside the selected inactive-stock universe. The protected pre-cleanup backup is `/private/tmp/j21-corporate-action-stock-only-precleanup-20260718-012824.sql.gz` with SHA-256 `3799743d0355c1a9f4be9c1e7e4df73c78f30023cec3aa875e66c1b1148257ff`.
+- The five-layer CLI architecture is now the maintainer map: Source Intake -> Task Orchestration -> Security Alignment -> Quality/Publish -> Published Data/Research. Human docs use raw/pending/published/held/quarantined while legacy internal `canonical` names remain unchanged.
+- Durable Daily Bulk tasks are implemented with immutable task/date fingerprints, automatic exact-scope resume, verified overlap reuse, `--new-run`, live/stale lease protection, periodic heartbeat, per-date checkpoints, source-row closure, thin-response retry/held review, and zero-provider exact-complete results. Daily and daily-range remain dry-run by default and require `--execute --yes`.
+- Daily now automatically runs local classify/route/validate unless `--manual` is selected. The bilingual Menu exposes Continue/New and Auto/Manual with one final confirmation; `j21 task list/status/adopt-daily-legacy` provides operator inspection and strict old-run adoption.
+- `.agents/skills/j21-daily-ingest` and the stdio `j21-mcp` adapter reuse the same Job/TaskLedger. MCP has four read tools and two execute tools; writes require both `J21_MCP_ENABLE_WRITES=1` and `confirm_execute=true`. Full verification passes 359 tests, Ruff, compileall, Poetry metadata check, Alembic single head `0018_daily_task_ledger`, CLI help, and MCP initialize/list-tools smoke.
 
 In progress:
 
-- five-layer CLI architecture adoption, followed by the resumable automatic Daily workflow and the separate 1-minute Parquet contract; Massive and PIT are excluded from these tasks
+- the separate 1-minute EODHD Parquet storage contract and fixture-only validation; Massive and PIT remain excluded from this task
 
 ## Next Step
 
-- implement durable Daily work units, automatic resume/`--new-run`, default automatic processing with `--manual`, bilingual Menu task discovery, and the first J21 Skill/MCP surface
 - implement the separate 1-minute Parquet contract with fixture-only EODHD validation and zero real intraday API calls
 - add an explicit operator-controlled skip/manual-review path for future rename-history API outages
 - decide the next delisted-date source: EODHD Fundamentals/Corporate Actions, Nasdaq/FINRA lists, or manual enrichment, because the EODHD delisted symbol list does not expose delist dates

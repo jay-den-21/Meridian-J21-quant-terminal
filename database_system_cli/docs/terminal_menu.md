@@ -21,33 +21,41 @@ poetry run j21 ingest --help
 ```text
 选择语言
 -> 选择数据任务
+-> 黄色提示同范围未完成任务
+-> Continue续跑 / New新任务
 -> 填必需参数
 -> 可选高级参数
+-> Auto自动处理 / Manual人工后处理
 -> 查看 preflight
 -> 查看等价 CLI
--> 人工确认
+-> 一次最终确认（默认No）
 -> tqdm 进度
--> 结果摘要
+-> 自动classify / route / validate
+-> 彩色最终摘要
 ```
 
-Bulk `daily` / `daily-range` 成功后会继续进入 Guided Reconcile：
+Bulk `daily` / `daily-range` 默认使用完整自动流程：
 
 ```text
-Bulk完成
--> 彩色 staging 统计
--> 10秒核对，可按Enter跳过
--> 确认classify，默认No
--> J21短Logo
--> Rich Live真实批次进度
--> route dry-run
--> 确认route，默认No
--> 分批route
--> 自动daily-price质量检查
--> 最终报告和问题样例
+读取任务fingerprint
+-> 完全相同且未完成：自动续跑
+-> 完全相同且已完成：0次provider调用，返回原结果
+-> 重叠范围：只复用已验证日期
+-> 拉取剩余日期并逐日提交
+-> 本地classify
+-> route dry-run + route
+-> daily-price质量检查
+-> 最终报告和待处理样例
 ```
 
+任务页和确认页同时提供中文/英文标签。`Continue / 继续` 是默认行为；只有明确选择
+`New / 新任务` 才等价于 CLI 的 `--new-run`。`Auto / 自动处理` 是默认行为；选择
+`Manual / 人工后处理` 才等价于 `--manual`，跳过本次自动 classify/route/validate。
+
 统计、classify、route 和 status 只读取/修改本地 MySQL，EODHD API cost 固定为 0。
-两次写操作确认都默认 `No`；取消不会丢掉已经提交的 Bulk 数据或 reconcile checkpoint。
+用户只在 provider/write 执行前确认一次，默认 `No`；取消不会丢掉此前已经提交的日期或
+checkpoint。独立进入 Reference / reconcile 处理旧 backlog 时，仍按该工具自己的 preview
+和确认边界执行。
 
 确认默认是 `No`。在确认之前，Job 只读取本地配置和数据库做 preflight，不读取 API key、不调用 EODHD、不写业务表。
 
@@ -146,6 +154,17 @@ Route preview 不写数据。执行 route 后，Menu 自动运行现有 daily-pr
 全量 backlog 仍由用户本人在 Menu 中确认启动。小规模 smoke、dry-run 和只读验库可由
 agent 执行。
 
+### Daily 任务续跑
+
+Menu 顶部读取 `system.ingestion_task_run` 与逐日 work-unit ledger。发现未完成 Daily 任务时，
+以黄色提示显示 `run_id`、日期范围、phase、剩余日期和 lease 状态。相同 scope 选择 Continue
+后只处理 `pending/failed/cancelled/held` 日期；已验证日期不再消耗 API。若另一个进程仍持有
+有效 lease，Menu 必须拒绝 Continue/New，不允许同时写同一任务。
+
+`held` 表示供应商响应明显偏薄或需要人工复核：当次调用可以正常结束，但该日期不会成为
+可复用完成证据，下一次 Continue 仍会重新获取。按 `Ctrl+C` 时，已启动请求会被收集，已提交
+日期保留，未完成日期下次自动继续。
+
 ## Symbol 和日期规则
 
 Stock/ETF history 同时接受 canonical symbol 和 provider symbol：
@@ -183,8 +202,8 @@ src/fdp/get_data/historical/get_index_daily.py
 
 ## 进度与失败
 
-普通 ingest 菜单使用 `tqdm` 动态进度条；Guided Reconcile 使用 Rich Live 显示真实
-批次、速度、ETA、checkpoint 和计数。普通 CLI 使用稳定的逐行 progress event，便于日志
+普通 ingest 和 Daily 自动流程使用 `tqdm` 动态进度条；独立 Guided Reconcile 使用 Rich
+Live 显示真实批次、速度、ETA、checkpoint 和计数。普通 CLI 使用稳定的逐行 progress event，便于日志
 和 AI 读取。Rich reporter 在非 TTY 环境自动退回普通文本，不输出动画控制字符。
 
 Historical history 的每个 symbol 使用独立 transaction，但共享一个 aggregate `ingestion_task_run`：
@@ -204,6 +223,7 @@ Historical history 的每个 symbol 使用独立 transaction，但共享一个 a
 poetry run j21 ingest daily \
   --market US \
   --date 2026-07-07 \
+  --execute --yes \
   --output json
 ```
 

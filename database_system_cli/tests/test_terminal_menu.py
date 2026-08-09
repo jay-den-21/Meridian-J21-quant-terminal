@@ -452,3 +452,21 @@ def test_daily_range_menu_defaults_to_active_and_inactive() -> None:
         menu_module._run_daily_range(prompts, "en")
 
     assert prompts.status_default == "all"
+
+
+@pytest.mark.parametrize(
+    ("answers", "expected"),
+    [(["continue", "auto"], (False, False)), (["new", "manual"], (True, True))],
+)
+def test_daily_menu_exposes_resume_new_and_auto_manual_modes(
+    answers: list[str],
+    expected: tuple[bool, bool],
+) -> None:
+    class ModePrompts:
+        def __init__(self) -> None:
+            self.answers = iter(answers)
+
+        def select(self, message, choices, *, default=None):
+            return next(self.answers)
+
+    assert menu_module._daily_task_mode(ModePrompts(), "zh") == expected

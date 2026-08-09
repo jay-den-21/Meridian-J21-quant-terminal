@@ -48,6 +48,7 @@ def record_api_call(
     *,
     run_id: int,
     response,
+    work_unit_id: int | None = None,
     provider_symbol: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
@@ -61,6 +62,7 @@ def record_api_call(
     connection.execute(
         api_call_log.insert().values(
             run_id=run_id,
+            work_unit_id=work_unit_id,
             source="EODHD",
             endpoint=response.endpoint,
             provider_symbol=provider_symbol,

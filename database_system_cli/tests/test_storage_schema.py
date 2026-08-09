@@ -16,6 +16,7 @@ from fdp.storage import (
     index_daily_price,
     index_instrument,
     ingestion_task_run,
+    ingestion_task_work_unit,
     instrument,
     instrument_identifier_history,
     instrument_identity_resolution_audit,
@@ -194,6 +195,36 @@ def test_guided_reconcile_storage_tracks_checkpoint_and_identity_evidence() -> N
     assert "ix_bulk_unmatched_market_status_date_id" in {
         index.name for index in bulk_unmatched_daily_price_observation.indexes
     }
+
+
+def test_daily_task_storage_tracks_identity_lease_and_per_date_evidence() -> None:
+    assert {
+        "task_fingerprint",
+        "active_resume_key",
+        "workflow_version",
+        "supersedes_run_id",
+        "lease_owner",
+        "lease_expires_at",
+        "heartbeat_at",
+    }.issubset(ingestion_task_run.c.keys())
+    assert {
+        "work_unit_id",
+        "run_id",
+        "unit_key",
+        "unit_fingerprint",
+        "series_fingerprint",
+        "status",
+        "reused_from_work_unit_id",
+        "rows_fetched",
+        "rows_published",
+        "rows_pending",
+        "rows_rejected",
+        "api_calls",
+        "api_units",
+        "response_hash",
+        "quality_status",
+        "metrics_json",
+    }.issubset(ingestion_task_work_unit.c.keys())
 
 
 def test_lifecycle_event_records_instrument_state_changes() -> None:

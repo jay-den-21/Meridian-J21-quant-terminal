@@ -38,6 +38,7 @@ from fdp.get_data.corporate_actions import (
     DEFAULT_MAX_API_CALLS as CORPORATE_ACTION_DEFAULT_MAX_API_CALLS,
 )
 from fdp.get_data.registry import INGEST_JOB_DEFINITIONS
+from fdp.get_data.task_ledger import TaskLedger
 from fdp.menu.i18n import Language, tr
 from fdp.menu.progress import TqdmProgressReporter
 from fdp.menu.prompts import PromptSession
@@ -76,6 +77,7 @@ def run_terminal_menu(
 
     while True:
         typer.echo(f"\n{tr(language, 'main')}")
+        _show_unfinished_task_count(language)
         action = session.select(
             tr(language, "choose_main"),
             [(tr(language, "ingest"), "ingest"), (tr(language, "exit"), "exit")],
@@ -593,20 +595,29 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
         raise MenuCancelled
     exchange = "US"
     market = "US"
-    if _advanced(session, language):
+    advanced = _advanced(session, language)
+    if advanced:
         exchange = _text(session, tr(language, "exchange"), default="US")
         market = _text(session, tr(language, "market"), default="US")
+    new_run, manual = _daily_task_mode(session, language)
     job = BulkDailyJob()
     runtime = JobRuntime.from_env()
-    preflight = job.preflight(
+    dry_run = job.run(
+        execute=False,
+        manual=manual,
+        new_run=new_run,
         exchange=exchange,
         trade_date=trade_date,
         symbols=symbols,
         asset_types=asset_types,
         market=market,
         instrument_status=instrument_status,
+        runtime=runtime,
         override_source="menu",
     )
+    preflight = dry_run.preflight
+    if preflight is None:
+        raise RuntimeError("Daily dry-run did not return preflight details")
     args: list[Any] = ["ingest", "daily", "--exchange", exchange]
     if trade_date is not None:
         args.extend(["--date", trade_date])
@@ -622,6 +633,11 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
             instrument_status,
         ]
     )
+    if new_run:
+        args.append("--new-run")
+    if manual:
+        args.append("--manual")
+    args.extend(["--execute", "--yes"])
     command = _command(*args)
     result = _confirm_and_run(
         session,
@@ -635,26 +651,15 @@ def _run_bulk_daily(session: PromptSession, language: Language) -> None:
             asset_types=asset_types,
             market=market,
             instrument_status=instrument_status,
+            execute=True,
+            manual=manual,
+            new_run=new_run,
             runtime=runtime,
             reporter=reporter,
             override_source="menu",
-            preflight=preflight,
         ),
     )
-    actual_trade_date = result.metrics.get("provider_trade_date") or trade_date
-    if actual_trade_date is not None:
-        parsed_trade_date = (
-            actual_trade_date
-            if isinstance(actual_trade_date, date)
-            else date.fromisoformat(str(actual_trade_date))
-        )
-        _run_guided_reconcile(
-            session,
-            language,
-            date_from=parsed_trade_date,
-            date_to=parsed_trade_date,
-            runtime=runtime,
-        )
+    _show_daily_workflow_result(result, language)
 
 
 def _run_daily_range(session: PromptSession, language: Language) -> None:
@@ -668,6 +673,7 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
     )
     if instrument_status is None:
         raise MenuCancelled
+    new_run, manual = _daily_task_mode(session, language)
     runtime = JobRuntime.from_env()
     advanced = _advanced(session, language)
     exchange = "US"
@@ -716,6 +722,7 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
         workers=workers,
         max_requests_per_minute=max_rpm,
         max_api_calls=max_calls,
+        new_run=new_run,
         runtime=runtime,
         override_source="menu",
     )
@@ -745,29 +752,28 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
         parameters["max_api_calls"],
         "--max-estimated-gb",
         parameters["max_estimated_gb"],
-        "--execute",
-        "--yes",
     )
-    _confirm_and_run(
+    if new_run:
+        command = f"{command} --new-run"
+    if manual:
+        command = f"{command} --manual"
+    command = f"{command} --execute --yes"
+    result = _confirm_and_run(
         session,
         language,
         preflight,
         command,
         lambda reporter: job.run(
             execute=True,
+            manual=manual,
+            new_run=new_run,
             runtime=runtime,
             reporter=reporter,
             override_source="menu",
             preflight=preflight,
         ),
     )
-    _run_guided_reconcile(
-        session,
-        language,
-        date_from=date_from,
-        date_to=date_to,
-        runtime=runtime,
-    )
+    _show_daily_workflow_result(result, language)
 
 
 def _run_bulk_unmatched(session: PromptSession, language: Language) -> None:
@@ -1085,6 +1091,73 @@ def _show_result(result: JobResult, language: Language) -> None:
         )
     if len(result.failures) > 10:
         typer.echo(f"  ... {len(result.failures) - 10} more failure(s)")
+
+
+def _show_unfinished_task_count(language: Language) -> None:
+    """Show a visible resumable-task note without invoking any provider API."""
+    try:
+        runtime = JobRuntime.from_env()
+        with runtime.engine.connect() as connection:
+            count = TaskLedger().unfinished_task_count(connection)
+    except Exception as exc:
+        typer.secho(f"Task checkpoint unavailable: {exc}", fg=typer.colors.RED)
+        return
+    if count:
+        typer.secho(
+            tr(language, "unfinished_tasks").format(count=count),
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
+
+
+def _daily_task_mode(
+    session: PromptSession,
+    language: Language,
+) -> tuple[bool, bool]:
+    mode = session.select(
+        tr(language, "daily_task_mode"),
+        [
+            (tr(language, "daily_continue"), "continue"),
+            (tr(language, "daily_new"), "new"),
+        ],
+        default="continue",
+    )
+    if mode is None:
+        raise MenuCancelled
+    handling = session.select(
+        tr(language, "daily_handling"),
+        [
+            (tr(language, "daily_auto"), "auto"),
+            (tr(language, "daily_manual"), "manual"),
+        ],
+        default="auto",
+    )
+    if handling is None:
+        raise MenuCancelled
+    return mode == "new", handling == "manual"
+
+
+def _show_daily_workflow_result(result: JobResult, language: Language) -> None:
+    review_required = bool(result.metrics.get("review_required", False))
+    color = typer.colors.YELLOW if review_required else typer.colors.GREEN
+    label = "需要人工复核" if language == "zh" else "Review required"
+    if not review_required:
+        label = "自动流程已完成" if language == "zh" else "Automatic workflow complete"
+    typer.secho(
+        f"{label}: run_id={result.run_id or '-'} "
+        f"completed={result.work_units_completed}/{result.work_units_total}",
+        fg=color,
+        bold=True,
+    )
+    reconcile = result.metrics.get("reconcile")
+    if isinstance(reconcile, dict):
+        typer.echo(
+            "  "
+            f"classify={reconcile.get('classify_status', '-')} "
+            f"route={reconcile.get('route_status', '-')} "
+            f"validate={reconcile.get('validation_status', '-')} "
+            f"quality_issues={reconcile.get('quality_issue_count', 0)}"
+        )
 
 
 def _show_bulk_unmatched_rows(rows: list[dict[str, object]], *, limit: int) -> None:

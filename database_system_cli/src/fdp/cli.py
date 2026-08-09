@@ -36,6 +36,8 @@ from fdp.get_data.corporate_actions import (
     DEFAULT_MAX_API_CALLS as CORPORATE_ACTION_DEFAULT_MAX_API_CALLS,
 )
 from fdp.get_data.reporting import format_eodhd_event
+from fdp.get_data.task_ledger import TaskLedger
+from fdp.get_data.bulk.legacy_adoption import LegacyDailyAdoption
 from fdp.migrate import (
     copy_fund_daily_prices,
     finalize_fund_daily_prices,
@@ -93,6 +95,7 @@ repair_app = typer.Typer(help="Create and manage human-confirmed repair plans.")
 quarantine_app = typer.Typer(help="Create and manage human-confirmed quarantine plans.")
 research_app = typer.Typer(help="Read stored database data for research code.")
 migrate_app = typer.Typer(help="Run operator-controlled resumable data migrations.")
+task_app = typer.Typer(help="Inspect durable ingestion tasks and resume checkpoints.")
 bulk_unmatched_app = typer.Typer(help="Inspect and classify Bulk EOD unmatched rows.")
 reconcile_app = typer.Typer(help="Reconcile staged data into canonical database tables.")
 reconcile_bulk_unmatched_app = typer.Typer(
@@ -104,6 +107,7 @@ app.add_typer(repair_app, name="repair")
 app.add_typer(quarantine_app, name="quarantine")
 app.add_typer(research_app, name="research")
 app.add_typer(migrate_app, name="migrate")
+app.add_typer(task_app, name="task")
 app.add_typer(reconcile_app, name="reconcile")
 research_app.add_typer(bulk_unmatched_app, name="bulk-unmatched")
 reconcile_app.add_typer(reconcile_bulk_unmatched_app, name="bulk-unmatched")
@@ -172,6 +176,160 @@ def terminal_menu() -> None:
         run_terminal_menu()
     except RuntimeError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+
+@task_app.command("list")
+def list_ingestion_tasks(
+    status: str | None = typer.Option(None, "--status", help="Optional exact task status."),
+    limit: int = typer.Option(50, "--limit", help="Maximum newest tasks to return."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """List resumable ingestion tasks without calling a data provider."""
+    if limit <= 0:
+        raise typer.BadParameter("limit must be positive")
+    output_mode = _parse_output_format(output)
+    engine = create_engine(database_url_from_env())
+    with engine.connect() as connection:
+        rows = TaskLedger().list_tasks(connection, status=status, limit=limit)
+    if output_mode == "json":
+        typer.echo(json.dumps(rows, default=_json_cli_default, indent=2))
+        return
+    if not rows:
+        typer.echo("no durable ingestion tasks found")
+        return
+    for row in rows:
+        checkpoint = row["checkpoint"]
+        typer.echo(
+            f"run_id={row['run_id']} status={row['status']} "
+            f"range={row['date_from']}..{row['date_to']} "
+            f"phase={checkpoint.get('phase', '-')} "
+            f"review_required={str(checkpoint.get('review_required', False)).lower()} "
+            f"lease_expires_at={row['lease_expires_at'] or '-'}"
+        )
+
+
+@task_app.command("status")
+def ingestion_task_status(
+    run_id: int = typer.Option(..., "--run-id", help="Durable ingestion task run ID."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Show one task, its immutable scope, lease, and work-unit counts."""
+    if run_id <= 0:
+        raise typer.BadParameter("run-id must be positive")
+    output_mode = _parse_output_format(output)
+    engine = create_engine(database_url_from_env())
+    try:
+        with engine.connect() as connection:
+            payload = TaskLedger().task_status(connection, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run-id") from exc
+    if output_mode == "json":
+        typer.echo(json.dumps(payload, default=_json_cli_default, indent=2))
+        return
+    checkpoint = payload["checkpoint"]
+    typer.echo(
+        f"run_id={payload['run_id']} status={payload['status']} "
+        f"range={payload['date_from']}..{payload['date_to']} "
+        f"phase={checkpoint.get('phase', '-')}"
+    )
+    typer.echo(
+        f"work_units={payload['work_unit_status_counts']} "
+        f"rows_fetched={payload['rows_fetched']} "
+        f"rows_published={payload['rows_published']} "
+        f"rows_pending={payload['rows_pending']} "
+        f"rows_rejected={payload['rows_rejected']} "
+        f"api_calls={payload['api_calls']} api_units={payload['api_units']}"
+    )
+    typer.echo(
+        f"review_required={str(checkpoint.get('review_required', False)).lower()} "
+        f"lease_owner={payload['lease_owner'] or '-'} "
+        f"lease_expires_at={payload['lease_expires_at'] or '-'}"
+    )
+
+
+@task_app.command("adopt-daily-legacy")
+def adopt_legacy_daily_tasks(
+    phase: str = typer.Option(..., "--phase", help="Phase: plan, verify, or adopt."),
+    date_from: str = typer.Option(..., "--from", help="Start trade date YYYY-MM-DD."),
+    date_to: str = typer.Option(..., "--to", help="End trade date YYYY-MM-DD."),
+    asset_types: str = typer.Option(
+        "stock,etf,fund",
+        "--asset-types",
+        help="Exact asset-table scope used by the legacy run.",
+    ),
+    instrument_status: str = typer.Option(
+        "all",
+        "--instrument-status",
+        help="Scope to record after evidence verification: active or all.",
+    ),
+    market: str = typer.Option("US", "--market"),
+    exchange: str = typer.Option("US", "--exchange"),
+    limit: int | None = typer.Option(None, "--limit"),
+    execute: bool = typer.Option(False, "--execute", help="Required for adopt phase."),
+    yes: bool = typer.Option(False, "--yes", help="Required for adopt phase."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Strictly verify and adopt evidence-complete pre-ledger Daily runs."""
+    normalized_phase = phase.strip().lower()
+    if normalized_phase not in {"plan", "verify", "adopt"}:
+        raise typer.BadParameter("phase must be plan, verify, or adopt")
+    if normalized_phase == "adopt" and not (execute and yes):
+        raise typer.BadParameter("adopt phase requires --execute --yes")
+    if limit is not None and limit <= 0:
+        raise typer.BadParameter("limit must be positive")
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    parsed_assets = _parse_asset_types(asset_types, supported=BULK_ASSET_TYPES)
+    normalized_status = instrument_status.strip().lower()
+    if normalized_status not in {"active", "all"}:
+        raise typer.BadParameter("instrument-status must be active or all")
+    output_mode = _parse_output_format(output)
+    engine = create_engine(database_url_from_env())
+    adoption = LegacyDailyAdoption()
+    with engine.begin() if normalized_phase == "adopt" else engine.connect() as connection:
+        if normalized_phase == "adopt":
+            result = adoption.adopt(
+                connection,
+                date_from=parsed_from,
+                date_to=parsed_to,
+                market=market,
+                exchange=exchange,
+                asset_types=parsed_assets,
+                instrument_status=normalized_status,
+                limit=limit,
+            )
+            payload = result.to_dict()
+        else:
+            rows = adoption.inspect(
+                connection,
+                date_from=parsed_from,
+                date_to=parsed_to,
+                market=market,
+                exchange=exchange,
+                asset_types=parsed_assets,
+                instrument_status=normalized_status,
+                limit=limit,
+            )
+            payload = {
+                "phase": normalized_phase,
+                "candidates": len(rows),
+                "verified": sum(row.verified for row in rows),
+                "rejected": sum(not row.verified for row in rows),
+                "rows": [row.to_dict() for row in rows],
+            }
+    if output_mode == "json":
+        typer.echo(json.dumps(payload, default=_json_cli_default, indent=2))
+        return
+    typer.echo(
+        f"legacy daily {normalized_phase} candidates={payload['candidates']} "
+        f"verified={payload['verified']} rejected={payload['rejected']} "
+        f"adopted={payload.get('adopted', 0)}"
+    )
+    for row in payload["rows"][:20]:
+        typer.echo(
+            f"  run_id={row['run_id']} date={row['trade_date']} "
+            f"verified={str(row['verified']).lower()} "
+            f"reasons={','.join(row['reasons']) or '-'}"
+        )
 
 
 @validate_app.command("docs-staleness")
@@ -911,12 +1069,49 @@ def ingest_daily(
             "this is not an EODHD Bulk response field."
         ),
     ),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--execute",
+        help="Estimate by default; use --execute --yes to fetch and publish.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Required with --execute."),
+    manual: bool = typer.Option(
+        False,
+        "--manual",
+        help="Skip automatic classify/route/quality handling after the Bulk fetch.",
+    ),
+    new_run: bool = typer.Option(
+        False,
+        "--new-run",
+        help="Force a fresh task and ignore reusable completed work units.",
+    ),
+    max_requests_per_minute: int | None = typer.Option(
+        None,
+        "--max-requests-per-minute",
+        help="Advanced EODHD request-rate ceiling; omitted uses project config.",
+    ),
+    max_api_calls: int | None = typer.Option(
+        None,
+        "--max-api-calls",
+        help="Advanced hard API-unit cap for this invocation, including retries.",
+    ),
     source: str = typer.Option("eodhd", "--source", help="Source provider."),
     output: str = typer.Option("text", "--output", help="Output format: text or json."),
 ) -> None:
     """Load one Bulk EOD date and match it against the selected local instrument scope."""
     if source.lower() != "eodhd":
         raise typer.BadParameter("only eodhd is supported")
+    if not dry_run and not yes:
+        raise typer.BadParameter("--execute requires --yes")
+    if max_requests_per_minute is not None and not (
+        0 < max_requests_per_minute <= EODHD_OFFICIAL_MAX_REQUESTS_PER_MINUTE
+    ):
+        raise typer.BadParameter(
+            "max-requests-per-minute must be between 1 and "
+            f"{EODHD_OFFICIAL_MAX_REQUESTS_PER_MINUTE}"
+        )
+    if max_api_calls is not None and max_api_calls <= 0:
+        raise typer.BadParameter("max-api-calls must be positive")
 
     parsed_date = _parse_optional_date(trade_date, field_name="date")
     parsed_symbols = None
@@ -938,6 +1133,11 @@ def ingest_daily(
             market=market,
             asset_types=parsed_asset_types,
             instrument_status=parsed_instrument_status,
+            execute=not dry_run,
+            manual=manual,
+            new_run=new_run,
+            max_requests_per_minute=max_requests_per_minute,
+            max_api_calls=max_api_calls,
             reporter=CliProgressReporter(stderr=output_mode == "json"),
             override_source="cli",
         )
@@ -946,13 +1146,30 @@ def ingest_daily(
     if _emit_job_json(result, output_mode):
         return
 
+    if result.status == "dry_run":
+        preflight = result.preflight
+        if preflight is None:
+            raise RuntimeError("daily result is missing preflight details")
+        typer.echo(
+            "daily bulk estimate "
+            f"date={result.parameters['trade_date']} "
+            f"estimated_rows={preflight.estimated_rows} "
+            f"estimated_api_calls={preflight.estimated_api_calls}"
+        )
+        for warning in preflight.warnings:
+            typer.echo(f"warning: {warning}")
+        typer.echo("dry-run only; rerun with --execute --yes to ingest")
+        return
+
     typer.echo(
         "daily bulk ingest "
         f"run_id={result.run_id} status={result.status} exchange={result.parameters['exchange']} "
         f"date={result.parameters['trade_date'] or 'last-trading-day'} "
         f"fetched={result.rows_fetched} "
         f"matched={result.rows_matched} inserted={result.rows_inserted} "
-        f"rejected={result.rows_rejected}"
+        f"rejected={result.rows_rejected} "
+        f"review_required={str(result.metrics.get('review_required', False)).lower()} "
+        f"resumed={str(result.metrics.get('resumed', False)).lower()}"
     )
 
 
@@ -994,6 +1211,16 @@ def ingest_daily_range(
         False,
         "--yes",
         help="Required with --execute to confirm a multi-day bulk ingest.",
+    ),
+    manual: bool = typer.Option(
+        False,
+        "--manual",
+        help="Skip automatic classify/route/quality handling after Bulk fetches.",
+    ),
+    new_run: bool = typer.Option(
+        False,
+        "--new-run",
+        help="Force a fresh task and ignore reusable completed work units.",
     ),
     parallel: bool | None = typer.Option(
         None,
@@ -1053,6 +1280,8 @@ def ingest_daily_range(
     try:
         result = DailyRangeJob().run(
             execute=not dry_run,
+            manual=manual,
+            new_run=new_run,
             date_from=parsed_from,
             date_to=parsed_to,
             exchange=exchange,
@@ -1087,7 +1316,8 @@ def ingest_daily_range(
         f"max_api_calls={parameters['max_api_calls']} "
         f"parallel={str(parameters['parallel']).lower()} workers={parameters['workers']} "
         f"max_requests_per_minute={parameters['max_requests_per_minute']}"
-        f" instrument_status={parameters['instrument_status']}"
+        f" instrument_status={parameters['instrument_status']} "
+        f"manual={str(manual).lower()} new_run={str(new_run).lower()}"
     )
     if result.status == "dry_run":
         typer.echo("dry-run only; rerun with --execute --yes to ingest this range")
@@ -1103,6 +1333,7 @@ def ingest_daily_range(
         f"api_units_consumed={result.metrics.get('api_units_consumed', 0)} "
         f"api_units_remaining={result.metrics.get('api_units_remaining', 0)} "
         f"completed_days={result.work_units_completed} failed_days={result.work_units_failed}"
+        f" review_required={str(result.metrics.get('review_required', False)).lower()}"
     )
 
 

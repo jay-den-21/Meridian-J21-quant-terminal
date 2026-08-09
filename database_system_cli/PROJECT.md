@@ -588,6 +588,13 @@ error_message
 config_hash
 code_version
 checkpoint_json
+task_fingerprint
+active_resume_key
+workflow_version
+supersedes_run_id
+lease_owner
+lease_expires_at
+heartbeat_at
 ```
 
 `status` 建议值：
@@ -604,6 +611,11 @@ cancelled
 `checkpoint_json` 只用于可恢复 Job。Guided Bulk reconcile 保存 phase、日期/market/status
 scope、classify keyset cursor、route 计数、quality run IDs 和累计结果。每一批业务数据修改与
 checkpoint 使用同一 transaction；失败批次不得推进内存或数据库 cursor。
+
+Daily 使用 `system.ingestion_task_work_unit` 保存每个交易日的 unit/series fingerprint、状态、
+复用来源、response hash、published/pending/rejected 计数、API calls/units、质量状态和时间戳。
+一个 active resume key 只允许一个 lease owner；长时间 HTTP/reconcile 阶段持续 heartbeat。
+`api_call_log.work_unit_id` 把每次请求证据定位到具体交易日。
 
 ### 5.8 `system.api_call_log`
 
@@ -719,12 +731,13 @@ backfill_missing_daily_price
 
 ### 6.0 Shared ingest orchestration
 
-人类菜单和确定性 CLI 是两个输入界面，不是两套 ingestion 实现。
+人类菜单、确定性 CLI、Python 和 MCP 是输入界面，不是多套 ingestion 实现。
 
 ```text
-Typer CLI -----\
-                -> fdp.get_data Job -> EODHD source -> validation -> storage
-Terminal menu -/
+Typer CLI --------\
+Terminal menu -----+-> fdp.get_data Job -> EODHD source -> validation -> storage
+Python caller -----+
+Skill / MCP -------/
 ```
 
 每个 Job 必须提供同一组稳定能力：
@@ -854,7 +867,21 @@ unmatched rows upsert into system.bulk_unmatched_daily_price_observation
 write task state and api call summary
 ```
 
-多日批量补数使用 `j21 ingest daily-range`。该命令默认只做 dry-run 估算，必须显式传入 `--execute --yes` 才会写库。写库时按交易日拆分，每个交易日独立 transaction；开启 `--parallel` 后只是并行处理多个交易日，不改变表结构和 upsert 语义。
+单日 `daily` 和多日 `daily-range` 共用同一可恢复工作流。命令默认只做 dry-run，必须显式
+传入 `--execute --yes` 才会调用 provider 和写库。不可变任务范围由 source、market、
+exchange、日期范围、排序后的 asset types、local instrument status、symbol filter 和
+data-contract version 构成；workers、语言、输出格式、限速和本次预算不参与 identity。
+
+同 scope 未完成任务默认自动续跑；完全相同且已完成的任务返回原结果且 provider cost 为 0；
+重叠范围只复用已经通过质量验证的日期。`--new-run` 强制新建并 supersede 旧任务，但不能越过
+live lease。每个交易日拥有独立 work unit：HTTP fetch 在事务外运行，正式价格、pending rows、
+API audit 和 checkpoint 在同一个短事务提交。开启 `--parallel` 只并行日期，不改变 upsert 和
+审计语义；后台 heartbeat 防止长请求被误判为 stale。
+
+默认完成 fetch 后自动执行本地 classify、route 和 daily-price validate；`--manual` 才跳过
+自动后处理。响应相对最近已验证日期显著偏薄时只额外请求一次，随后标记 `held/review_required`；
+有效行可以发布，但该日期不能被未来任务复用。每个日期必须满足
+`fetched = published + pending + rejected`，否则保持失败并可续跑。
 
 EODHD 限额规则：
 
@@ -864,6 +891,9 @@ EODHD 限额规则：
 - Bulk EOD 全 exchange 一次请求按 100 API calls 估算。
 - User API preflight 核对 remote allowance；thread-safe ledger 在每次 attempt 前扣 weighted units，retry 也计费。
 - 超过 `--max-api-calls` 或 `--max-estimated-gb` 时，命令必须在调用 EODHD 之前拒绝执行。
+- preflight 只估算尚未完成的日期，并包含 prerequisite refresh、User API 检查和 retry hard cap。
+- active instrument metadata freshness 为 1 天，inactive 为 7 天；calendar 缺口先刷新。
+- latest stock/ETF 在纽约时间 16:30 可拉，选择 Fund 时等待下一日 06:30。
 
 截至 `2026-07-12`，近期因子研究优先窗口 `2022-08-08..2026-07-06` 已完成
 `instrument-status=all` Bulk recovery：980/980 个交易日、48,191,634 条 source rows、
@@ -988,16 +1018,18 @@ route；`current_active` 是当前状态，`price_observed` 不是 PIT universe�
 
 命令入口建议为 `j21`。`fdp` 暂时保留为兼容 alias，避免旧笔记和脚本立刻失效。
 
-数据拉取有两个等价入口：
+数据拉取有四个共享 Job 入口：
 
 - `poetry run j21 ingest ...`：参数稳定、适合 AI/自动化，可用 `--output json` 获取机器可读结果。
 - `poetry run j21 reconcile bulk-unmatched ...`：本地 staging 后处理，支持 summary/list/classify/route/status，API cost 为 0。
 - `poetry run j21 menu`：中英文方向键菜单，显示 Job module、参数来源、目标表、预算和等价 CLI，人工确认后才执行并显示进度条。
+- Python caller：直接实例化相同 Job，适合研究脚本和受控 automation。
+- `poetry run j21-mcp`：stdio MCP；默认只读，写工具要求 `J21_MCP_ENABLE_WRITES=1` 和单次 `confirm_execute=true`。
 
-`j21 menu` 直接调用 `fdp.get_data` Job，不会通过 subprocess 调用 CLI。Bulk 完成后，Menu
-展示 staging 统计，等待 10 秒或 Enter 跳过，再分别以默认 `No` 请求 classify 和 route
-确认；route 之前总是先 dry-run，执行后自动调用 daily-price validation 并显示最终报告。
-Menu 也可从 Reference / reconcile 独立新建或按 `run_id` 继续 workflow。普通 ingest 使用
+`j21 menu` 直接调用 `fdp.get_data` Job，不会通过 subprocess 调用 CLI。Daily 页面以黄色
+显示未完成任务，提供双语 Continue/New 和 Auto/Manual 选择，在一次默认 `No` 的最终确认后
+执行剩余日期、自动 classify/route/validate，并显示最终报告。Menu 也可从 Reference /
+reconcile 独立新建或按 `run_id` 继续旧 backlog workflow。普通 ingest 使用
 `tqdm`，reconcile 使用 Rich Live；非 TTY reporter 退回普通文本。repair、quarantine 和普通
 research 查询仍使用确定性 CLI。
 
@@ -1030,6 +1062,12 @@ poetry run j21 migrate corporate-action-identities --phase plan
 poetry run j21 ingest daily --market US --date 2026-05-20 --asset-types stock,etf,fund --instrument-status active
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --dry-run
 poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --instrument-status all --execute --yes --parallel --workers 4
+poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --new-run --execute --yes
+poetry run j21 ingest daily-range --from 2024-01-01 --to 2024-01-31 --manual --execute --yes
+poetry run j21 task list
+poetry run j21 task status --run-id 123
+poetry run j21 task adopt-daily-legacy --phase verify --from 2024-01-01 --to 2024-01-31
+poetry run j21-mcp
 poetry run j21 migrate fund-daily-price --phase verify --run-id 1
 poetry run j21 reconcile bulk-unmatched summary --from 2024-01-01 --to 2024-01-31
 poetry run j21 reconcile bulk-unmatched list --from 2024-01-01 --to 2024-01-31 --status unresolved

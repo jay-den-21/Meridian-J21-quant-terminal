@@ -76,6 +76,16 @@ EODHD `provider_symbol` 必须保留，例如 `AAPL.US`。标准 `symbol` 也必
 - `--output json` 的 stdout 只能包含一个稳定 JSON 结果；进度事件写 stderr，且任何输出都不得包含 API key。
 - 菜单不会改变“大规模拉数由用户操作”的规则；确认页必须先显示目标表、参数来源和预算，默认选择取消。
 
+### Daily 可恢复任务契约
+
+- `j21 ingest daily` 和 `daily-range` 默认只做 dry-run；真实 provider 调用和写库仍要求 `--execute --yes`。
+- 同一不可变任务范围再次执行时，默认自动续跑未完成日期。不可变范围包括 source、market、exchange、日期范围、排序后的 asset types、local instrument status、symbol filter 和 data-contract version；workers、语言、输出格式、限速和预算不是任务身份。
+- 已验证日期可以被重叠范围复用；完全相同且已完成的范围直接返回原任务结果，provider cost 必须为 0。
+- `--new-run` 只在用户明确要求忽略旧 checkpoint、强制创建新任务时使用；活跃 lease 存在时，即使传入 `--new-run` 也必须拒绝并发执行。
+- Daily 默认自动执行本地 classify、route 和 validate；`--manual` 才只保留拉取结果供后续人工处理。Menu 必须同时提供中文和英文的 Continue/New、Auto/Manual 选择，并保持一次最终写入确认。
+- 长时间 provider/reconcile 阶段必须维护 task lease heartbeat；HTTP 请求不得占用数据库 transaction，单日正式数据、pending rows、API audit 和 checkpoint 必须在短事务内一起提交。
+- MCP 只允许复用同一 Daily Job/TaskLedger。默认只读；执行工具同时要求服务端 `J21_MCP_ENABLE_WRITES=1` 和单次调用 `confirm_execute=true`，不能靠 MCP 绕过 API 预算或人工授权。
+
 ## 常用命令
 
 依赖安装：
@@ -131,6 +141,7 @@ poetry run j21 repair ...
 | `src/fdp/repair/**` | `src/fdp/repair/AGENTS.md` | 缺失数据的确认式修复 |
 | `src/fdp/quarantine/**` | `src/fdp/quarantine/AGENTS.md` | 坏行归档和确认式移除 |
 | `src/fdp/research/**` | `src/fdp/research/AGENTS.md` | 数据库只读研究接口 |
+| `src/fdp/mcp/**` | `src/fdp/mcp/AGENTS.md` | MCP adapter 与写入双重授权 |
 
 `src/fdp/cli.py` 是薄 Typer adapter，直接受本文件和
 `src/fdp/get_data/AGENTS.md` 的共享 Job 约束。若一项修改跨越多个路径，必须读取所有

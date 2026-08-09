@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
-from datetime import date
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
+
+from sqlalchemy import func, select
 
 from fdp.assets import US_BULK_EOD_ASSET_TYPES
 from fdp.get_data.contracts import (
-    JobFailure,
     JobPreflight,
     JobResult,
     NullProgressReporter,
-    ProgressEvent,
     ProgressReporter,
 )
 from fdp.get_data.runtime import JobRuntime
-from fdp.sources.eodhd.ingest import load_bulk_daily_prices
+from fdp.get_data.historical.get_market_calendar import MarketCalendarJob
+from fdp.get_data.bulk.readiness import NEW_YORK, latest_provider_ready_trade_date
+from fdp.sources.eodhd.retry import WeightedApiBudget
 from fdp.sources.eodhd.ingest.common import normalize_symbols
-from fdp.storage.schema import ensure_runtime_schemas
+from fdp.storage.tables import market_calendar
 
 EODHD_BULK_FULL_EXCHANGE_API_CALL_COST = 100
 SUPPORTED_BULK_ASSET_TYPES = set(US_BULK_EOD_ASSET_TYPES)
@@ -86,6 +89,11 @@ class BulkDailyJob:
         asset_types: list[str] | None = None,
         market: str | None = None,
         instrument_status: str | None = None,
+        execute: bool = False,
+        manual: bool = False,
+        new_run: bool = False,
+        max_requests_per_minute: int | None = None,
+        max_api_calls: int | None = None,
         runtime: JobRuntime | None = None,
         reporter: ProgressReporter | None = None,
         override_source: str = "python",
@@ -103,72 +111,184 @@ class BulkDailyJob:
             override_source=override_source,
         )
         parameters = active_preflight.parameters
-        active_reporter.on_event(ProgressEvent("start", self.job_key, 0, 1))
-        with active_runtime.engine.begin() as connection:
-            ensure_runtime_schemas(connection)
-            result = load_bulk_daily_prices(
-                connection,
-                active_runtime.client(active_reporter),
-                exchange=parameters["exchange"],
-                trade_date=parameters["trade_date"],
-                symbols=parameters["symbols"] or None,
-                market=parameters["market"],
-                asset_types=parameters["asset_types"],
-                instrument_status=parameters["instrument_status"],
-            )
-        failed = 1 if result.status == "failed" else 0
-        active_reporter.on_event(
-            ProgressEvent(
-                "finish",
-                self.job_key,
-                1,
-                1,
-                message=result.status,
-                counters={
-                    "fetched": result.rows_fetched,
-                    "inserted": result.rows_inserted,
-                    "unmatched": result.unmatched_rows,
-                    "shadowed": result.shadowed_rows,
-                    "rejected": result.rows_rejected,
-                    "failed": failed,
-                    "api_calls": result.api_calls,
-                },
-            )
-        )
-        failures = (
-            [
-                JobFailure(
-                    str(parameters["trade_date"] or "latest"),
-                    "request",
-                    result.error_message or result.status,
+        trade_date_value = parameters["trade_date"]
+        calendar_refresh_result: JobResult | None = None
+        calendar_api_units = 0
+        if trade_date_value is None:
+            calendar_from, calendar_to = self._latest_calendar_window()
+            with active_runtime.engine.connect() as connection:
+                calendar_complete = self._calendar_window_complete(
+                    connection,
+                    date_from=calendar_from,
+                    date_to=calendar_to,
                 )
-            ]
-            if failed
-            else []
+            if not calendar_complete and execute:
+                invocation_limit = (
+                    max_api_calls
+                    if max_api_calls is not None
+                    else active_runtime.config.daily_call_budget
+                )
+                minimum_remaining = (
+                    EODHD_BULK_FULL_EXCHANGE_API_CALL_COST
+                    + 1  # /user budget check
+                    + 2  # active instruments + symbol changes
+                    + int(parameters["instrument_status"] == "all")
+                )
+                if invocation_limit < minimum_remaining + 1:
+                    raise ValueError(
+                        "max-api-calls is too small for latest-date calendar refresh and "
+                        f"Daily prerequisites: required_at_least={minimum_remaining + 1}"
+                    )
+                calendar_budget = WeightedApiBudget(invocation_limit)
+                calendar_client = active_runtime.client(
+                    active_reporter,
+                    max_requests_per_minute=max_requests_per_minute,
+                    api_budget=calendar_budget,
+                )
+                calendar_runtime = JobRuntime(
+                    engine=active_runtime.engine,
+                    config=active_runtime.config,
+                    injected_client=calendar_client,
+                )
+                calendar_refresh_result = MarketCalendarJob().run(
+                    date_from=calendar_from,
+                    date_to=calendar_to,
+                    market=str(parameters["market"]),
+                    runtime=calendar_runtime,
+                    reporter=active_reporter,
+                    override_source="daily_prerequisite",
+                )
+                if calendar_refresh_result.status != "success":
+                    raise RuntimeError(
+                        "latest-date calendar prerequisite failed: "
+                        f"{calendar_refresh_result.error_message or calendar_refresh_result.status}"
+                    )
+                calendar_api_units = calendar_budget.snapshot().consumed
+                max_api_calls = invocation_limit - calendar_api_units
+            elif not calendar_complete:
+                estimated = (
+                    EODHD_BULK_FULL_EXCHANGE_API_CALL_COST
+                    + 1  # calendar
+                    + 1  # /user budget check
+                    + 2  # active instruments + symbol changes
+                    + int(parameters["instrument_status"] == "all")
+                )
+                invocation_limit = (
+                    max_api_calls
+                    if max_api_calls is not None
+                    else active_runtime.config.daily_call_budget
+                )
+                if estimated > invocation_limit:
+                    raise ValueError(
+                        f"estimated EODHD API calls {estimated} exceed max-api-calls "
+                        f"{invocation_limit}"
+                    )
+                pending_preflight = replace(
+                    active_preflight,
+                    estimated_api_calls=estimated,
+                    warnings=[
+                        *active_preflight.warnings,
+                        "latest trade date is unresolved until the missing market calendar "
+                        "window is refreshed after --execute --yes",
+                    ],
+                )
+                return JobResult(
+                    job=self.job_key,
+                    status="dry_run",
+                    run_id=None,
+                    parameters=parameters,
+                    parameter_sources=active_preflight.parameter_sources,
+                    work_units_total=1,
+                    preflight=pending_preflight,
+                )
+            with active_runtime.engine.connect() as connection:
+                trade_date_value = latest_provider_ready_trade_date(
+                    connection,
+                    asset_types=parameters["asset_types"],
+                )
+
+        from fdp.get_data.bulk.get_daily_range import DailyRangeJob
+
+        result = DailyRangeJob().run(
+            execute=execute,
+            manual=manual,
+            new_run=new_run,
+            date_from=trade_date_value,
+            date_to=trade_date_value,
+            exchange=parameters["exchange"],
+            asset_types=parameters["asset_types"],
+            market=parameters["market"],
+            instrument_status=parameters["instrument_status"],
+            symbols=parameters["symbols"],
+            parallel=False,
+            workers=1,
+            max_requests_per_minute=max_requests_per_minute,
+            max_api_calls=max_api_calls,
+            runtime=active_runtime,
+            reporter=active_reporter,
+            override_source=override_source,
         )
-        return JobResult(
+        resolved_parameters = dict(result.parameters)
+        resolved_parameters["trade_date"] = trade_date_value
+        resolved_parameters.pop("date_from", None)
+        resolved_parameters.pop("date_to", None)
+        metrics = dict(result.metrics)
+        if calendar_refresh_result is not None:
+            metrics["latest_calendar_prerequisite"] = {
+                "run_id": calendar_refresh_result.run_id,
+                "api_calls": calendar_refresh_result.api_calls,
+                "api_units": calendar_api_units,
+            }
+            metrics["api_units_consumed"] = int(
+                metrics.get("api_units_consumed", 0)
+            ) + calendar_api_units
+            metrics["task_api_units_consumed"] = int(
+                metrics.get("task_api_units_consumed", 0)
+            ) + calendar_api_units
+        resolved_preflight = result.preflight
+        if resolved_preflight is not None:
+            resolved_preflight = replace(
+                resolved_preflight,
+                job=self.job_key,
+                job_module=self.job_module,
+                estimated_api_calls=(
+                    resolved_preflight.estimated_api_calls + calendar_api_units
+                ),
+                parameters=resolved_parameters,
+            )
+        return replace(
+            result,
             job=self.job_key,
-            status=result.status,
-            run_id=result.run_id,
-            parameters=parameters,
-            parameter_sources=active_preflight.parameter_sources,
-            rows_fetched=result.rows_fetched,
-            rows_matched=result.rows_matched,
-            rows_inserted=result.rows_inserted,
-            rows_rejected=result.rows_rejected,
-            rows_unmatched=result.unmatched_rows,
-            api_calls=result.api_calls,
-            work_units_total=1,
-            work_units_completed=1,
-            work_units_failed=failed,
-            failures=failures,
-            metrics={
-                "rows_shadowed": result.shadowed_rows,
-                "provider_trade_date": result.trade_date,
-            },
-            error_message=result.error_message,
-            preflight=active_preflight,
+            parameters=resolved_parameters,
+            metrics=metrics,
+            api_calls=result.api_calls
+            + (calendar_refresh_result.api_calls if calendar_refresh_result else 0),
+            preflight=resolved_preflight,
         )
+
+    @staticmethod
+    def _latest_calendar_window() -> tuple[date, date]:
+        current = datetime.now(UTC).astimezone(NEW_YORK).date()
+        return current - timedelta(days=14), current
+
+    @staticmethod
+    def _calendar_window_complete(
+        connection: object,
+        *,
+        date_from: date,
+        date_to: date,
+    ) -> bool:
+        loaded = int(
+            connection.execute(
+                select(func.count())
+                .select_from(market_calendar)
+                .where(
+                    market_calendar.c.calendar_date >= date_from,
+                    market_calendar.c.calendar_date <= date_to,
+                )
+            ).scalar_one()
+        )
+        return loaded == (date_to - date_from).days + 1
 
     @staticmethod
     def _resolve(

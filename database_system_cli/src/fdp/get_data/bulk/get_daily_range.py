@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from datetime import date
+from dataclasses import replace
+from datetime import date, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
 
+from fdp.bulk_unmatched import MENU_CLASSIFICATION_STATUSES
 from fdp.get_data.bulk.get_daily import (
     DEFAULT_ASSET_TYPES,
     DEFAULT_EXCHANGE,
@@ -17,6 +19,12 @@ from fdp.get_data.bulk.get_daily import (
     SUPPORTED_BULK_ASSET_TYPES,
     SUPPORTED_INSTRUMENT_STATUSES,
 )
+from fdp.get_data.bulk.prerequisites import (
+    DailyPrerequisiteResult,
+    execute_daily_prerequisites,
+    plan_daily_prerequisites,
+)
+from fdp.get_data.bulk.workflow import DailyBulkExecutor, DailyWorkflowExecution
 from fdp.get_data.api_budget import check_remote_api_capacity
 from fdp.get_data.contracts import (
     JobFailure,
@@ -33,8 +41,16 @@ from fdp.get_data.historical.base import (
     GLOBAL_TRANSIENT_STATUS_CODES,
 )
 from fdp.get_data.runtime import JobRuntime
+from fdp.get_data.reconcile.bulk_unmatched import BulkUnmatchedReconcileJob
+from fdp.get_data.task_ledger import (
+    DailyTaskScope,
+    TaskAcquisition,
+    TaskLeaseHeartbeat,
+    TaskLedger,
+)
 from fdp.sources.eodhd.client import EodhdClient
 from fdp.sources.eodhd.ingest import BulkDailyPriceLoadResult, load_bulk_daily_prices
+from fdp.sources.eodhd.ingest.common import normalize_symbols
 from fdp.sources.eodhd.identity import DatedInstrumentIdentityResolver
 from fdp.sources.eodhd.retry import WeightedApiBudget
 from fdp.storage.schema import ensure_runtime_schemas
@@ -61,12 +77,14 @@ class DailyRangeJob:
         asset_types: list[str] | None = None,
         market: str | None = None,
         instrument_status: str | None = None,
+        symbols: list[str] | None = None,
         bytes_per_row: int | None = None,
         max_estimated_gb: float | None = None,
         parallel: bool | None = None,
         workers: int | None = None,
         max_requests_per_minute: int | None = None,
         max_api_calls: int | None = None,
+        new_run: bool = False,
         runtime: JobRuntime | None = None,
         override_source: str = "python",
     ) -> JobPreflight:
@@ -78,6 +96,7 @@ class DailyRangeJob:
             asset_types=asset_types,
             market=market,
             instrument_status=instrument_status,
+            symbols=symbols,
             bytes_per_row=bytes_per_row,
             max_estimated_gb=max_estimated_gb,
             parallel=parallel,
@@ -87,28 +106,51 @@ class DailyRangeJob:
             runtime=active_runtime,
             override_source=override_source,
         )
+        prerequisite_plan = plan_daily_prerequisites(
+            active_runtime,
+            date_from=parameters["date_from"],
+            date_to=parameters["date_to"],
+            market=parameters["market"],
+            instrument_status=parameters["instrument_status"],
+        )
         with active_runtime.engine.connect() as connection:
-            self._ensure_calendar_coverage(
-                connection,
-                date_from=parameters["date_from"],
-                date_to=parameters["date_to"],
-            )
-            trade_dates = self._load_trading_dates(
-                connection,
-                date_from=parameters["date_from"],
-                date_to=parameters["date_to"],
-            )
+            if prerequisite_plan.calendar_refresh:
+                trade_dates = self._estimated_weekdays(
+                    date_from=parameters["date_from"],
+                    date_to=parameters["date_to"],
+                )
+            else:
+                trade_dates = self._load_trading_dates(
+                    connection,
+                    date_from=parameters["date_from"],
+                    date_to=parameters["date_to"],
+                )
             scoped_instruments = self._count_instruments(
                 connection,
                 market=parameters["market"],
                 asset_types=parameters["asset_types"],
                 instrument_status=parameters["instrument_status"],
             )
-        if not trade_dates:
-            raise ValueError("no trading days found in market_calendar for this range")
-        estimated_rows = len(trade_dates) * scoped_instruments
+            if not trade_dates:
+                raise ValueError("no trading days found in market_calendar for this range")
+            scope = self._task_scope(parameters)
+            task_estimate = TaskLedger().estimate_daily_task(
+                connection,
+                scope=scope,
+                trade_dates=trade_dates,
+                new_run=new_run,
+            )
+        estimated_rows = task_estimate.provider_work_units * scoped_instruments
         estimated_gb = estimated_rows * parameters["bytes_per_row"] / (1024**3)
-        estimated_api_calls = len(trade_dates) * EODHD_BULK_FULL_EXCHANGE_API_CALL_COST
+        per_day_api_calls = EODHD_BULK_FULL_EXCHANGE_API_CALL_COST + len(
+            parameters["symbols"]
+        )
+        provider_work_required = task_estimate.provider_work_units > 0
+        estimated_api_calls = (
+            task_estimate.provider_work_units * per_day_api_calls
+            + (prerequisite_plan.estimated_api_units if provider_work_required else 0)
+            + int(provider_work_required)  # redacted EODHD /user budget check
+        )
         if estimated_gb > parameters["max_estimated_gb"]:
             raise ValueError(
                 f"estimated storage {estimated_gb:.2f}GB exceeds max-estimated-gb "
@@ -119,6 +161,22 @@ class DailyRangeJob:
                 f"estimated EODHD API calls {estimated_api_calls} exceed max-api-calls "
                 f"{parameters['max_api_calls']}; split the range or raise the budget explicitly"
             )
+        warnings = list(prerequisite_plan.warnings if provider_work_required else ())
+        if task_estimate.exact_no_op:
+            warnings.append(
+                f"exact completed task run_id={task_estimate.existing_run_id}; provider cost is 0"
+            )
+        elif task_estimate.reusable_work_units:
+            warnings.append(
+                f"{task_estimate.reusable_work_units} verified date(s) will be reused"
+            )
+        parameters = {
+            **parameters,
+            "new_run": bool(new_run),
+            "provider_work_units": task_estimate.provider_work_units,
+            "reusable_work_units": task_estimate.reusable_work_units,
+        }
+        sources = {**sources, "new_run": "invocation"}
         return JobPreflight(
             job=self.job_key,
             job_module=self.job_module,
@@ -132,25 +190,37 @@ class DailyRangeJob:
             estimated_gb=estimated_gb,
             parameters=parameters,
             parameter_sources=sources,
+            warnings=warnings,
         )
 
     def run(
         self,
         *,
         execute: bool = False,
+        manual: bool = False,
+        new_run: bool = False,
         runtime: JobRuntime | None = None,
         reporter: ProgressReporter | None = None,
         preflight: JobPreflight | None = None,
+        task_ledger: TaskLedger | None = None,
         override_source: str = "python",
         **options: Any,
     ) -> JobResult:
         active_runtime = runtime or JobRuntime.from_env()
         active_preflight = preflight or self.preflight(
+            new_run=new_run,
             runtime=active_runtime,
             override_source=override_source,
             **options,
         )
-        parameters = active_preflight.parameters
+        if preflight is not None and bool(preflight.parameters.get("new_run")) != bool(
+            new_run
+        ):
+            raise ValueError(
+                "preflight new_run does not match this execution; regenerate preflight "
+                "so the outstanding API estimate remains valid"
+            )
+        parameters = {**active_preflight.parameters, "new_run": bool(new_run)}
         if not execute:
             return JobResult(
                 job=self.job_key,
@@ -163,111 +233,503 @@ class DailyRangeJob:
             )
 
         active_reporter = reporter or NullProgressReporter()
+        ledger = task_ledger or TaskLedger()
+        scope = self._task_scope(parameters)
         with active_runtime.engine.connect() as connection:
+            if not new_run:
+                completed = ledger.completed_daily_task(connection, scope=scope)
+                if completed is not None:
+                    return self._completed_task_result(
+                        connection,
+                        ledger=ledger,
+                        acquisition=completed,
+                        parameters=parameters,
+                        parameter_sources=active_preflight.parameter_sources,
+                        preflight=active_preflight,
+                    )
+            ledger.assert_no_live_equivalent_task(connection, scope=scope)
+
+        prerequisite_plan = plan_daily_prerequisites(
+            active_runtime,
+            date_from=parameters["date_from"],
+            date_to=parameters["date_to"],
+            market=parameters["market"],
+            instrument_status=parameters["instrument_status"],
+        )
+        api_budget = WeightedApiBudget(parameters["max_api_calls"])
+        client: EodhdClient | None = None
+        remote_budget: dict[str, int | str] = {
+            "remote_budget_check": "skipped_no_provider_work",
+            "remote_preflight_api_units": 0,
+        }
+        remote_checked = False
+        prerequisite_parts: list[DailyPrerequisiteResult] = []
+        if prerequisite_plan.calendar_refresh:
+            client = active_runtime.client(
+                active_reporter,
+                max_requests_per_minute=parameters["max_requests_per_minute"],
+                api_budget=api_budget,
+            )
+            remote_budget = self._check_remote_api_capacity(
+                client,
+                required_units=max(active_preflight.estimated_api_calls - 1, 0),
+            )
+            remote_checked = True
+            prerequisite_parts.append(
+                execute_daily_prerequisites(
+                    active_runtime,
+                    client,
+                    plan=replace(
+                        prerequisite_plan,
+                        active_instrument_refresh=False,
+                        inactive_instrument_refresh=False,
+                        estimated_api_units=1,
+                    ),
+                    date_from=parameters["date_from"],
+                    date_to=parameters["date_to"],
+                    market=parameters["market"],
+                    reporter=active_reporter,
+                )
+            )
+        with active_runtime.engine.connect() as connection:
+            self._ensure_calendar_coverage(
+                connection,
+                date_from=parameters["date_from"],
+                date_to=parameters["date_to"],
+            )
             trade_dates = self._load_trading_dates(
                 connection,
                 date_from=parameters["date_from"],
                 date_to=parameters["date_to"],
             )
-        remote_budget = self._check_remote_api_capacity(
-            active_runtime.client(
-                active_reporter,
-                max_requests_per_minute=parameters["max_requests_per_minute"],
-            ),
-            required_units=parameters["max_api_calls"],
-        )
-        with active_runtime.engine.connect() as connection:
-            identity_resolver = DatedInstrumentIdentityResolver.from_connection(
+        if not trade_dates:
+            raise ValueError("no trading days found in market_calendar for this range")
+        with active_runtime.engine.begin() as connection:
+            ensure_runtime_schemas(connection)
+            acquisition = ledger.acquire_daily_task(
                 connection,
-                market=parameters["market"],
-                asset_types=parameters["asset_types"],
-                instrument_status=parameters["instrument_status"],
+                scope=scope,
+                trade_dates=trade_dates,
+                new_run=new_run,
+                manual=manual,
             )
-        api_budget = WeightedApiBudget(parameters["max_api_calls"])
-        client = active_runtime.client(
-            active_reporter,
-            max_requests_per_minute=parameters["max_requests_per_minute"],
-            api_budget=api_budget,
-        )
-        active_reporter.on_event(
-            ProgressEvent("start", self.job_key, 0, len(trade_dates), message="daily range started")
-        )
-        results, failures, cancelled = self._execute_dates(
+        if acquisition.no_op:
+            with active_runtime.engine.connect() as connection:
+                return self._completed_task_result(
+                    connection,
+                    ledger=ledger,
+                    acquisition=acquisition,
+                    parameters=parameters,
+                    parameter_sources=active_preflight.parameter_sources,
+                    preflight=active_preflight,
+                    invocation_api_units=api_budget.snapshot().consumed,
+                )
+        pending_provider_units = len(acquisition.pending_work_units)
+        metadata_plan = plan_daily_prerequisites(
             active_runtime,
-            client,
-            trade_dates=trade_dates,
-            exchange=parameters["exchange"],
+            date_from=parameters["date_from"],
+            date_to=parameters["date_to"],
             market=parameters["market"],
-            asset_types=parameters["asset_types"],
             instrument_status=parameters["instrument_status"],
-            identity_resolver=identity_resolver,
-            parallel=parameters["parallel"],
-            workers=parameters["workers"],
-            reporter=active_reporter,
         )
-        totals = self._totals(results)
+        metadata_plan = replace(
+            metadata_plan,
+            calendar_refresh=False,
+            estimated_api_units=(
+                2 * int(metadata_plan.active_instrument_refresh)
+                + int(metadata_plan.inactive_instrument_refresh)
+            ),
+        )
+        execution = DailyWorkflowExecution((), (), False, None)
+        if pending_provider_units:
+            if client is None:
+                client = active_runtime.client(
+                    active_reporter,
+                    max_requests_per_minute=parameters["max_requests_per_minute"],
+                    api_budget=api_budget,
+                )
+            per_day_api_units = EODHD_BULK_FULL_EXCHANGE_API_CALL_COST + len(
+                parameters["symbols"]
+            )
+            remaining_provider_units = (
+                pending_provider_units * per_day_api_units
+                + metadata_plan.estimated_api_units
+            )
+            budget_snapshot = api_budget.snapshot()
+            user_check_units = 0 if remote_checked else 1
+            if remaining_provider_units + user_check_units > budget_snapshot.remaining:
+                message = (
+                    "remaining Daily task exceeds this invocation's max-api-calls: "
+                    f"remaining_required={remaining_provider_units + user_check_units} "
+                    f"remaining_budget={budget_snapshot.remaining}"
+                )
+                with active_runtime.engine.begin() as connection:
+                    ledger.finalize_task(
+                        connection,
+                        run_id=acquisition.run_id,
+                        review_required=True,
+                        error_message=message,
+                    )
+                raise ValueError(message)
+            if not remote_checked:
+                try:
+                    with TaskLeaseHeartbeat(
+                        engine=active_runtime.engine,
+                        ledger=ledger,
+                        run_id=acquisition.run_id,
+                    ):
+                        remote_budget = self._check_remote_api_capacity(
+                            client,
+                            required_units=remaining_provider_units,
+                        )
+                    remote_checked = True
+                except Exception as exc:
+                    message = f"Daily API budget check failed: {type(exc).__name__}: {exc}"
+                    with active_runtime.engine.begin() as connection:
+                        ledger.finalize_task(
+                            connection,
+                            run_id=acquisition.run_id,
+                            review_required=True,
+                            error_message=message,
+                        )
+                    raise
+            try:
+                with TaskLeaseHeartbeat(
+                    engine=active_runtime.engine,
+                    ledger=ledger,
+                    run_id=acquisition.run_id,
+                ):
+                    if metadata_plan.estimated_api_units:
+                        prerequisite_parts.append(
+                            execute_daily_prerequisites(
+                                active_runtime,
+                                client,
+                                plan=metadata_plan,
+                                date_from=parameters["date_from"],
+                                date_to=parameters["date_to"],
+                                market=parameters["market"],
+                                reporter=active_reporter,
+                            )
+                        )
+                    with active_runtime.engine.connect() as connection:
+                        identity_resolver = DatedInstrumentIdentityResolver.from_connection(
+                            connection,
+                            market=parameters["market"],
+                            asset_types=parameters["asset_types"],
+                            instrument_status=parameters["instrument_status"],
+                        )
+                    executor = DailyBulkExecutor(
+                        runtime=active_runtime,
+                        ledger=ledger,
+                        client=client,
+                        scope=scope,
+                        identity_resolver=identity_resolver,
+                        reporter=active_reporter,
+                    )
+                    execution = executor.execute(
+                        acquisition,
+                        parallel=parameters["parallel"],
+                        workers=parameters["workers"],
+                    )
+            except Exception as exc:
+                message = f"Daily setup/fetch failed: {type(exc).__name__}: {exc}"
+                with active_runtime.engine.begin() as connection:
+                    ledger.finalize_task(
+                        connection,
+                        run_id=acquisition.run_id,
+                        review_required=True,
+                        error_message=message,
+                    )
+                raise
+        prerequisite_result = self._combine_prerequisite_results(prerequisite_parts)
+        with active_runtime.engine.connect() as connection:
+            units_after_fetch = ledger.load_work_units(
+                connection,
+                run_id=acquisition.run_id,
+            )
+        fetch_complete = all(
+            unit.status in {"success", "reused", "held"}
+            for unit in units_after_fetch
+        )
+        review_required = execution.review_required or prerequisite_result.review_required
+        reconcile_details: dict[str, object] = {"skipped": True, "reason": "fetch_incomplete"}
+        reconcile_error: str | None = None
+        if fetch_complete and acquisition.reused_work_units == len(units_after_fetch):
+            reconcile_details = {"skipped": True, "reason": "all_work_units_reused"}
+            with active_runtime.engine.begin() as connection:
+                ledger.mark_units_verified(connection, run_id=acquisition.run_id)
+        elif fetch_complete and manual:
+            review_required = True
+            reconcile_details = {"skipped": True, "reason": "manual_mode"}
+        elif fetch_complete:
+            try:
+                with active_runtime.engine.begin() as connection:
+                    ledger.set_phase(
+                        connection,
+                        run_id=acquisition.run_id,
+                        phase="reconcile",
+                    )
+                with TaskLeaseHeartbeat(
+                    engine=active_runtime.engine,
+                    ledger=ledger,
+                    run_id=acquisition.run_id,
+                ):
+                    reconcile_details = self._run_automatic_reconcile(
+                        runtime=active_runtime,
+                        reporter=active_reporter,
+                        date_from=parameters["date_from"],
+                        date_to=parameters["date_to"],
+                        market=parameters["market"],
+                        asset_types=parameters["asset_types"],
+                    )
+                if reconcile_details["status"] == "success":
+                    with active_runtime.engine.begin() as connection:
+                        ledger.mark_units_verified(
+                            connection,
+                            run_id=acquisition.run_id,
+                        )
+                else:
+                    review_required = True
+            except Exception as exc:
+                review_required = True
+                reconcile_error = f"automatic reconcile failed: {type(exc).__name__}: {exc}"
+                reconcile_details = {
+                    "status": "failed",
+                    "error_message": reconcile_error,
+                }
+
+        error_parts = [
+            execution.stop_reason,
+            reconcile_error,
+            *(
+                f"{failure.unit}: {failure.message}"
+                for failure in execution.failures
+            ),
+        ]
+        error_message = "; ".join(value for value in error_parts if value) or None
         budget_snapshot = api_budget.snapshot()
-        completed = len(results) + len(
-            [failure for failure in failures if failure.category == "exception"]
+        with active_runtime.engine.begin() as connection:
+            final = ledger.finalize_task(
+                connection,
+                run_id=acquisition.run_id,
+                review_required=review_required,
+                cancelled=execution.cancelled,
+                error_message=error_message,
+                details={
+                    "prerequisites": list(prerequisite_result.jobs),
+                    "reconcile": reconcile_details,
+                    "api_units": {
+                        "limit": budget_snapshot.limit,
+                        "consumed": budget_snapshot.consumed,
+                        "remaining": budget_snapshot.remaining,
+                    },
+                },
+            )
+            final_units = ledger.load_work_units(
+                connection,
+                run_id=acquisition.run_id,
+            )
+        rows_matched = sum(
+            int(unit.metrics.get("rows_matched") or 0) for unit in final_units
         )
-        failed_days = len(failures)
-        partial_days = sum(result.status == "partial_failed" for result in results)
-        if cancelled:
-            status = "cancelled"
-        elif failed_days and not any(result.status != "failed" for result in results):
-            status = "failed"
-        elif failed_days or partial_days:
-            status = "partial_failed"
-        else:
-            status = "success"
+        rows_shadowed = sum(
+            int(unit.metrics.get("rows_shadowed") or 0) for unit in final_units
+        )
+        completed_units = sum(
+            unit.status in {"success", "reused", "held"} for unit in final_units
+        )
+        failed_units = sum(unit.status == "failed" for unit in final_units)
         active_reporter.on_event(
             ProgressEvent(
                 "finish",
                 self.job_key,
-                completed,
-                len(trade_dates),
-                message=status,
+                completed_units,
+                len(final_units),
+                message=str(final["status"]),
                 counters={
-                    **totals,
-                    "failed": failed_days,
-                    "api_calls": totals["api_calls"],
+                    "fetched": int(final["rows_fetched"]),
+                    "published": int(final["rows_published"]),
+                    "pending": int(final["rows_pending"]),
+                    "rejected": int(final["rows_rejected"]),
+                    "failed": failed_units,
                     "api_units": budget_snapshot.consumed,
                 },
             )
         )
-        error_message = (
-            "; ".join(f"{failure.unit}: {failure.message}" for failure in failures) or None
-        )
         return JobResult(
             job=self.job_key,
-            status=status,
-            run_id=None,
+            status=final["status"],
+            run_id=acquisition.run_id,
             parameters=parameters,
             parameter_sources=active_preflight.parameter_sources,
-            rows_fetched=totals["rows_fetched"],
-            rows_matched=totals["rows_matched"],
-            rows_inserted=totals["rows_inserted"],
-            rows_rejected=totals["rows_rejected"],
-            rows_unmatched=totals["rows_unmatched"],
-            api_calls=totals["api_calls"],
-            work_units_total=len(trade_dates),
-            work_units_completed=completed,
-            work_units_failed=failed_days,
-            failures=failures,
+            rows_fetched=int(final["rows_fetched"]),
+            rows_matched=rows_matched,
+            rows_inserted=int(final["rows_published"]),
+            rows_rejected=int(final["rows_rejected"]),
+            rows_unmatched=int(final["rows_pending"]),
+            api_calls=sum(outcome.api_calls for outcome in execution.outcomes)
+            + prerequisite_result.api_calls
+            + int(remote_budget["remote_preflight_api_units"]),
+            work_units_total=len(final_units),
+            work_units_completed=completed_units,
+            work_units_failed=failed_units,
+            failures=list(execution.failures),
             metrics={
                 "api_units_limit": budget_snapshot.limit,
                 "api_units_consumed": budget_snapshot.consumed,
                 "api_units_remaining": budget_snapshot.remaining,
                 **remote_budget,
-                "rows_shadowed": totals["rows_shadowed"],
-                "task_api_units_consumed": (
-                    budget_snapshot.consumed
-                    + int(remote_budget["remote_preflight_api_units"])
-                ),
+                "rows_shadowed": rows_shadowed,
+                "task_api_units_consumed": budget_snapshot.consumed,
+                "resumed": acquisition.resumed,
+                "new_run": acquisition.new_run,
+                "reused_work_units": acquisition.reused_work_units,
+                "review_required": bool(final["review_required"]),
+                "reconcile": reconcile_details,
+                "prerequisites": list(prerequisite_result.jobs),
             },
             error_message=error_message,
             preflight=active_preflight,
         )
+
+    @staticmethod
+    def _combine_prerequisite_results(
+        parts: list[DailyPrerequisiteResult],
+    ) -> DailyPrerequisiteResult:
+        return DailyPrerequisiteResult(
+            api_calls=sum(part.api_calls for part in parts),
+            rows_fetched=sum(part.rows_fetched for part in parts),
+            rows_inserted=sum(part.rows_inserted for part in parts),
+            review_required=any(part.review_required for part in parts),
+            jobs=tuple(job for part in parts for job in part.jobs),
+        )
+
+    @staticmethod
+    def _task_scope(parameters: dict[str, Any]) -> DailyTaskScope:
+        return DailyTaskScope.create(
+            source=str(parameters["source"]),
+            market=str(parameters["market"]),
+            exchange=str(parameters["exchange"]),
+            date_from=parameters["date_from"],
+            date_to=parameters["date_to"],
+            asset_types=parameters["asset_types"],
+            instrument_status=str(parameters["instrument_status"]),
+            symbols=parameters["symbols"],
+        )
+
+    def _completed_task_result(
+        self,
+        connection: Any,
+        *,
+        ledger: TaskLedger,
+        acquisition: TaskAcquisition,
+        parameters: dict[str, Any],
+        parameter_sources: dict[str, str],
+        preflight: JobPreflight,
+        invocation_api_units: int = 0,
+    ) -> JobResult:
+        payload = ledger.task_status(connection, run_id=acquisition.run_id)
+        units = ledger.load_work_units(connection, run_id=acquisition.run_id)
+        rows_matched = sum(int(unit.metrics.get("rows_matched") or 0) for unit in units)
+        rows_pending = sum(unit.rows_pending for unit in units)
+        completed = sum(unit.status in {"success", "reused", "held"} for unit in units)
+        failed = sum(unit.status == "failed" for unit in units)
+        checkpoint = payload["checkpoint"]
+        return JobResult(
+            job=self.job_key,
+            status="success",
+            run_id=acquisition.run_id,
+            parameters=parameters,
+            parameter_sources=parameter_sources,
+            rows_fetched=int(payload["rows_fetched"]),
+            rows_matched=rows_matched,
+            rows_inserted=int(payload["rows_published"]),
+            rows_rejected=int(payload["rows_rejected"]),
+            rows_unmatched=rows_pending,
+            api_calls=0,
+            work_units_total=len(units),
+            work_units_completed=completed,
+            work_units_failed=failed,
+            metrics={
+                "no_op": True,
+                "original_run_id": acquisition.run_id,
+                "original_api_calls": int(payload["api_calls"]),
+                "invocation_api_units": invocation_api_units,
+                "review_required": bool(checkpoint.get("review_required", False)),
+                "reused_work_units": acquisition.reused_work_units,
+            },
+            preflight=preflight,
+        )
+
+    @staticmethod
+    def _run_automatic_reconcile(
+        *,
+        runtime: JobRuntime,
+        reporter: ProgressReporter,
+        date_from: date,
+        date_to: date,
+        market: str,
+        asset_types: list[str],
+    ) -> dict[str, object]:
+        job = BulkUnmatchedReconcileJob()
+        classify = job.classify(
+            date_from=date_from,
+            date_to=date_to,
+            market=market,
+            statuses=list(MENU_CLASSIFICATION_STATUSES),
+            runtime=runtime,
+            reporter=reporter,
+            override_source="daily_workflow",
+        )
+        details: dict[str, object] = {
+            "run_id": classify.run_id,
+            "classify_status": classify.status,
+            "classify_rows": classify.work_units_completed,
+            "api_calls": 0,
+        }
+        if classify.status != "success" or classify.run_id is None:
+            details["status"] = "review_required"
+            details["error_message"] = classify.error_message
+            return details
+        route = job.route(
+            date_from=date_from,
+            date_to=date_to,
+            market=market,
+            asset_types=asset_types,
+            execute=True,
+            run_id=classify.run_id,
+            runtime=runtime,
+            reporter=reporter,
+            override_source="daily_workflow",
+        )
+        details.update(
+            {
+                "route_status": route.status,
+                "route_rows": route.rows_inserted,
+            }
+        )
+        if route.status != "success":
+            details["status"] = "review_required"
+            details["error_message"] = route.error_message
+            return details
+        validation = job.validate(
+            date_from=date_from,
+            date_to=date_to,
+            market=market,
+            asset_types=asset_types,
+            run_id=classify.run_id,
+            runtime=runtime,
+            override_source="daily_workflow",
+        )
+        details.update(
+            {
+                "status": validation.status,
+                "validation_status": validation.status,
+                "quality_issue_count": validation.metrics.get("quality_issue_count", 0),
+                "error_message": validation.error_message,
+            }
+        )
+        return details
 
     def _execute_dates(
         self,
@@ -456,6 +918,7 @@ class DailyRangeJob:
         asset_types: list[str] | None,
         market: str | None,
         instrument_status: str | None,
+        symbols: list[str] | None,
         bytes_per_row: int | None,
         max_estimated_gb: float | None,
         parallel: bool | None,
@@ -501,6 +964,7 @@ class DailyRangeJob:
             "asset_types": resolved_assets,
             "market": (market or DEFAULT_MARKET).upper(),
             "instrument_status": resolved_status,
+            "symbols": normalize_symbols(symbols or []),
             "bytes_per_row": (
                 bytes_per_row if bytes_per_row is not None else DEFAULT_BYTES_PER_ROW
             ),
@@ -536,6 +1000,7 @@ class DailyRangeJob:
             "instrument_status": (
                 override_source if instrument_status is not None else "job_default"
             ),
+            "symbols": override_source if symbols is not None else "job_default",
             "bytes_per_row": override_source if bytes_per_row is not None else "job_default",
             "max_estimated_gb": override_source if max_estimated_gb is not None else "job_default",
             "parallel": override_source if parallel is not None else "runtime_config",
@@ -570,6 +1035,17 @@ class DailyRangeJob:
                 .order_by(market_calendar.c.calendar_date)
             ).scalars()
         )
+
+    @staticmethod
+    def _estimated_weekdays(*, date_from: date, date_to: date) -> list[date]:
+        """Conservative read-only estimate used until missing calendar rows are loaded."""
+        values: list[date] = []
+        current = date_from
+        while current <= date_to:
+            if current.weekday() < 5:
+                values.append(current)
+            current += timedelta(days=1)
+        return values
 
     @staticmethod
     def _ensure_calendar_coverage(connection: Any, *, date_from: date, date_to: date) -> None:

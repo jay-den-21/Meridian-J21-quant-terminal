@@ -1,0 +1,4 @@
+interface:
+  display_name: "J21 Daily Ingest"
+  short_description: "Plan, resume, and inspect J21 Daily Bulk tasks"
+  default_prompt: "Use $j21-daily-ingest to preflight and safely resume a US Daily Bulk ingest task."

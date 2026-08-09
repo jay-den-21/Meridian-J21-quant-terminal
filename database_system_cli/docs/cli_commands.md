@@ -194,17 +194,27 @@ poetry run j21 ingest calendar --market US --from 2024-01-01 --to 2024-12-31
 
 ## One-Day Bulk EOD
 
+The command is a dry-run unless both write flags are present:
+
 ```bash
 poetry run j21 ingest daily \
   --market US \
   --date 2026-07-07 \
   --asset-types stock,etf,fund \
   --instrument-status active
+
+poetry run j21 ingest daily \
+  --market US \
+  --date 2026-07-07 \
+  --asset-types stock,etf,fund \
+  --instrument-status active \
+  --execute --yes
 ```
 
-Matched rows enter the canonical split price tables. Unmatched provider rows are
-retained in `system.bulk_unmatched_daily_price_observation` for later
-classification and routing.
+Matched rows enter the asset-specific published price tables. Unmatched provider
+rows are retained in `system.bulk_unmatched_daily_price_observation`. By default,
+the Job then classifies, routes, and validates local rows. Add `--manual` only when
+you want to stop after fetch/publish and run those local steps yourself.
 
 ## Daily Range Bulk EOD
 
@@ -231,6 +241,16 @@ poetry run j21 ingest daily-range \
 Large API-consuming `daily-range --execute --yes` runs default to user-operated CLI execution.
 Codex/AI should prepare the command and then verify database state after the user runs it.
 
+Daily tasks are durable. Running the same immutable scope resumes unfinished dates
+automatically. A completed exact scope returns the original result with zero provider
+calls; an overlapping range reuses only dates that already passed verification.
+Use `--new-run` only when you intentionally want a fresh task and fresh provider calls.
+It does not override another process's live lease.
+
+Task identity contains source, market, exchange, resolved date range, sorted asset
+types, local instrument status, optional symbols, and data-contract version. Worker
+count, language, output format, throttle, and invocation budget do not change identity.
+
 Relevant controls:
 
 - `--parallel/--sequential`: enable or disable bounded per-day parallel ingestion.
@@ -239,6 +259,16 @@ Relevant controls:
 - `--instrument-status active|all`: daily update uses `active`; historical survivorship-aware matching uses `all`.
 - `--max-api-calls`: weighted hard budget charged before every HTTP attempt, including retries.
 - `--max-estimated-gb`: storage estimate guard.
+- `--manual`: skip automatic local classify/route/validate for this invocation.
+- `--new-run`: supersede a stale/incomplete equivalent task and ignore reusable dates; rejected while an equivalent task has a live lease.
+
+Preflight estimates only provider work still outstanding. The hard API budget includes
+the User API allowance check, prerequisite refreshes, all Bulk attempts, and retries.
+Active instrument metadata is considered fresh for one day; inactive metadata for
+seven days. Missing market-calendar coverage is refreshed before the task is acquired.
+
+Latest-date readiness uses New York time: stock/ETF are eligible after 16:30 on the
+same trading day, while Fund selection waits until 06:30 the next day.
 
 Runtime defaults live in `config/default.yaml` and can be overridden with:
 
@@ -248,6 +278,46 @@ Runtime defaults live in `config/default.yaml` and can be overridden with:
 - `EODHD_DAILY_CALL_BUDGET`
 - `EODHD_DAILY_RANGE_PARALLEL`
 - `EODHD_DAILY_RANGE_MAX_WORKERS`
+
+## Durable Task Inspection
+
+```bash
+poetry run j21 task list
+poetry run j21 task list --status partial_failed --output json
+poetry run j21 task status --run-id <RUN_ID>
+```
+
+`task status` reports immutable scope, phase, lease owner/expiry, per-status work-unit
+counts, published/pending/rejected rows, and both HTTP attempt count and weighted API
+units. These commands are local reads and do not call EODHD.
+
+Pre-ledger Daily evidence can be adopted only through the strict plan/verify/adopt
+workflow; it never assumes a date is complete from a price-table row alone:
+
+```bash
+poetry run j21 task adopt-daily-legacy \
+  --phase plan --from 2024-01-01 --to 2024-01-31
+poetry run j21 task adopt-daily-legacy \
+  --phase verify --from 2024-01-01 --to 2024-01-31
+poetry run j21 task adopt-daily-legacy \
+  --phase adopt --from 2024-01-01 --to 2024-01-31 --execute --yes
+```
+
+## Daily MCP And Skill
+
+The repository skill `.agents/skills/j21-daily-ingest/` teaches an AI operator to
+preflight first, preserve the hard budget, resume by default, and report the task ID.
+The same Daily Job is exposed over a protocol-clean stdio MCP server:
+
+```bash
+poetry run j21-mcp
+```
+
+Read-only MCP tools are `daily_preflight`, `daily_range_preflight`, `task_list`, and
+`task_status`. Write/provider tools are `daily_execute` and `daily_range_execute`.
+They are denied by default and require both server-side `J21_MCP_ENABLE_WRITES=1` and
+the individual call argument `confirm_execute=true`. MCP does not bypass `max_api_calls`,
+task leases, auto-resume, or the local data-quality workflow.
 
 ## Delisted Instruments
 

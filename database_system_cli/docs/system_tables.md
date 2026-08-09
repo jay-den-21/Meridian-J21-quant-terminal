@@ -1,7 +1,7 @@
 # J21 System Schema Table Guide
 
 `system` schema 保存运行审计、数据质量、人工修复和 reconciliation 状态。它不保存
-canonical market data；正式 instrument 和价格仍位于 `us_share`。本页描述当前代码实际
+正式 market data；正式 instrument 和价格仍位于 `us_share`。本页描述当前代码实际
 管理的表，不代表可以绕过 CLI 直接修改。
 
 ## 保留原则
@@ -15,8 +15,9 @@ canonical market data；正式 instrument 和价格仍位于 `us_share`。本页
 
 | 表 | 用途 | 主要写入者 | 主要读取者 | 当前保留策略 | 可直接删除？ |
 | --- | --- | --- | --- | --- | --- |
-| `ingestion_task_run` | 记录 ingest、migration 和 reconcile 的运行状态、计数、错误及 `checkpoint_json` | `fdp.get_data` Jobs、ingest/migration/reconcile services | CLI status、Menu、审计查询 | 长期保留；checkpoint 是中断续跑依据 | 否；多张表通过 run ID 引用 |
-| `api_call_log` | 记录供应商请求摘要、状态码、重试和耗时，不保存完整响应 | EODHD client/ingest runtime | 预算核对、故障排查 | 当前长期保留；未来可按完整 run 归档 | 否；不得孤立删除部分请求 |
+| `ingestion_task_run` | 记录 ingest、migration 和 reconcile 的父任务；Daily 还保存不可变 fingerprint、active resume key、lease/heartbeat 和 aggregate checkpoint | `fdp.get_data` Jobs、ingest/migration/reconcile services | `j21 task`、Menu、MCP、审计查询 | 长期保留；checkpoint 是中断续跑依据 | 否；多张表通过 run ID 引用 |
+| `ingestion_task_work_unit` | Daily 每个交易日一行，保存 unit/series fingerprint、状态、复用证据、response hash、published/pending/rejected 计数、API units 和质量结论 | Daily TaskLedger 与 Bulk executor | 自动续跑、重叠复用、`j21 task status`、MCP task tools | 长期保留；verified unit 是 0-call 复用证据 | 否；删除会破坏续跑和成本审计 |
+| `api_call_log` | 记录供应商请求摘要、状态码、重试和耗时；Daily 通过 `work_unit_id` 关联具体交易日，不保存完整响应 | EODHD client/ingest runtime | 预算核对、故障排查 | 当前长期保留；未来可按完整 run 归档 | 否；不得孤立删除部分请求 |
 | `instrument_identity_resolution_audit` | 汇总 Bulk ticker 到 instrument 的身份判定、置信度和证据区间 | Bulk direct ingest、reconcile route | route 冲突保护、后续 Fundamental 复核、审计 | 永久保留；新结论用 `supersedes_audit_id` 取代旧结论 | 否 |
 | `bulk_unmatched_daily_price_observation` | 保存 Bulk EOD 未直接匹配的原始观测及分类/路由状态 | Bulk ingest、classifier、router | reconcile CLI/Menu、研究诊断 | 全量保留；本版本没有自动清理 | 否；`routed/resolved/shadowed` 仍是证据 |
 | `identifier_mapping_unmatched_observation` | 保存无法安全写入 identifier history 的 ID Mapping 行 | ID Mapping ingest/reconcile | 人工复核、后续 instrument 补全 | 全量保留，重复观察按 fingerprint 更新 | 否 |
@@ -32,6 +33,23 @@ Corporate Actions 的 provider-row 拒绝也写入 `data_quality_issue`：
 `corporate_action_non_stock_owner` 表示 dated owner 明确属于 ETF/Fund，
 `invalid_dividend` / `invalid_split` 才表示事件字段本身不合法。身份或资产类别不满足
 stock-only 约束的证据不得自动改绑或写入 canonical `us_share.corporate_action`。
+
+## Daily Task Ledger 关系
+
+```mermaid
+flowchart LR
+    Run["ingestion_task_run"] --> Unit["ingestion_task_work_unit"]
+    Unit --> Call["api_call_log"]
+    Unit --> Price["us_share published prices"]
+    Unit --> Pending["bulk unmatched pending rows"]
+    Pending --> Local["local classify / route / validate"]
+    Local --> Unit
+```
+
+完全相同的未完成 Daily scope 复用 parent run 和未完成 work units；完全相同且已完成的 scope
+返回原结果且不调用供应商。重叠 scope 只能复用 `quality_status=verified` 的日期。`--new-run`
+会显式 supersede 旧任务，但不能越过仍有效的 lease。`held` work unit 会保留已发布数据和审计，
+但不会成为复用证据，因此后续 Continue 仍会重新获取。
 
 ## Guided Reconcile 关系
 
@@ -55,6 +73,8 @@ transaction；失败批次整体回滚，先前批次保留。身份冲突继续
 只读查看运行状态：
 
 ```bash
+poetry run j21 task list
+poetry run j21 task status --run-id <RUN_ID>
 poetry run j21 reconcile bulk-unmatched status --run-id <RUN_ID>
 ```
 

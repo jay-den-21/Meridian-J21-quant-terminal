@@ -7,14 +7,19 @@ import fdp.get_data.bulk.get_daily_range as range_module
 import fdp.get_data.historical.base as historical_module
 from fdp.config import EodhdRuntimeConfig
 from fdp.get_data.bulk import BulkDailyJob, DailyRangeJob
-from fdp.get_data.contracts import NullProgressReporter
+from fdp.get_data.bulk.prerequisites import DailyPrerequisitePlan
+from fdp.get_data.contracts import JobPreflight, NullProgressReporter
 from fdp.get_data.historical import HistoricalDailyJob, IndexDailyJob, StockDailyJob
 from fdp.get_data.runtime import JobRuntime
+from fdp.get_data.task_ledger import DailyTaskScope, TaskLedger
 from fdp.sources.eodhd.ingest import (
     BulkDailyPriceLoadResult,
     HistoricalDailyPriceUnitResult,
 )
 from fdp.sources.eodhd.client import EodhdApiResponse
+
+from test_daily_task_ledger import _engine as _task_engine
+from test_daily_task_ledger import _finish_success
 
 
 class FakeContext:
@@ -39,6 +44,26 @@ class FakeEngine:
     def begin(self) -> FakeContext:
         self.begin_count += 1
         return FakeContext(self.connection)
+
+
+def test_daily_range_rejects_preflight_with_different_new_run_semantics() -> None:
+    preflight = JobPreflight(
+        job="ingest.daily_range",
+        job_module="fdp.get_data.bulk.get_daily_range",
+        target_tables=[],
+        work_units=0,
+        estimated_api_calls=0,
+        parameters={"new_run": False},
+        parameter_sources={"new_run": "invocation"},
+    )
+
+    with pytest.raises(ValueError, match="preflight new_run does not match"):
+        DailyRangeJob().run(
+            execute=False,
+            new_run=True,
+            preflight=preflight,
+            runtime=JobRuntime(engine=_task_engine(), config=EodhdRuntimeConfig()),
+        )
 
 
 def _instrument(symbol: str, instrument_id: int) -> dict[str, object]:
@@ -285,11 +310,11 @@ def test_daily_range_budget_rejection_happens_before_client_creation(
         def client(self, *args, **kwargs):
             raise AssertionError("client must not be created for an over-budget preflight")
 
-    runtime = FailClientRuntime(engine=FakeEngine(), config=EodhdRuntimeConfig())
+    runtime = FailClientRuntime(engine=_task_engine(), config=EodhdRuntimeConfig())
     monkeypatch.setattr(
-        range_module.DailyRangeJob,
-        "_ensure_calendar_coverage",
-        staticmethod(lambda connection, *, date_from, date_to: None),
+        range_module,
+        "plan_daily_prerequisites",
+        lambda *args, **kwargs: DailyPrerequisitePlan(False, False, False, 0, ()),
     )
     monkeypatch.setattr(
         range_module.DailyRangeJob,
@@ -302,7 +327,7 @@ def test_daily_range_budget_rejection_happens_before_client_creation(
         staticmethod(lambda connection, *, market, asset_types, instrument_status: 10),
     )
 
-    with pytest.raises(ValueError, match="estimated EODHD API calls 100 exceed max-api-calls 99"):
+    with pytest.raises(ValueError, match="estimated EODHD API calls 101 exceed max-api-calls 99"):
         DailyRangeJob().run(
             execute=True,
             date_from=date(2024, 1, 1),
@@ -395,41 +420,41 @@ def test_daily_range_parallel_stop_still_collects_running_results(
     assert failures[0].category == "exception"
 
 
-def test_daily_range_reports_actual_weighted_api_units(
+def test_daily_range_preflight_charges_only_remaining_work_units(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class BudgetRuntime(JobRuntime):
-        api_budget = None
-
-        def client(self, reporter=None, *, max_requests_per_minute=None, api_budget=None):
-            self.api_budget = api_budget
-            return object()
-
-    runtime = BudgetRuntime(engine=FakeEngine(), config=EodhdRuntimeConfig())
+    engine = _task_engine()
+    runtime = JobRuntime(engine=engine, config=EodhdRuntimeConfig())
     trade_dates = [date(2024, 1, 2), date(2024, 1, 3)]
-    monkeypatch.setattr(
-        DailyRangeJob,
-        "_ensure_calendar_coverage",
-        staticmethod(lambda connection, *, date_from, date_to: None),
+    first_scope = DailyTaskScope.create(
+        source="eodhd",
+        market="US",
+        exchange="US",
+        date_from=trade_dates[0],
+        date_to=trade_dates[0],
+        asset_types=["stock", "etf", "fund"],
+        instrument_status="all",
     )
+    ledger = TaskLedger(lease_owner="seed")
+    with engine.begin() as connection:
+        first = ledger.acquire_daily_task(
+            connection,
+            scope=first_scope,
+            trade_dates=[trade_dates[0]],
+        )
+        _finish_success(
+            ledger,
+            connection,
+            run_id=first.run_id,
+            work_unit_id=first.work_units[0].work_unit_id,
+        )
+        ledger.mark_units_verified(connection, run_id=first.run_id)
+        ledger.finalize_task(connection, run_id=first.run_id, review_required=False)
+
     monkeypatch.setattr(
-        range_module.DatedInstrumentIdentityResolver,
-        "from_connection",
-        lambda *args, **kwargs: object(),
-    )
-    monkeypatch.setattr(
-        DailyRangeJob,
-        "_check_remote_api_capacity",
-        staticmethod(
-            lambda client, *, required_units: {
-                "remote_api_requests_used": 100,
-                "remote_daily_rate_limit": 100_000,
-                "remote_extra_units_remaining": 0,
-                "remote_api_units_remaining": 99_900,
-                "remote_api_requests_date": "2024-01-03",
-                "remote_preflight_api_units": 1,
-            }
-        ),
+        range_module,
+        "plan_daily_prerequisites",
+        lambda *args, **kwargs: DailyPrerequisitePlan(False, False, False, 0, ()),
     )
     monkeypatch.setattr(
         DailyRangeJob,
@@ -444,51 +469,85 @@ def test_daily_range_reports_actual_weighted_api_units(
         ),
     )
 
-    def fake_run_one_day(
-        runtime,
-        client,
-        *,
-        trade_date,
-        exchange,
-        market,
-        asset_types,
-        instrument_status,
-        identity_resolver,
-    ):
-        runtime.api_budget.reserve(endpoint="/eod-bulk-last-day/US", units=100)
-        return BulkDailyPriceLoadResult(
-            run_id=trade_date.day,
-            status="success",
-            exchange=exchange,
-            trade_date=trade_date,
-            rows_fetched=10,
-            rows_matched=10,
-            rows_inserted=10,
-            rows_rejected=0,
-            api_calls=1,
-            rejected_rows=[],
-            unmatched_rows=0,
-        )
-
-    monkeypatch.setattr(DailyRangeJob, "_run_one_day", staticmethod(fake_run_one_day))
-
-    result = DailyRangeJob().run(
-        execute=True,
+    preflight = DailyRangeJob().preflight(
         date_from=trade_dates[0],
         date_to=trade_dates[-1],
         instrument_status="all",
         parallel=False,
-        max_api_calls=200,
+        max_api_calls=101,
+        runtime=runtime,
+    )
+
+    assert preflight.estimated_api_calls == 101
+    assert preflight.parameters["provider_work_units"] == 1
+    assert preflight.parameters["reusable_work_units"] == 1
+
+
+def test_daily_range_exact_completed_scope_returns_without_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NoProviderRuntime(JobRuntime):
+        def client(self, *args, **kwargs):
+            raise AssertionError("completed task must not construct an API client")
+
+    engine = _task_engine()
+    runtime = NoProviderRuntime(engine=engine, config=EodhdRuntimeConfig())
+    trade_date = date(2024, 1, 2)
+    scope = DailyTaskScope.create(
+        source="eodhd",
+        market="US",
+        exchange="US",
+        date_from=trade_date,
+        date_to=trade_date,
+        asset_types=["stock", "etf", "fund"],
+        instrument_status="all",
+    )
+    ledger = TaskLedger(lease_owner="seed")
+    with engine.begin() as connection:
+        task = ledger.acquire_daily_task(
+            connection,
+            scope=scope,
+            trade_dates=[trade_date],
+        )
+        _finish_success(
+            ledger,
+            connection,
+            run_id=task.run_id,
+            work_unit_id=task.work_units[0].work_unit_id,
+        )
+        ledger.mark_units_verified(connection, run_id=task.run_id)
+        ledger.finalize_task(connection, run_id=task.run_id, review_required=False)
+
+    monkeypatch.setattr(
+        range_module,
+        "plan_daily_prerequisites",
+        lambda *args, **kwargs: DailyPrerequisitePlan(False, False, False, 0, ()),
+    )
+    monkeypatch.setattr(
+        DailyRangeJob,
+        "_load_trading_dates",
+        staticmethod(lambda connection, *, date_from, date_to: [trade_date]),
+    )
+    monkeypatch.setattr(
+        DailyRangeJob,
+        "_count_instruments",
+        staticmethod(lambda connection, *, market, asset_types, instrument_status: 10),
+    )
+
+    result = DailyRangeJob().run(
+        execute=True,
+        date_from=trade_date,
+        date_to=trade_date,
+        instrument_status="all",
+        max_api_calls=1,
         runtime=runtime,
     )
 
     assert result.status == "success"
-    assert result.parameters["instrument_status"] == "all"
-    assert result.metrics["api_units_limit"] == 200
-    assert result.metrics["api_units_consumed"] == 200
-    assert result.metrics["api_units_remaining"] == 0
-    assert result.metrics["task_api_units_consumed"] == 201
-    assert result.metrics["remote_api_units_remaining"] == 99_900
+    assert result.run_id == task.run_id
+    assert result.api_calls == 0
+    assert result.metrics["no_op"] is True
+    assert result.metrics["invocation_api_units"] == 0
 
 
 def test_daily_range_remote_budget_preflight_is_redacted_and_strict() -> None:

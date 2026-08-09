@@ -11,6 +11,7 @@ from fdp.sources.eodhd.ingest.corporate_actions import (
     record_corporate_action_api_calls,
 )
 from fdp.sources.eodhd.ingest.daily import (
+    fetch_bulk_daily_prices,
     load_bulk_daily_prices,
     load_daily_prices_for_instrument_ids,
     load_etf_daily_prices,
@@ -19,6 +20,7 @@ from fdp.sources.eodhd.ingest.daily import (
     load_historical_daily_price_unit,
     load_index_daily_prices,
     load_stock_daily_prices,
+    publish_bulk_daily_prices,
 )
 from fdp.sources.eodhd.ingest.delisted import load_delisted_instruments
 from fdp.sources.eodhd.ingest.id_mapping import (
@@ -56,6 +58,7 @@ __all__ = [
     "InstrumentLoadResult",
     "MarketCalendarLoadResult",
     "load_exchange_symbols",
+    "fetch_bulk_daily_prices",
     "load_bulk_daily_prices",
     "load_corporate_action_unit",
     "fetch_corporate_action_unit",
@@ -72,5 +75,6 @@ __all__ = [
     "persist_corporate_action_unit",
     "record_corporate_action_api_calls",
     "process_identifier_mapping_page",
+    "publish_bulk_daily_prices",
     "reconcile_symbol_changes",
 ]
