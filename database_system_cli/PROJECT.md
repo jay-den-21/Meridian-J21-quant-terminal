@@ -135,6 +135,7 @@ financial-data-platform/
 - `menu/` 只负责中英文 prompts、确认页和 `tqdm` 展示，不复制 provider/storage 业务逻辑，也不 shell out 到 CLI。
 - `bulk_unmatched.py` 是 staging row 的严格分类和 route domain service，由 `get_data/reconcile/` 和 CLI adapter 调用。
 - `docs/architecture.md` 是当前可执行代码的总入口：它逐层追踪 CLI/menu/Python Job、EODHD provider、storage、quality、repair/quarantine、research 和平级只读 Terminal。
+- 面向人的一级架构固定为五块：数据源接入、任务编排与获取、证券身份对齐、质量与发布、正式数据与研究访问。详细内部路径放在一级图之后，不用 `canonical` 等维护术语阻挡普通操作者理解。
 - `cli.py` 暴露 `j21 menu`、`j21 ingest`、`j21 validate`、`j21 repair`、`j21 research`；`fdp` 暂时保留为兼容 alias。
 - 局部 `AGENTS.md` 只放在真实职责边界。规则从 repo root 到子项目再到最近局部文件累积；修改跨层功能时必须读取所有相关局部文件，并按 `docs/architecture.md` 检查上下游。
 

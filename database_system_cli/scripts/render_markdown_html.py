@@ -54,6 +54,8 @@ code { padding:1px 5px; background:var(--code); border:1px solid #e1e6ef;
 pre { overflow:auto; margin:16px 0 20px; padding:16px 18px; background:#101820;
   color:#e6edf3; border-radius:8px; line-height:1.5; }
 pre code { padding:0; background:transparent; color:inherit; border:0; font-size:13px; }
+.mermaid { overflow:auto; margin:18px 0 24px; padding:22px 16px; background:#fbfcfe;
+  border:1px solid var(--border); border-radius:8px; text-align:center; }
 a { color:var(--accent); } .meta { margin-bottom:26px; padding-bottom:18px;
   color:var(--muted); border-bottom:1px solid var(--border); font-size:13px; }
 @media (max-width:900px) { .layout { display:block; } nav { position:relative; height:auto;
@@ -171,10 +173,14 @@ def _render_body(markdown: str) -> tuple[str, list[tuple[int, str, str]]]:
 
         if in_code:
             if line.startswith("```"):
-                language = f' class="language-{escape(code_language)}"' if code_language else ""
-                output.append(
-                    f"<pre><code{language}>{escape(chr(10).join(code_lines))}</code></pre>"
-                )
+                code = escape(chr(10).join(code_lines))
+                if code_language == "mermaid":
+                    output.append(f'<div class="mermaid">{code}</div>')
+                else:
+                    language = (
+                        f' class="language-{escape(code_language)}"' if code_language else ""
+                    )
+                    output.append(f"<pre><code{language}>{code}</code></pre>")
                 code_lines.clear()
                 code_language = ""
                 in_code = False
@@ -251,13 +257,19 @@ def render(markdown_path: Path, html_path: Path) -> None:
         f'<a class="toc-{level}" href="#{anchor}">{_inline(label)}</a>'
         for level, anchor, label in headings
     )
+    mermaid_script = ""
+    if '<div class="mermaid">' in body:
+        mermaid_script = """<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.0/+esm";
+mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict" });
+</script>"""
     document = f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)}</title><style>{STYLE}</style></head>
 <body><div class="layout"><nav><h2>目录 / Contents</h2>{toc}</nav>
 <main><article><div class="meta">Generated from {escape(markdown_path.name)}. Markdown remains the source of truth.</div>
-{body}</article></main></div></body></html>
+{body}</article></main></div>{mermaid_script}</body></html>
 """
     html_path.write_text(document, encoding="utf-8")
 

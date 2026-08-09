@@ -134,10 +134,12 @@ Completed:
 
 In progress:
 
-- none
+- five-layer CLI architecture adoption, followed by the resumable automatic Daily workflow and the separate 1-minute Parquet contract; Massive and PIT are excluded from these tasks
 
 ## Next Step
 
+- implement durable Daily work units, automatic resume/`--new-run`, default automatic processing with `--manual`, bilingual Menu task discovery, and the first J21 Skill/MCP surface
+- implement the separate 1-minute Parquet contract with fixture-only EODHD validation and zero real intraday API calls
 - add an explicit operator-controlled skip/manual-review path for future rename-history API outages
 - decide the next delisted-date source: EODHD Fundamentals/Corporate Actions, Nasdaq/FINRA lists, or manual enrichment, because the EODHD delisted symbol list does not expose delist dates
 - plan point-in-time universe membership so active-only backtests can be clearly separated from survivorship-bias-aware research

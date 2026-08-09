@@ -1,27 +1,53 @@
 # J21 Database System CLI Architecture
 
-本文是 `database_system_cli` 当前可执行代码的路径地图。它回答三个问题：
+本文先用五个一级板块解释 `database_system_cli`，再追踪当前可执行代码。它回答三个问题：
 
 1. 用户从哪里进入系统？
 2. 数据经过哪些 class/function 才进入数据库？
 3. 修改某一层时，必须联查哪些上下游？
 
-文档基于当前代码，而不是未来设想。Markdown 是源文件；同目录
-`architecture.html` 是人类阅读版。
+文档会明确区分 **Current / 当前实现** 与 **Target / 目标结构**，不把计划写成已经完成。
+Markdown 是源文件；同目录 `architecture.html` 是带可视化图的人类阅读版。
 
-## 1. 一句话架构
+## 1. 五层架构
 
-```text
-CLI / terminal menu / Python caller
--> shared fdp.get_data Job
--> EODHD provider client + ingest/parser
--> SQLAlchemy Core upsert + MySQL audit/canonical tables
--> independent quality -> repair/quarantine -> research read/indicator layer
--> sibling read-only FastAPI/React Research Terminal
+```mermaid
+flowchart LR
+    S["1 数据源接入<br/>Source Intake"]
+    O["2 任务编排与获取<br/>Task Orchestration"]
+    I["3 证券身份对齐<br/>Security Alignment"]
+    Q["4 质量与发布<br/>Quality & Publish"]
+    P["5 正式数据与研究访问<br/>Published Data & Research"]
+
+    S --> O --> I --> Q --> P
+
+    classDef source fill:#e8f1fb,stroke:#2f6fa3,color:#17324d,stroke-width:2px
+    classDef orchestration fill:#eef7ed,stroke:#478447,color:#203c20,stroke-width:2px
+    classDef identity fill:#fff4d8,stroke:#a97918,color:#4b360d,stroke-width:2px
+    classDef quality fill:#fbeaec,stroke:#a84d5b,color:#4d2028,stroke-width:2px
+    classDef published fill:#f1edfa,stroke:#7258a5,color:#33254e,stroke-width:2px
+    class S source
+    class O orchestration
+    class I identity
+    class Q quality
+    class P published
 ```
 
-关键边界：CLI 和菜单只是输入/输出 adapter；human-operable ingestion 的参数、预算、
-失败策略和结果必须收敛在同一个 `fdp.get_data` Job 中。
+| 一级板块 | 二级职责 | 当前主要路径 |
+| --- | --- | --- |
+| 数据源接入 | API transport、认证、rate limit、retry、provider payload | `src/fdp/sources/eodhd/` |
+| 任务编排与获取 | CLI/Menu/Python、preflight、预算、并发、进度、任务状态 | `src/fdp/get_data/`、`src/fdp/cli.py`、`src/fdp/menu/` |
+| 证券身份对齐 | instrument、历史 ticker、生命周期、asset type、严格匹配 | `instrument`、`instrument_identifier_history`、identity resolver |
+| 质量与发布 | 解析、OHLCV、pending、reconcile、repair、quarantine、短事务 | `quality/`、`repair/`、`quarantine/`、`bulk_unmatched.py` |
+| 正式数据与研究访问 | 资产价格表、research reader、只读 Terminal | `us_share`、`research/`、`../research_terminal/` |
+
+关键边界：CLI、Menu、Python、未来 Skill/MCP 都只是入口 adapter；参数、预算、续跑、
+失败策略和结果必须收敛在同一个 `fdp.get_data` Job 中。数据源网络请求不能占用长事务；
+一个 work unit 的正式数据、待处理行、审计和 checkpoint 才在短事务内一起提交。
+
+人类界面统一使用：`raw / 原始`、`pending / 待处理`、`published / 正式数据`、
+`held / 暂缓处理`、`quarantined / 已隔离`。数据库和旧兼容接口中的 `canonical` 名称暂不
+大规模重命名，避免把文案简化变成高风险 migration。
 
 ## 2. 当前目录职责
 
@@ -46,48 +72,29 @@ CLI / terminal menu / Python caller
 repo AGENTS.md -> database_system_cli/AGENTS.md -> nearest scoped AGENTS.md
 ```
 
-## 3. 总体组件图
+## 3. 当前组件流
 
 ```mermaid
 flowchart TB
-    subgraph Input["Input Layer"]
-        direction LR
-        A["CLI / Menu / Python"] --> B["fdp.get_data Job"]
-        B --> C["JobRuntime"]
-    end
-
-    subgraph Source["External Data Source"]
-        D["EODHD Client"]
-    end
-
-    subgraph Pipeline["Ingestion Pipeline"]
-        direction LR
-        C --> E["Provider Ingest / Parser"]
-        D --> E
-        E --> F["Storage Upsert"]
-    end
-
-    subgraph Core["Canonical Data Layer"]
-        direction LR
-        F --> G["us_share Canonical Data"]
-        G --> I["Quality"]
-        I --> J["Repair / Quarantine"]
-    end
-
-    subgraph Research["Research Layer"]
-        K["Research Reader + Local Indicators"]
-        L["Read-only FastAPI"]
-        M["React / ECharts Terminal"]
-    end
-
-    E --> H["System Audit / Unmatched"]
-    G --> K
-    K --> L --> M
+    A["CLI / 双语Menu / Python"] --> B["fdp.get_data Job"]
+    C["EODHD Client"] --> B
+    B --> D["Parser + Identity Resolver"]
+    D --> E["Pre-write Validation"]
+    E --> F["正式价格表 / Published Tables"]
+    E --> G["System Audit + Pending Rows"]
+    F --> H["Quality"]
+    H --> I["Repair / Quarantine"]
+    F --> J["Research Reader"]
+    J --> K["Read-only Research Terminal"]
 ```
 
 注意：`validate`、`repair`、`quarantine` 和 `research` 当前不是 ingest Job。它们由
 `fdp/cli.py` 直接调用各自 service/read layer。`j21 menu` 当前只覆盖 registry 中的
 ingest/reconcile workflows。
+
+目标中的 Daily 自动续跑、`--new-run`、默认自动处理、Skill/MCP 和 1m Parquet 合约尚未在
+本节所述当前代码中实现；它们由 `08-10-resumable-bulk-daily-workflow` 与
+`08-10-intraday-1m-contract-validation` 两个独立任务交付。
 
 ## 4. 三种入口如何汇合
 

@@ -35,3 +35,19 @@ After table.
     assert '<td style="text-align:right">UI logic</td>' in body
     assert "| --- |" not in body
     assert "<p>After table.</p>" in body
+
+
+def test_render_body_converts_mermaid_fence_to_renderable_container() -> None:
+    body, _ = _render_body(
+        """# Flow
+
+```mermaid
+flowchart LR
+    A[Input] --> B[Published]
+```
+"""
+    )
+
+    assert '<div class="mermaid">flowchart LR' in body
+    assert "A[Input] --&gt; B[Published]" in body
+    assert 'class="language-mermaid"' not in body
