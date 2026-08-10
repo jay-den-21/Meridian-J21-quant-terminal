@@ -727,6 +727,31 @@ result_message
 backfill_missing_daily_price
 ```
 
+### 5.12 `system.intraday_file_manifest`
+
+1 分钟 bar 不写入 MySQL。每个已验证的 repo 外 Parquet 文件在 manifest 中登记一行：
+
+```text
+manifest_id
+run_id
+dataset_kind
+source / market / asset_type / interval
+instrument_id / provider_symbol / trade_date / bucket
+storage_path
+content_hash / file_sha256
+row_count / file_size_bytes
+timestamp_min_utc / timestamp_max_utc
+schema_version / status
+created_at / updated_at
+```
+
+唯一身份是 `dataset_kind + source + instrument_id + interval + trade_date`；相对
+`storage_path` 也唯一。同 identity 同内容重跑复用，不同内容报 conflict，禁止静默覆盖。
+manifest 与 `ingestion_task_run`、`api_call_log` 构成审计链。文件系统和 MySQL 不宣称拥有
+分布式事务：实现依靠临时文件校验、无覆盖原子文件发布、短 manifest transaction 和
+同内容孤儿文件恢复。正式 content-addressed 文件不会在 DB 失败时删除，因为并发 writer
+可能已经引用它；后续同内容任务会验证并认领该 orphan。
+
 ## 6. 数据流
 
 ### 6.0 Shared ingest orchestration
@@ -949,6 +974,31 @@ j21 validate daily-price
 - 不同 provider symbol 只有新的 high-confidence 可以替换已明确为 medium-confidence 的 canonical identity；同级、降级或旧 confidence 未知时保留原 row 并记录 `identity_route_conflict`。
 - 旧 `research bulk-unmatched` 与 `ingest bulk-unmatched-route` 在 v0.4 保留 warning compatibility，v0.5 删除。
 
+### 6.4b Intraday 1m contract validation
+
+本阶段仅提供 EODHD active NYSE/Nasdaq US stock 的小样本 1m contract validation：
+
+```text
+CLI/双语Menu
+-> EodhdIntradayValidationJob preflight
+-> /user budget check
+-> /intraday/{provider_symbol}, 每窗最多120天
+-> strict raw 1m parser
+-> UTC timestamp + New York trade_date/session
+-> verified partitioned Parquet
+-> system.intraday_file_manifest
+```
+
+`J21_INTRADAY_DATA_ROOT` 必须显式指向 repo 外绝对路径。保存 raw unadjusted OHLCV，保留
+pre/core/after，research 默认 core；股票 corporate actions 将来在读取时用于复权。路径为
+`validation/source=eodhd/asset_type=stock/interval=1m/trade_date=.../bucket=...`，一个文件只含
+一个 instrument/date。自然键为 `(source, instrument_id, timestamp_utc, interval)`。
+
+公开验证入口 hard cap 为 200 weighted units，含 `/user` 和 retries；默认 dry-run，真实调用
+仍要求 `--execute --yes`。5/15/30m 只定义为按 session 从 1m 本地聚合，不独立拉取或保存
+provider raw datasets。本任务不实现 Massive、PIT、全市场分钟回填、生产调度、ETF/Fund/index
+分钟数据；测试真实 intraday API calls 必须为 0。
+
 ### 6.5 Validate quality
 
 质量检查不应该隐藏在 ingest 内部。`validate` 必须可以独立运行。
@@ -1076,6 +1126,7 @@ poetry run j21 reconcile bulk-unmatched status --run-id 123
 poetry run j21 reconcile bulk-unmatched route --from 2024-01-01 --to 2024-01-31 --run-id 123 --dry-run
 poetry run j21 reconcile bulk-unmatched route --from 2024-01-01 --to 2024-01-31 --run-id 123 --execute --yes
 poetry run j21 validate daily-price --market US --from 2024-01-01 --to 2024-12-31
+poetry run j21 validate intraday --symbols AAPL.US --from 2024-01-02 --to 2024-01-02 --max-api-calls 200
 poetry run j21 repair plan-daily-price --market US --from 2024-01-01 --to 2024-12-31
 poetry run j21 quarantine plan-daily-price --market US --from 2024-01-01 --to 2024-12-31 --issue-types duplicate_key,invalid_ohlcv,price_on_non_trading_day
 poetry run j21 quarantine list --status pending_confirmation
@@ -1094,7 +1145,7 @@ poetry run j21 research technical-validate --from 2024-01-01 --to 2024-03-31 --m
 
 允许：
 
-- 网络/API/数据库临时失败最多重试 5 次。
+- 网络/API/数据库临时失败最多重试 3 次。
 - EODHD 默认重试间隔为 61 秒，且必须明确配置。
 - EODHD retry 输出必须显示原始 status/error，并提示人工等待重试。
 - 每次失败写入日志和任务状态。

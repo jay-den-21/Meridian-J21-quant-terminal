@@ -116,14 +116,61 @@ def test_cli_registers_menu_and_history_asset_types() -> None:
 
 
 def test_every_registered_ingest_job_has_a_menu_handler() -> None:
-    registered = {definition.key for definition in menu_module.INGEST_JOB_DEFINITIONS}
+    registered = {definition.key for definition in menu_module.MENU_JOB_DEFINITIONS}
 
     assert set(menu_module.JOB_HANDLERS) == registered
 
 
 def test_every_menu_registered_ingest_job_factory_constructs() -> None:
-    for definition in menu_module.INGEST_JOB_DEFINITIONS:
+    for definition in menu_module.MENU_JOB_DEFINITIONS:
         assert definition.factory() is not None
+
+
+def test_intraday_menu_builds_bilingual_validation_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class IntradayPrompts:
+        def __init__(self) -> None:
+            self.text_answers = iter(["AAPL.US", "2024-01-02", "2024-01-02"])
+
+        def text(self, message, *, default=""):
+            return next(self.text_answers)
+
+        def confirm(self, message, *, default=False):
+            return False
+
+    class FakeJob:
+        def preflight(self, **kwargs):
+            captured["kwargs"] = kwargs
+            return JobPreflight(
+                job="validate.intraday",
+                job_module="fdp.get_data.intraday.validate_eodhd",
+                target_tables=["system.intraday_file_manifest"],
+                work_units=1,
+                estimated_api_calls=6,
+                parameters={},
+                parameter_sources={},
+            )
+
+    def capture_confirmation(session, language, preflight, command, runner):
+        captured["language"] = language
+        captured["command"] = command
+
+    monkeypatch.setattr(menu_module.JobRuntime, "from_env", lambda: object())
+    monkeypatch.setattr(menu_module, "EodhdIntradayValidationJob", FakeJob)
+    monkeypatch.setattr(menu_module, "_confirm_and_run", capture_confirmation)
+
+    menu_module._run_intraday_validation(IntradayPrompts(), "zh")
+
+    assert captured["language"] == "zh"
+    assert captured["kwargs"]["symbols"] == ["AAPL.US"]
+    assert captured["command"] == (
+        "poetry run j21 validate intraday --symbols AAPL.US --from 2024-01-02 "
+        "--to 2024-01-02 --source eodhd --interval 1m --market US "
+        "--max-api-calls 200 --execute --yes"
+    )
 
 
 def test_menu_closes_progress_reporter_when_job_raises(

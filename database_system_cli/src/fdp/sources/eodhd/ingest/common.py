@@ -20,6 +20,7 @@ def create_task_run(
     target_table: str = "instrument",
     date_from: date | None = None,
     date_to: date | None = None,
+    target_schema: str = "us_share",
 ) -> int:
     """Insert a running `system.ingestion_task_run` row and return `run_id`.
 
@@ -32,7 +33,7 @@ def create_task_run(
             job_name=job_name,
             market=market,
             source="EODHD",
-            target_schema="us_share",
+            target_schema=target_schema,
             target_table=target_table,
             status="running",
             date_from=date_from,

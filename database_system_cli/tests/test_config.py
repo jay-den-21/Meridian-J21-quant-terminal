@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 
 from fdp.config import (
     DEFAULT_EODHD_DAILY_CALL_BUDGET,
@@ -8,6 +9,7 @@ from fdp.config import (
     DEFAULT_EODHD_RETRY_DELAY_SECONDS,
     EodhdRuntimeConfig,
     eodhd_runtime_config_from_env,
+    intraday_data_root_from_env,
 )
 
 EODHD_RUNTIME_ENV_VARS = [
@@ -66,3 +68,23 @@ def test_eodhd_runtime_config_rejects_rate_above_official_limit(
 
     with pytest.raises(ValueError, match="official limit 1000"):
         eodhd_runtime_config_from_env()
+
+
+def test_eodhd_runtime_config_rejects_retry_count_above_governed_maximum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EODHD_MAX_RETRIES", "4")
+
+    with pytest.raises(ValueError, match="between 0 and 3"):
+        eodhd_runtime_config_from_env()
+
+
+def test_intraday_data_root_requires_explicit_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("J21_INTRADAY_DATA_ROOT", raising=False)
+    with pytest.raises(ValueError, match="required"):
+        intraday_data_root_from_env()
+
+    monkeypatch.setenv("J21_INTRADAY_DATA_ROOT", "/tmp/j21-intraday")
+    assert intraday_data_root_from_env() == Path("/tmp/j21-intraday")

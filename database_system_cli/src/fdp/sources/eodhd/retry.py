@@ -6,7 +6,8 @@ from threading import Lock
 from time import monotonic
 from typing import Literal
 
-DEFAULT_MAX_RETRIES = 5
+MAX_RETRIES = 3
+DEFAULT_MAX_RETRIES = MAX_RETRIES
 DEFAULT_RETRY_DELAY_SECONDS = 61
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
@@ -16,6 +17,25 @@ EodhdProgressCallback = Callable[["EodhdApiEvent"], None]
 
 class EodhdApiBudgetExceeded(RuntimeError):
     """Raised before an HTTP attempt that would exceed its weighted API budget."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        endpoint: str | None = None,
+        completed_attempts: int = 0,
+        status_code: int | None = None,
+        retry_count: int = 0,
+        duration_ms: int = 0,
+        prior_error: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.endpoint = endpoint
+        self.completed_attempts = completed_attempts
+        self.status_code = status_code
+        self.retry_count = retry_count
+        self.duration_ms = duration_ms
+        self.prior_error = prior_error
 
 
 @dataclass(frozen=True)
@@ -50,7 +70,8 @@ class WeightedApiBudget:
             if proposed > self._limit:
                 raise EodhdApiBudgetExceeded(
                     f"EODHD API budget exhausted before {endpoint}: "
-                    f"consumed={self._consumed} requested={units} limit={self._limit}"
+                    f"consumed={self._consumed} requested={units} limit={self._limit}",
+                    endpoint=endpoint,
                 )
             self._consumed = proposed
             return self._snapshot_unlocked()

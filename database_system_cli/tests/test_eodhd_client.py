@@ -347,6 +347,78 @@ def test_eodhd_client_fetches_historical_eod_prices() -> None:
     assert response.rows_returned == 1
 
 
+def test_eodhd_client_fetches_weighted_one_minute_intraday_rows() -> None:
+    requested_urls: list[str] = []
+    budget = WeightedApiBudget(5)
+
+    def fake_transport(request, timeout: int) -> FakeResponse:
+        requested_urls.append(request.full_url)
+        return FakeResponse(
+            [
+                {
+                    "timestamp": 1704205800,
+                    "open": 100,
+                    "high": 101,
+                    "low": 99,
+                    "close": 100.5,
+                    "volume": 1000,
+                }
+            ]
+        )
+
+    client = EodhdClient(api_key="test-token", transport=fake_transport, api_budget=budget)
+    response = client.get_intraday(
+        "aapl.us",
+        from_timestamp=1704153600,
+        to_timestamp=1704239999,
+    )
+
+    parsed_url = urlparse(requested_urls[0])
+    query = parse_qs(parsed_url.query)
+    assert parsed_url.path == "/api/intraday/AAPL.US"
+    assert query["interval"] == ["1m"]
+    assert query["from"] == ["1704153600"]
+    assert query["to"] == ["1704239999"]
+    assert response.rows_returned == 1
+    assert budget.snapshot().consumed == 5
+
+
+def test_eodhd_client_rejects_non_one_minute_intraday_request() -> None:
+    client = EodhdClient(
+        api_key="test-token",
+        transport=lambda request, timeout: (_ for _ in ()).throw(
+            AssertionError("transport must not run")
+        ),
+    )
+    with pytest.raises(ValueError, match="only interval='1m'"):
+        client.get_intraday(
+            "AAPL.US",
+            from_timestamp=1704153600,
+            to_timestamp=1704239999,
+            interval="5m",
+        )
+
+
+def test_eodhd_client_retains_http_metadata_for_invalid_intraday_rows() -> None:
+    client = EodhdClient(
+        api_key="test-token",
+        transport=lambda request, timeout: FakeResponse([1]),
+    )
+
+    response = client.get_intraday(
+        "AAPL.US",
+        from_timestamp=1704153600,
+        to_timestamp=1704239999,
+    )
+
+    assert response.success is False
+    assert response.status_code == 200
+    assert response.retry_count == 0
+    assert response.rows_returned == 0
+    assert response.duration_ms >= 0
+    assert "must be JSON objects" in str(response.error_message)
+
+
 def test_eodhd_client_fetches_bulk_eod_prices() -> None:
     requested_urls: list[str] = []
 
@@ -561,8 +633,13 @@ def test_eodhd_client_retries_remote_disconnect() -> None:
 def test_eodhd_client_default_retry_policy_matches_runtime_default() -> None:
     client = EodhdClient(api_key="test-token", transport=lambda request, timeout: None)
 
-    assert client.max_retries == DEFAULT_MAX_RETRIES == 5
+    assert client.max_retries == DEFAULT_MAX_RETRIES == 3
     assert client.retry_delay_seconds == DEFAULT_RETRY_DELAY_SECONDS == 61
+
+
+def test_eodhd_client_rejects_retry_count_above_governed_maximum() -> None:
+    with pytest.raises(ValueError, match="between 0 and 3"):
+        EodhdClient(api_key="test-token", max_retries=4)
 
 
 def test_request_rate_limiter_spaces_request_starts() -> None:

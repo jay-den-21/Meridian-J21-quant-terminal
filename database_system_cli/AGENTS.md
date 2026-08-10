@@ -133,6 +133,7 @@ poetry run j21 repair ...
 | --- | --- | --- |
 | `docs/**` | `docs/AGENTS.md` | 文档事实、Markdown/HTML 同步 |
 | `src/fdp/get_data/**` | `src/fdp/get_data/AGENTS.md` | 共享 Job 契约与编排 |
+| `src/fdp/intraday/**` | `src/fdp/intraday/AGENTS.md` | 1m bar、Parquet 与 manifest 契约 |
 | `src/fdp/menu/**` | `src/fdp/menu/AGENTS.md` | 人类终端输入和进度展示 |
 | `src/fdp/sources/eodhd/**` | `src/fdp/sources/eodhd/AGENTS.md` | EODHD transport、parser、ingest |
 | `src/fdp/storage/**` | `src/fdp/storage/AGENTS.md` | SQLAlchemy metadata、upsert、schema guard |
@@ -155,3 +156,10 @@ poetry run j21 repair ...
 仓库级可视化位于平级 `../research_terminal/`。CLI 只拥有 canonical 数据、研究读取和
 确定性命令契约；Terminal 只能通过只读查询消费这些契约，不能把 HTTP/UI 状态或写库入口
 反向放入本子项目。
+
+### Intraday 本轮边界
+
+- `J21_INTRADAY_DATA_ROOT` 必须显式配置为 repo 外绝对路径；禁止默认到 repo 或临时目录。
+- 当前只验证 EODHD 美股 1 分钟原始 OHLCV；5/15/30 分钟以后从 1m 按 session 本地聚合。
+- MySQL 只保存 Parquet manifest，不保存分钟 bar；本轮不做全市场回填和定时任务。
+- Massive 与 PIT 明确不在当前任务范围，不新增对应 provider、命令、表或推断。

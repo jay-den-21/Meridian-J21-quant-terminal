@@ -19,6 +19,7 @@ from fdp.get_data import (
     DailyRangeJob,
     DelistedInstrumentsJob,
     EtfDailyJob,
+    EodhdIntradayValidationJob,
     FundDailyJob,
     HistoricalDailyJob,
     IdentifierMappingJob,
@@ -37,7 +38,7 @@ from fdp.get_data.reference import DEFAULT_PAGE_LIMIT as ID_MAPPING_DEFAULT_PAGE
 from fdp.get_data.corporate_actions import (
     DEFAULT_MAX_API_CALLS as CORPORATE_ACTION_DEFAULT_MAX_API_CALLS,
 )
-from fdp.get_data.registry import INGEST_JOB_DEFINITIONS
+from fdp.get_data.registry import MENU_JOB_DEFINITIONS
 from fdp.get_data.task_ledger import TaskLedger
 from fdp.menu.i18n import Language, tr
 from fdp.menu.progress import TqdmProgressReporter
@@ -92,7 +93,7 @@ def run_terminal_menu(
                     f"{tr(language, definition.category)} > {tr(language, definition.label_key)}",
                     definition.key,
                 )
-                for definition in INGEST_JOB_DEFINITIONS
+                for definition in MENU_JOB_DEFINITIONS
             ]
             + [(tr(language, "back"), "back")],
         )
@@ -776,6 +777,75 @@ def _run_daily_range(session: PromptSession, language: Language) -> None:
     _show_daily_workflow_result(result, language)
 
 
+def _run_intraday_validation(session: PromptSession, language: Language) -> None:
+    typer.secho(tr(language, "intraday_notice"), fg=typer.colors.YELLOW, bold=True)
+    symbols = _csv(_text(session, tr(language, "symbols")))
+    date_from = _date_value(session, tr(language, "date_from"))
+    date_to = _date_value(session, tr(language, "date_to"))
+    max_api_units = 200
+    if _advanced(session, language):
+        max_api_units = _int_value(
+            session,
+            tr(language, "max_calls"),
+            default=200,
+        )
+        if max_api_units > 200:
+            raise ValueError("intraday validation max API-call budget is 200")
+    runtime = JobRuntime.from_env()
+    job = EodhdIntradayValidationJob()
+    preflight = job.preflight(
+        symbols=symbols,
+        date_from=date_from,
+        date_to=date_to,
+        source="eodhd",
+        interval="1m",
+        market="US",
+        max_api_units=max_api_units,
+        runtime=runtime,
+        override_source="menu",
+    )
+    command = _command(
+        "validate",
+        "intraday",
+        "--symbols",
+        ",".join(symbols),
+        "--from",
+        date_from,
+        "--to",
+        date_to,
+        "--source",
+        "eodhd",
+        "--interval",
+        "1m",
+        "--market",
+        "US",
+        "--max-api-calls",
+        max_api_units,
+        "--execute",
+        "--yes",
+    )
+    _confirm_and_run(
+        session,
+        language,
+        preflight,
+        command,
+        lambda reporter: job.run(
+            symbols=symbols,
+            date_from=date_from,
+            date_to=date_to,
+            source="eodhd",
+            interval="1m",
+            market="US",
+            max_api_units=max_api_units,
+            execute=True,
+            runtime=runtime,
+            reporter=reporter,
+            override_source="menu",
+            preflight=preflight,
+        ),
+    )
+
+
 def _run_bulk_unmatched(session: PromptSession, language: Language) -> None:
     mode = session.select(
         tr(language, "reconcile_mode"),
@@ -1308,4 +1378,5 @@ JOB_HANDLERS: dict[str, Callable[[PromptSession, Language], None]] = {
     "id_mappings": _run_id_mappings,
     "corporate_actions": _run_corporate_actions,
     "bulk_unmatched": _run_bulk_unmatched,
+    "intraday_validation": _run_intraday_validation,
 }

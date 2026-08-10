@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 import yaml
 
 
-DEFAULT_EODHD_MAX_RETRIES = 5
+MAX_EODHD_RETRIES = 3
+DEFAULT_EODHD_MAX_RETRIES = MAX_EODHD_RETRIES
 DEFAULT_EODHD_RETRY_DELAY_SECONDS = 61
 EODHD_OFFICIAL_MAX_REQUESTS_PER_MINUTE = 1_000
 DEFAULT_EODHD_MAX_REQUESTS_PER_MINUTE = 600
@@ -59,6 +60,15 @@ def database_url_from_env() -> str:
     password = quote_plus(_required_env("FDP_DB_PASSWORD"))
     database = _required_env("FDP_DB_NAME")
     return f"{driver}://{user}:{password}@{host}:{port}/{database}"
+
+
+def intraday_data_root_from_env() -> Path:
+    """Return the explicitly configured intraday data root without creating it."""
+    load_environment()
+    raw_value = os.getenv("J21_INTRADAY_DATA_ROOT", "").strip()
+    if not raw_value:
+        raise ValueError("J21_INTRADAY_DATA_ROOT is required for intraday storage")
+    return Path(raw_value).expanduser()
 
 
 def eodhd_runtime_config_from_env() -> EodhdRuntimeConfig:
@@ -199,6 +209,10 @@ def _parse_bool(value: str, *, name: str) -> bool:
 
 
 def _validate_eodhd_runtime_config(config: EodhdRuntimeConfig) -> None:
+    if not 0 <= config.max_retries <= MAX_EODHD_RETRIES:
+        raise ValueError(
+            f"EODHD max_retries must be between 0 and {MAX_EODHD_RETRIES}"
+        )
     if config.max_requests_per_minute > EODHD_OFFICIAL_MAX_REQUESTS_PER_MINUTE:
         raise ValueError(
             "EODHD max_requests_per_minute must be less than or equal to "

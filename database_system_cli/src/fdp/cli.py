@@ -20,6 +20,7 @@ from fdp.get_data import (
     DailyRangeJob,
     DelistedInstrumentsJob,
     EtfDailyJob,
+    EodhdIntradayValidationJob,
     FundDailyJob,
     HistoricalDailyJob,
     IdentifierMappingJob,
@@ -1437,6 +1438,73 @@ def validate_daily_price(
             f"asset_type={summary.asset_type} "
             f"issues={summary.issues_found}"
         )
+
+
+@validate_app.command("intraday")
+def validate_intraday(
+    symbols: str = typer.Option(
+        ...,
+        "--symbols",
+        help="Comma-separated active NYSE/Nasdaq US stock symbols/provider symbols.",
+    ),
+    date_from: str = typer.Option(..., "--from", help="Start date in YYYY-MM-DD format."),
+    date_to: str = typer.Option(..., "--to", help="End date in YYYY-MM-DD format."),
+    source: str = typer.Option("eodhd", "--source", help="Validation source; currently eodhd."),
+    interval: str = typer.Option("1m", "--interval", help="Raw interval; currently 1m."),
+    market: str = typer.Option("US", "--market", help="Market; currently US."),
+    max_api_calls: int = typer.Option(
+        200,
+        "--max-api-calls",
+        min=1,
+        max=200,
+        help="Hard weighted API-unit cap including retries and /user preflight (max 200).",
+    ),
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help="Call EODHD and publish validation files; default is dry-run.",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Required with --execute."),
+    output: str = typer.Option("text", "--output", help="Output format: text or json."),
+) -> None:
+    """Validate a small EODHD 1m sample into repo-external Parquet plus a manifest."""
+    if execute and not yes:
+        raise typer.BadParameter("intraday validation execution requires --execute --yes")
+    parsed_from, parsed_to = _parse_date_range(date_from, date_to)
+    parsed_symbols = _parse_csv_values(symbols, "symbols")
+    output_mode = _parse_output_format(output)
+    job = EodhdIntradayValidationJob()
+    try:
+        result = job.run(
+            symbols=parsed_symbols,
+            date_from=parsed_from,
+            date_to=parsed_to,
+            source=source,
+            interval=interval,
+            market=market,
+            max_api_units=max_api_calls,
+            execute=execute,
+            reporter=CliProgressReporter(stderr=output_mode == "json"),
+            override_source="cli",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if _emit_job_json(result, output_mode):
+        return
+    preflight = result.preflight
+    if preflight is None:
+        raise RuntimeError("intraday validation did not return preflight details")
+    typer.echo(
+        "intraday validate "
+        f"status={result.status} run_id={result.run_id or '-'} "
+        f"symbols={','.join(parsed_symbols)} range={parsed_from}..{parsed_to} "
+        f"estimated_api_units={preflight.estimated_api_calls} "
+        f"api_units_consumed={result.metrics.get('api_units_consumed', 0)} "
+        f"bars={result.rows_matched} manifests_inserted={result.rows_inserted} "
+        f"rejected={result.rows_rejected}"
+    )
+    if result.status == "dry_run":
+        typer.echo("dry-run only; rerun with --execute --yes to validate and publish")
 
 
 @repair_app.command("plan-daily-price")

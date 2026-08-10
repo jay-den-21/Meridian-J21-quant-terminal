@@ -319,6 +319,62 @@ They are denied by default and require both server-side `J21_MCP_ENABLE_WRITES=1
 the individual call argument `confirm_execute=true`. MCP does not bypass `max_api_calls`,
 task leases, auto-resume, or the local data-quality workflow.
 
+## Intraday 1m Parquet Validation
+
+Configure a dedicated absolute data root outside the Git repository:
+
+```bash
+export J21_INTRADAY_DATA_ROOT=/absolute/path/to/j21-intraday
+```
+
+Dry-run one or a few active NYSE/Nasdaq US stocks first:
+
+```bash
+poetry run j21 validate intraday \
+  --symbols AAPL.US,MSFT.US \
+  --from 2024-01-02 \
+  --to 2024-01-05 \
+  --source eodhd \
+  --interval 1m \
+  --max-api-calls 200
+```
+
+Only the following guarded form calls EODHD and publishes files:
+
+```bash
+poetry run j21 validate intraday \
+  --symbols AAPL.US \
+  --from 2024-01-02 \
+  --to 2024-01-02 \
+  --max-api-calls 200 \
+  --execute --yes
+```
+
+This is a validation path, not a full-market minute backfill. It stores raw,
+unadjusted 1-minute OHLCV in repo-external Parquet and writes only file metadata to
+`system.intraday_file_manifest`. Timestamps are UTC; `trade_date` and `pre/core/after`
+session labels use `America/New_York`. One EODHD intraday request costs 5 weighted units,
+retries are charged again, requests are split into at most 120 calendar days, and the
+command's public hard cap is 200 units including the audited `/user` preflight.
+
+The file identity is one source/instrument/date/interval. Same-content reruns reuse the
+verified file and manifest; different content is held as a conflict and never overwrites
+the registered file. Because the filesystem and MySQL are not a distributed transaction,
+publication uses a verified temporary file, atomic no-overwrite publication, a short manifest
+transaction, and same-content orphan recovery. A database failure deliberately retains the verified
+content-addressed file because deleting it could break a concurrent publisher.
+
+An HTTP-success response with no valid in-window bars is reported as `partial_failed`; it never creates
+an empty manifest or claims successful contract validation.
+
+Future 5/15/30-minute bars are deterministic local transforms from stored 1m facts,
+anchored separately inside pre/core/after sessions. They are not fetched or stored as
+independent raw datasets in this version. EODHD documents the endpoint, 1m history/window,
+extended sessions, and fields in its
+[Intraday Historical Data API](https://eodhd.com/financial-apis/intraday-historical-data-api),
+while weighted costs are documented in [API Limits](https://eodhd.com/financial-apis/api-limits).
+Massive, PIT, production scheduling, and full-market minute backfill are outside this task.
+
 ## Delisted Instruments
 
 Load EODHD inactive/delisted stock+ETF+Fund universe:

@@ -488,6 +488,63 @@ ingestion_task_work_unit = Table(
     schema=SYSTEM_SCHEMA,
 )
 
+# system.intraday_file_manifest registers verified Parquet facts. Minute bars stay
+# outside MySQL; this row is the durable link from an ingestion run to one file.
+intraday_file_manifest = Table(
+    "intraday_file_manifest",
+    metadata,
+    Column("manifest_id", BigInteger, primary_key=True, autoincrement=True),
+    Column(
+        "run_id",
+        BigInteger,
+        ForeignKey(f"{SYSTEM_SCHEMA}.ingestion_task_run.run_id"),
+        nullable=False,
+    ),
+    Column("dataset_kind", String(32), nullable=False),
+    Column("source", String(32), nullable=False),
+    Column("market", String(16), nullable=False),
+    Column("asset_type", String(32), nullable=False),
+    Column("interval", String(16), nullable=False),
+    Column(
+        "instrument_id",
+        BigInteger,
+        ForeignKey(f"{US_SHARE_SCHEMA}.instrument.instrument_id"),
+        nullable=False,
+    ),
+    Column("provider_symbol", String(128), nullable=False),
+    Column("trade_date", Date, nullable=False),
+    Column("bucket", Integer, nullable=False),
+    Column("storage_path", String(512), nullable=False),
+    Column("content_hash", String(64), nullable=False),
+    Column("file_sha256", String(64), nullable=False),
+    Column("row_count", BigInteger, nullable=False),
+    Column("file_size_bytes", BigInteger, nullable=False),
+    Column("timestamp_min_utc", DateTime, nullable=False),
+    Column("timestamp_max_utc", DateTime, nullable=False),
+    Column("schema_version", Integer, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=func.current_timestamp()),
+    Column(
+        "updated_at",
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        server_onupdate=func.current_timestamp(),
+    ),
+    UniqueConstraint(
+        "dataset_kind",
+        "source",
+        "instrument_id",
+        "interval",
+        "trade_date",
+        name="uq_intraday_manifest_identity",
+    ),
+    UniqueConstraint("storage_path", name="uq_intraday_manifest_storage_path"),
+    Index("ix_intraday_manifest_run_id", "run_id"),
+    Index("ix_intraday_manifest_symbol_date", "provider_symbol", "trade_date"),
+    schema=SYSTEM_SCHEMA,
+)
+
 # system.instrument_identity_resolution_audit keeps the evidence used when a
 # Bulk provider symbol is attached to one canonical instrument. Repeated dates
 # extend the observed interval instead of creating one audit row per price.

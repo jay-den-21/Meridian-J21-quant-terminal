@@ -89,13 +89,13 @@ flowchart TB
     J --> K["Read-only Research Terminal"]
 ```
 
-注意：`validate`、`repair`、`quarantine` 和 `research` 当前不是 ingest Job。它们由
-`fdp/cli.py` 直接调用各自 service/read layer。`j21 menu` 当前只覆盖 registry 中的
-ingest/reconcile workflows。
+注意：大部分 `validate`、`repair`、`quarantine` 和 `research` 仍由 `fdp/cli.py` 直接调用
+各自 service/read layer。1m validation 是明确例外：CLI 和双语 Menu 都调用
+`EodhdIntradayValidationJob`，因此 provider、Parquet 和 manifest 逻辑没有第二份实现。
 
 Daily 自动续跑、`--new-run`、默认自动处理、Skill 和 MCP 已由
-`08-10-resumable-bulk-daily-workflow` 交付。1m Parquet 合约仍属于独立的
-`08-10-intraday-1m-contract-validation` 任务；Massive 和 PIT 不在本轮范围。
+`08-10-resumable-bulk-daily-workflow` 交付。1m validation 使用独立的 raw Parquet contract
+和 MySQL manifest；Massive 和 PIT 不在本轮范围。
 
 ## 4. 四种入口如何汇合
 
@@ -567,16 +567,38 @@ finalize 需要 verified backup/hash 和 conservation/checksum gate，不自动 
 | research 返回字段 | reader query + CLI renderer + tests + PROJECT contract |
 | 文档命令变化 | actual Typer `--help` tree + CLI Markdown/HTML + command-registration tests |
 
-## 14. 当前未实现边界
+## 14. Intraday 1m validation path
 
-- Terminal menu 尚未覆盖 validate、repair、quarantine 和普通 research 查询。
-- High-volume intraday bar store 尚未实现。若未来加入 5-minute 全市场数据，推荐将
-  instrument/catalog/quality metadata 留在 SQL，将大规模 bars 放入按资产/周期/日期分区的
-  Parquet；不要默认把数亿行 intraday bars 塞入当前日频 MySQL 模型。
+```mermaid
+flowchart LR
+    Input["CLI / 双语Menu"] --> Job["EodhdIntradayValidationJob"]
+    Job --> Client["EODHD /intraday"]
+    Client --> Parse["严格1m parser + NY session"]
+    Parse --> Temp["临时Parquet + checksum验证"]
+    Temp --> File["repo外正式Parquet"]
+    File --> Manifest["system.intraday_file_manifest"]
+    Job --> Audit["ingestion_task_run + api_call_log"]
+```
+
+路径固定为
+`validation/source=eodhd/asset_type=stock/interval=1m/trade_date=YYYY-MM-DD/bucket=NN/part-<content-hash>.parquet`。
+一个文件只含一个 instrument/trade_date；自然键为
+`(source, instrument_id, timestamp_utc, interval)`。时间戳存 UTC，交易日和
+pre/core/after 用 New York 时区。MySQL 只保存 manifest，不保存 bars。
+
+`J21_INTRADAY_DATA_ROOT` 必须是 repo 外绝对路径。缺失、相对路径、repo 内路径、根目录、
+home 或 symlink 在创建 client/文件前失败。provider 请求最多覆盖 120 天，每次按 5 units，
+公开验证命令含 `/user` 和 retries 的总 hard cap 为 200。测试只用 fixture/mock，真实调用为 0。
+
+## 15. 当前未实现边界
+
+- Terminal menu 只新增 1m validation；其他 validate、repair、quarantine 和普通 research 查询尚未覆盖。
+- High-volume intraday production backfill 尚未实现。当前只实现 EODHD stock 1m 小样本契约验证；
+  5/15/30m 将来按 session 从 1m 本地聚合，不重复保存 raw provider datasets。
 - Research Terminal v1 已实现，但不是 PIT universe terminal；等待 universe membership 数据后
   才能增加历史时点成分筛选。
 
-## 15. 验证入口
+## 16. 验证入口
 
 ```bash
 cd database_system_cli

@@ -55,7 +55,7 @@ Completed:
 - Quarantine execution archives source row payload/hash before deleting rows for `invalid_ohlcv` and `price_on_non_trading_day`, then resolves the linked `data_quality_issue` only after post-action verification
 - Quarantine workflow hardened after adversarial review: confirm/run previews source rows, execution claims the plan, locks source rows, checks actual delete rowcount, and refuses to silently resolve stale non-trading issues while rows remain
 - Operator-confirmed dedupe workflow added for `duplicate_key` daily-price groups: exact duplicate payloads are deduped through the quarantine archive/delete path, while conflicting duplicate payloads are rejected for manual review
-- EODHD API calls now use a centralized retry/progress policy: up to 5 retries, default 61-second waits, retryable transient status/network failures, and CLI-visible `request`/`retrying`/`success`/`failed` messages without printing API tokens
+- EODHD API calls now use a centralized retry/progress policy: up to 3 retries, default 61-second waits, retryable transient status/network failures, and CLI-visible `request`/`retrying`/`success`/`failed` messages without printing API tokens
 - `j21 validate daily-price` command now executes duplicate, missing loaded trading-day row, OHLCV, and non-trading-day price checks, then writes `system.data_quality_check_run` and `system.data_quality_issue`
 - Database-backed research read layer added through `fdp.research.DailyPriceReader`, with method-level dates overriding reader defaults and strict `ValueError` behavior for missing or partial date ranges
 - `j21 research daily-prices` command added as a thin CLI wrapper around the Python research reader
@@ -135,14 +135,15 @@ Completed:
 - Durable Daily Bulk tasks are implemented with immutable task/date fingerprints, automatic exact-scope resume, verified overlap reuse, `--new-run`, live/stale lease protection, periodic heartbeat, per-date checkpoints, source-row closure, thin-response retry/held review, and zero-provider exact-complete results. Daily and daily-range remain dry-run by default and require `--execute --yes`.
 - Daily now automatically runs local classify/route/validate unless `--manual` is selected. The bilingual Menu exposes Continue/New and Auto/Manual with one final confirmation; `j21 task list/status/adopt-daily-legacy` provides operator inspection and strict old-run adoption.
 - `.agents/skills/j21-daily-ingest` and the stdio `j21-mcp` adapter reuse the same Job/TaskLedger. MCP has four read tools and two execute tools; writes require both `J21_MCP_ENABLE_WRITES=1` and `confirm_execute=true`. The Daily ledger migration is rebased onto the externally owned A-share guard as `0019_daily_task_ledger`; current verification results are recorded by the consolidation task rather than reusing the historical 359-test claim.
+- The EODHD US-stock 1m validation contract is implemented with required repo-external `J21_INTRADAY_DATA_ROOT`, UTC/New York session semantics, strict raw OHLCV parsing, deterministic PyArrow schema and partitioning, content/file checksums, idempotent manifest publication, CLI/Menu dry-run guards, a 200-unit cap, and fixture-only tests. Three adversarial review rounds closed all P0/P1 findings; the final gate passes 393 tests, Ruff, compileall, Poetry metadata, Alembic single-head, and CLI help. MySQL stores only `system.intraday_file_manifest`; Massive, PIT, production scheduling, and full-market minute backfill remain excluded.
 
 In progress:
 
-- the separate 1-minute EODHD Parquet storage contract and fixture-only validation; Massive and PIT remain excluded from this task
+- no production intraday backfill is active; the completed 1m path remains validation-only
 
 ## Next Step
 
-- implement the separate 1-minute Parquet contract with fixture-only EODHD validation and zero real intraday API calls
+- plan a separately authorized production intraday backfill only after storage-volume, retention, and scheduling policy are approved
 - add an explicit operator-controlled skip/manual-review path for future rename-history API outages
 - decide the next delisted-date source: EODHD Fundamentals/Corporate Actions, Nasdaq/FINRA lists, or manual enrichment, because the EODHD delisted symbol list does not expose delist dates
 - plan point-in-time universe membership so active-only backtests can be clearly separated from survivorship-bias-aware research

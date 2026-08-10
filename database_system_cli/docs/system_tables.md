@@ -17,6 +17,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `ingestion_task_run` | 记录 ingest、migration 和 reconcile 的父任务；Daily 还保存不可变 fingerprint、active resume key、lease/heartbeat 和 aggregate checkpoint | `fdp.get_data` Jobs、ingest/migration/reconcile services | `j21 task`、Menu、MCP、审计查询 | 长期保留；checkpoint 是中断续跑依据 | 否；多张表通过 run ID 引用 |
 | `ingestion_task_work_unit` | Daily 每个交易日一行，保存 unit/series fingerprint、状态、复用证据、response hash、published/pending/rejected 计数、API units 和质量结论 | Daily TaskLedger 与 Bulk executor | 自动续跑、重叠复用、`j21 task status`、MCP task tools | 长期保留；verified unit 是 0-call 复用证据 | 否；删除会破坏续跑和成本审计 |
+| `intraday_file_manifest` | 每个已验证 1m Parquet 文件一行，保存 source/instrument/date/interval identity、相对路径、内容 hash、文件 checksum、行数、时间范围和 schema version；不保存分钟 bar | `EodhdIntradayValidationJob` 的 manifest publisher | 文件完整性检查、幂等重跑、后续只读 intraday reader | 与 Parquet 文件成对长期保留；同 identity 的不同内容不得覆盖 | 否；单删会使文件和审计失联 |
 | `api_call_log` | 记录供应商请求摘要、状态码、重试和耗时；Daily 通过 `work_unit_id` 关联具体交易日，不保存完整响应 | EODHD client/ingest runtime | 预算核对、故障排查 | 当前长期保留；未来可按完整 run 归档 | 否；不得孤立删除部分请求 |
 | `instrument_identity_resolution_audit` | 汇总 Bulk ticker 到 instrument 的身份判定、置信度和证据区间 | Bulk direct ingest、reconcile route | route 冲突保护、后续 Fundamental 复核、审计 | 永久保留；新结论用 `supersedes_audit_id` 取代旧结论 | 否 |
 | `bulk_unmatched_daily_price_observation` | 保存 Bulk EOD 未直接匹配的原始观测及分类/路由状态 | Bulk ingest、classifier、router | reconcile CLI/Menu、研究诊断 | 全量保留；本版本没有自动清理 | 否；`routed/resolved/shadowed` 仍是证据 |
@@ -50,6 +51,21 @@ flowchart LR
 返回原结果且不调用供应商。重叠 scope 只能复用 `quality_status=verified` 的日期。`--new-run`
 会显式 supersede 旧任务，但不能越过仍有效的 lease。`held` work unit 会保留已发布数据和审计，
 但不会成为复用证据，因此后续 Continue 仍会重新获取。
+
+## Intraday Parquet Manifest 关系
+
+```mermaid
+flowchart LR
+    Run["ingestion_task_run"] --> Call["api_call_log"]
+    Run --> Manifest["intraday_file_manifest"]
+    Manifest --> File["repo-external verified Parquet"]
+```
+
+分钟 bar 不进入 MySQL。manifest 的唯一身份为
+`dataset_kind + source + instrument_id + interval + trade_date`，另有唯一相对
+`storage_path`。同内容重跑复用现有记录；checksum、content hash、schema 或路径不同会报
+conflict。文件系统与 MySQL 无法形成分布式事务，因此正式 content-addressed 文件发布后不再
+因 DB 失败而删除，避免误删并发 writer 已使用的文件；下次同内容重跑会验证并登记该孤儿文件。
 
 ## Guided Reconcile 关系
 

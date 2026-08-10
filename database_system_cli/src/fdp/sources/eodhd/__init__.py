@@ -20,6 +20,12 @@ from fdp.sources.eodhd.instruments import (
     parse_symbol_change_history_rows,
     split_provider_symbol,
 )
+from fdp.sources.eodhd.intraday import (
+    ParsedIntradayRows,
+    RejectedIntradayRow,
+    parse_intraday_row,
+    parse_intraday_rows,
+)
 from fdp.sources.eodhd.prices import (
     ParsedDailyPriceRows,
     RejectedDailyPriceRow,
@@ -38,14 +44,18 @@ __all__ = [
     "parse_split_rows",
     "ParsedDailyPriceRows",
     "ParsedInstrumentRows",
+    "ParsedIntradayRows",
     "ParsedSymbolChangeRows",
     "RejectedDailyPriceRow",
     "RejectedInstrumentRow",
+    "RejectedIntradayRow",
     "RejectedSymbolChangeRow",
     "SymbolChange",
     "build_market_calendar_rows",
     "parse_exchange_symbol",
     "parse_exchange_symbol_rows",
+    "parse_intraday_row",
+    "parse_intraday_rows",
     "parse_daily_price_row",
     "parse_daily_price_rows",
     "parse_symbol_change_history",

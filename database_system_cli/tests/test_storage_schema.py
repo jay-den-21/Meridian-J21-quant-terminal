@@ -21,6 +21,7 @@ from fdp.storage import (
     instrument_identifier_history,
     instrument_identity_resolution_audit,
     instrument_lifecycle_event,
+    intraday_file_manifest,
     market_calendar,
     metadata,
     quarantine_plan,
@@ -53,6 +54,7 @@ def test_initial_metadata_contains_project_tables() -> None:
     assert f"{SYSTEM_SCHEMA}.bulk_unmatched_daily_price_observation" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.identifier_mapping_unmatched_observation" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.instrument_identity_resolution_audit" in metadata.tables
+    assert f"{SYSTEM_SCHEMA}.intraday_file_manifest" in metadata.tables
     assert f"{SYSTEM_SCHEMA}.fund_daily_price_split_run" in metadata.tables
     assert fund_daily_price_split_run.schema == SYSTEM_SCHEMA
 
@@ -225,6 +227,37 @@ def test_daily_task_storage_tracks_identity_lease_and_per_date_evidence() -> Non
         "quality_status",
         "metrics_json",
     }.issubset(ingestion_task_work_unit.c.keys())
+
+
+def test_intraday_manifest_tracks_file_identity_and_integrity() -> None:
+    assert {
+        "manifest_id",
+        "run_id",
+        "dataset_kind",
+        "source",
+        "asset_type",
+        "interval",
+        "instrument_id",
+        "provider_symbol",
+        "trade_date",
+        "storage_path",
+        "content_hash",
+        "file_sha256",
+        "row_count",
+        "timestamp_min_utc",
+        "timestamp_max_utc",
+        "schema_version",
+        "status",
+    }.issubset(intraday_file_manifest.c.keys())
+    assert {
+        "dataset_kind",
+        "source",
+        "instrument_id",
+        "interval",
+        "trade_date",
+    } in [
+        set(constraint.columns.keys()) for constraint in intraday_file_manifest.constraints
+    ]
 
 
 def test_lifecycle_event_records_instrument_state_changes() -> None:

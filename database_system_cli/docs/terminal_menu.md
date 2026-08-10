@@ -100,7 +100,24 @@ Reference / reconcile：
 - Security ID Mapping：US exchange full sync 或少量 provider symbols
 - Bulk unmatched guided workflow：新建或按 `run_id` 继续
 
-Validate、repair、quarantine 和普通 research 查询暂时保留为 CLI-only；它们不会在菜单中显示成不可用按钮。
+Validation：
+
+- EODHD active US stock 1m Parquet 小样本验证
+
+除这个明确的 1m validation wizard 外，daily-price validate、repair、quarantine 和普通
+research 查询仍保留为 CLI-only；它们不会在菜单中显示成不可用按钮。
+
+### Intraday 1m Validation
+
+中英文菜单均提供 `Validation -> EODHD stock 1m Parquet validation`。它要求明确输入少量
+stock symbols 和日期范围，并从环境变量 `J21_INTRADAY_DATA_ROOT` 读取 repo 外绝对路径。
+高级参数只允许把 weighted API hard cap 调低，不能超过 200。确认页明确标注
+validation-only、目标 manifest、120 天分窗、预计 units 和等价 `j21 validate intraday` 命令；
+最终确认默认 `No`。
+
+执行时保留 pre/core/after 1m 原始行，分钟 bar 写 Parquet，MySQL 只写
+`system.intraday_file_manifest` 和现有 run/API audit。Menu 不提供 Massive、PIT、全市场回填、
+定时任务或独立 5/15/30m 下载入口。
 
 ### Security ID Mapping
 

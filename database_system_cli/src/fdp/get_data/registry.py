@@ -15,6 +15,7 @@ from fdp.get_data.historical import (
     StockDailyJob,
 )
 from fdp.get_data.instruments import ActiveInstrumentsJob, DelistedInstrumentsJob
+from fdp.get_data.intraday import EodhdIntradayValidationJob
 from fdp.get_data.reconcile import BulkUnmatchedReconcileJob
 from fdp.get_data.reference import IdentifierMappingJob
 
@@ -114,6 +115,18 @@ INGEST_JOB_DEFINITIONS = (
         BulkUnmatchedReconcileJob,
     ),
 )
+
+VALIDATION_JOB_DEFINITIONS = (
+    IngestJobDefinition(
+        "intraday_validation",
+        "validation",
+        "job_intraday_validation",
+        "fdp.get_data.intraday.validate_eodhd",
+        EodhdIntradayValidationJob,
+    ),
+)
+
+MENU_JOB_DEFINITIONS = (*INGEST_JOB_DEFINITIONS, *VALIDATION_JOB_DEFINITIONS)
 
 
 def get_ingest_job_definition(key: str) -> IngestJobDefinition:

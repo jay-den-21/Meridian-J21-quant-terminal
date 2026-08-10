@@ -172,6 +172,31 @@ def test_cli_registers_calendar_ingest_command() -> None:
     assert "--to" in result.output
 
 
+def test_cli_registers_guarded_intraday_validation() -> None:
+    runner = CliRunner()
+    help_result = runner.invoke(app, ["validate", "intraday", "--help"])
+    unsafe_execute = runner.invoke(
+        app,
+        [
+            "validate",
+            "intraday",
+            "--symbols",
+            "AAPL.US",
+            "--from",
+            "2024-01-02",
+            "--to",
+            "2024-01-02",
+            "--execute",
+        ],
+    )
+
+    assert help_result.exit_code == 0
+    assert "--max-api-calls" in help_result.output
+    assert "--source" in help_result.output
+    assert unsafe_execute.exit_code != 0
+    assert "requires --execute --yes" in unsafe_execute.output
+
+
 def test_cli_documentation_and_html_mirrors_are_current() -> None:
     repository_root = Path(__file__).parents[2]
     result = CliRunner().invoke(

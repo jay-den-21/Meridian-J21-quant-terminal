@@ -14,9 +14,11 @@ from urllib.request import Request, urlopen
 from fdp.sources.eodhd.retry import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_DELAY_SECONDS,
+    EodhdApiBudgetExceeded,
     EodhdApiEvent,
     EodhdProgressCallback,
     EodhdRequestRateLimiter,
+    MAX_RETRIES,
     WeightedApiBudget,
     WeightedApiBudgetSnapshot,
     should_retry,
@@ -75,6 +77,8 @@ class EodhdClient:
         """
         if not api_key:
             raise ValueError("api_key must not be empty")
+        if not 0 <= max_retries <= MAX_RETRIES:
+            raise ValueError(f"max_retries must be between 0 and {MAX_RETRIES}")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
@@ -258,6 +262,39 @@ class EodhdClient:
             endpoint=endpoint,
             url=url,
             object_name="historical EOD",
+        )
+
+    def get_intraday(
+        self,
+        provider_symbol: str,
+        *,
+        from_timestamp: int,
+        to_timestamp: int,
+        interval: str = "1m",
+    ) -> EodhdApiResponse:
+        """Fetch raw EODHD 1-minute rows for one explicitly bounded symbol window."""
+        normalized_symbol = provider_symbol.strip().upper()
+        if not normalized_symbol:
+            raise ValueError("provider_symbol must not be empty")
+        if interval != "1m":
+            raise ValueError("intraday validation currently supports only interval='1m'")
+        if from_timestamp < 0 or to_timestamp < from_timestamp:
+            raise ValueError("intraday Unix timestamp range is invalid")
+        endpoint = f"/intraday/{normalized_symbol}"
+        query = urlencode(
+            {
+                "interval": interval,
+                "from": from_timestamp,
+                "to": to_timestamp,
+                "api_token": self.api_key,
+                "fmt": "json",
+            }
+        )
+        return self._get_json_list(
+            endpoint=endpoint,
+            url=f"{self.base_url}{endpoint}?{query}",
+            object_name="intraday bar",
+            api_units=5,
         )
 
     def get_bulk_eod(
@@ -449,7 +486,19 @@ class EodhdClient:
                 error_message=f"EODHD {object_name} response must be a JSON list",
             )
 
-        rows = [_require_object_row(row, object_name=object_name) for row in payload]
+        try:
+            rows = [_require_object_row(row, object_name=object_name) for row in payload]
+        except (TypeError, ValueError) as exc:
+            return EodhdApiResponse(
+                endpoint=endpoint,
+                status_code=response.status_code,
+                success=False,
+                retry_count=response.retry_count,
+                rows_returned=0,
+                duration_ms=response.duration_ms,
+                payload=[],
+                error_message=str(exc),
+            )
         return EodhdApiResponse(
             endpoint=endpoint,
             status_code=response.status_code,
@@ -543,7 +592,21 @@ class EodhdClient:
 
         for attempt in range(max_attempts):
             retry_count = attempt
-            budget_snapshot = self._reserve_api_units(endpoint=endpoint, api_units=api_units)
+            try:
+                budget_snapshot = self._reserve_api_units(
+                    endpoint=endpoint,
+                    api_units=api_units,
+                )
+            except EodhdApiBudgetExceeded as exc:
+                raise EodhdApiBudgetExceeded(
+                    str(exc),
+                    endpoint=endpoint,
+                    completed_attempts=attempt,
+                    status_code=last_status_code,
+                    retry_count=max(attempt - 1, 0),
+                    duration_ms=_duration_ms(started),
+                    prior_error=last_error,
+                ) from exc
             if self.rate_limiter is not None:
                 self.rate_limiter.wait()
             self._emit_progress(
