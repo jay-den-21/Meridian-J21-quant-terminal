@@ -145,11 +145,12 @@ financial-data-platform/
 第一版使用同一个 MySQL server 下的多个 schema：
 
 - `us_share`：美股业务数据
-- `a_share`：A 股业务数据，第一阶段预留，后续使用 Tushare
+- `a_share`：由兄弟产品 `database_system_cli_cn` 管理的外部 A 股业务数据；本项目不得写入或删除
 - `system`：任务状态、质量报告、API 调用摘要、修复计划
 - `app_log`：API playground、search、screener、quote、live/websocket snapshot 等临时查询响应和未来 app 日志
 
-备注：旧的本地 A 股程序/数据库名叫 `qtdb_pro`。本项目的新 schema 名称仍统一使用 `a_share`，不要同时创建 `qtdb_pro` 和 `a_share` 两套 A 股 schema。
+备注：A 股产品统一使用 `a_share`；`database_system_cli` 只保留防误删边界，
+不注册 Tushare CLI、Menu、Job 或迁移逻辑。
 
 测试必须使用独立 schema，例如：
 

@@ -312,5 +312,7 @@ def downgrade() -> None:
     op.drop_table("instrument", schema="us_share")
 
     op.execute("DROP SCHEMA IF EXISTS `system`")
-    op.execute("DROP SCHEMA IF EXISTS a_share")
+    # ``a_share`` is an externally owned Tushare schema.  Never drop it from a
+    # platform downgrade: another writer could populate it after revision 0018's
+    # early guard and before this base downgrade executes.
     op.execute("DROP SCHEMA IF EXISTS us_share")

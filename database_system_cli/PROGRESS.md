@@ -8,6 +8,10 @@ The project has a runnable, testable, and committable Python + Poetry scaffold.
 
 Completed:
 
+- Tushare CLI/Menu/client/Job and the completed `qtdb_pro_rep -> a_share`
+  operator were removed from this product; sibling `database_system_cli_cn`
+  now solely owns Tushare ingestion, while this project only protects the
+  externally managed `a_share` schema from downgrade deletion.
 - Python package scaffold under `src/fdp`
 - Poetry project metadata and dependency definitions
 - CLI entrypoint through `poetry run j21 --help`; `fdp` remains as a temporary compatibility alias

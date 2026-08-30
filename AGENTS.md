@@ -22,15 +22,21 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 # Repository Governance
 
-This repository has five sibling components with independent ownership:
+This repository has six sibling components with independent ownership:
 
 - `database_system_cli/`: database ingestion, validation, repair, and research read layer.
+- `database_system_cli_cn/`: independently runnable Chinese Tushare compatibility product; it preserves the legacy getter/runtime surface while targeting the externally owned `a_share` schema.
 - `database_app/`: local EODHD API code generator and API playground.
 - `personal_site/`: Jayden21 personal homepage only.
 - `j21_terminal/`: Meridian landing page and animated handoff to the real Research Terminal only.
 - `research_terminal/`: localhost-only read-only FastAPI/React research visualization.
 
 Do not put new app work into `database_system_cli/` unless the user explicitly asks to extend the database CLI. Do not let `database_app/` write database schemas, migrations, or ingestion data.
+Do not import `database_system_cli_cn` from `database_system_cli`. Inside the CN product,
+`src/fdp_cn` may invoke preserved getters only through its explicit compatibility worker;
+do not treat append-plus-cleanup as equivalent to the direct transactional upsert path.
+Do not run two A-share writers concurrently unless a later task explicitly qualifies that
+operating mode.
 Do not place personal-profile or terminal frontend code under `database_app/`. Cross-product navigation must use links between the sibling roots rather than embedding one product's views or assets inside another.
 Do not let `research_terminal/` execute ingest/repair/migration or arbitrary SQL; it may only read canonical/audit data and display inert CLI suggestions.
 
@@ -43,6 +49,7 @@ rules; it never overrides repository boundaries or secret-handling rules.
 | Working path | Required context |
 | --- | --- |
 | `database_system_cli/**` | `database_system_cli/AGENTS.md` and its scoped routing table |
+| `database_system_cli_cn/**` | this file |
 | `database_app/**` | `database_app/AGENTS.md` |
 | `personal_site/**` | this file |
 | `j21_terminal/**` | this file |
