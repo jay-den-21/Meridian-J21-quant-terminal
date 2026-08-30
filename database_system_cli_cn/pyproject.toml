@@ -1,0 +1,50 @@
+[tool.poetry]
+name = "database_system_cli_cn"
+version = "7.0"
+description = ""
+authors = ["Jayden21 <jayden0721@163.com>"]
+readme = "README.md"
+packages = [{ include = "fdp_cn", from = "src" }]
+include = ["src/fdp_cn/tushare/catalog_seed.json"]
+
+[tool.poetry.scripts]
+j21 = "fdp_cn.cli:main"
+
+[[tool.poetry.source]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+priority = "primary"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.dependencies]
+python = "3.11.3"
+sqlalchemy = "1.4.52"
+#retry = "^0.9.2"
+pandas = "1.5.3"
+loguru = "^0.7.2"
+pyyaml = "^6.0.1"
+tushare = "^1.4.6"
+joblib = "^1.4.2"
+#pydes = "^2.0.1"
+cryptography = "44.0.1"
+pymysql = "1.1.0"
+backtrader = "1.9.78.123"
+requests = "2.31.0"
+urllib3 = "1.26.18"
+matplotlib = "^3.9.0"
+numpy = "1.26.4"
+openpyxl = "^3.1.5"
+xcsc-tushare = "^1.0.3"
+pycryptodome = "^3.23.0"
+psutil = "^7.0.0"
+pydes = "^2.0.1"
+
+
+# 在windows下打开如下注释，mac和linux下无需安装
+pywin32 = {version = "306", platform = "win32"}
+wmi = {version = "1.4.9", platform = "win32"}
+
+
