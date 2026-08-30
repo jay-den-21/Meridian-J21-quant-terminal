@@ -23,7 +23,9 @@ backups/
 database_app/site/assets/nasdaq.png
 database_app/site/assets/nyse-line-icon-vector.jpg
 database_system_cli/logs/
-playground/tushare2db_pro_v7_0_for_mac_on_python3_11_3/
+/playground/
+/quant/
+/personal_site/
 database_system_cli_cn/config/ts2db_config.yaml
 database_system_cli_cn/reports/
 database_system_cli_cn/resources/log/
