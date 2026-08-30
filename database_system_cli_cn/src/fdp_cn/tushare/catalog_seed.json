@@ -1,0 +1,3487 @@
+{
+  "entries": [
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.Get_tradeCal.get_tradeCal"
+      ],
+      "api_name": "trade_cal",
+      "business_key": [
+        "exchange",
+        "cal_date"
+      ],
+      "capability": {
+        "kind": "executable",
+        "reason": null
+      },
+      "category": "calendar",
+      "description": "交易日历",
+      "freq": null,
+      "key": "trade_cal",
+      "legacy_id": "get_ph_data_from_ts.Get_tradeCal.get_tradeCal",
+      "legacy_path": "get_ph_data_from_ts/Get_tradeCal.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_trade_cal"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.alt.Get_alt_cctv_news.get_alt_cctv_news"
+      ],
+      "api_name": "cctv_news",
+      "business_key": [
+        "trade_date",
+        "title"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "alt",
+      "description": "新闻联播",
+      "freq": null,
+      "key": "alt.alt_cctv_news",
+      "legacy_id": "get_ph_data_from_ts.alt.Get_alt_cctv_news.get_alt_cctv_news",
+      "legacy_path": "get_ph_data_from_ts/alt/Get_alt_cctv_news.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_alt_cctv_news"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.alt.Get_alt_eco_cal.get_alt_eco_cal"
+      ],
+      "api_name": "eco_cal",
+      "business_key": [
+        "trade_date",
+        "currency",
+        "country",
+        "event",
+        "value",
+        "pre_value",
+        "fore_value"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "alt",
+      "description": "财经日历",
+      "freq": null,
+      "key": "alt.alt_eco_cal",
+      "legacy_id": "get_ph_data_from_ts.alt.Get_alt_eco_cal.get_alt_eco_cal",
+      "legacy_path": "get_ph_data_from_ts/alt/Get_alt_eco_cal.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 100,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_alt_eco_cal"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.alt.Get_alt_stk_factor.get_alt_stk_factor"
+      ],
+      "api_name": "stk_factor",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "alt",
+      "description": "股票技术因子（量化因子）",
+      "freq": null,
+      "key": "alt.alt_stk_factor",
+      "legacy_id": "get_ph_data_from_ts.alt.Get_alt_stk_factor.get_alt_stk_factor",
+      "legacy_path": "get_ph_data_from_ts/alt/Get_alt_stk_factor.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 10000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_alt_stk_factor"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.cb.Get_cb_1min.get_cb_1min"
+      ],
+      "api_name": "pro_bar",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "cb",
+      "description": "可转债1分钟k",
+      "freq": "1min",
+      "key": "cb.cb_1min",
+      "legacy_id": "get_ph_data_from_ts.cb.Get_cb_1min.get_cb_1min",
+      "legacy_path": "get_ph_data_from_ts/cb/Get_cb_1min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_cb_1min"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.cb.Get_cb_5min.get_cb_5min"
+      ],
+      "api_name": "pro_bar",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "cb",
+      "description": "可转债5分钟k",
+      "freq": "5min",
+      "key": "cb.cb_5min",
+      "legacy_id": "get_ph_data_from_ts.cb.Get_cb_5min.get_cb_5min",
+      "legacy_path": "get_ph_data_from_ts/cb/Get_cb_5min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_cb_5min"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.cb.Get_cb_basic.get_cb_basic"
+      ],
+      "api_name": "cb_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "cb",
+      "description": "可转债基本信息",
+      "freq": null,
+      "key": "cb.cb_basic",
+      "legacy_id": "get_ph_data_from_ts.cb.Get_cb_basic.get_cb_basic",
+      "legacy_path": "get_ph_data_from_ts/cb/Get_cb_basic.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_cb_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.cb.Get_cb_daily.get_cb_daily"
+      ],
+      "api_name": "cb_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "cb",
+      "description": "可转债行情",
+      "freq": null,
+      "key": "cb.cb_daily",
+      "legacy_id": "get_ph_data_from_ts.cb.Get_cb_daily.get_cb_daily",
+      "legacy_path": "get_ph_data_from_ts/cb/Get_cb_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_cb_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.cb.Get_cb_daily_basic.get_cb_daily_basic"
+      ],
+      "api_name": "UNSUPPORTED",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "disabled_unsupported",
+        "reason": "The legacy variant has no supported Tushare endpoint mapping."
+      },
+      "category": "cb",
+      "description": "转债每日指标",
+      "freq": null,
+      "key": "cb.cb_daily_basic",
+      "legacy_id": "get_ph_data_from_ts.cb.Get_cb_daily_basic.get_cb_daily_basic",
+      "legacy_path": "get_ph_data_from_ts/cb/Get_cb_daily_basic.py",
+      "pagination": {
+        "kind": "not_applicable",
+        "page_limit": null,
+        "source": "unsupported legacy variant makes no provider request"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_cb_daily_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fin.Get_fin_balancesheet.get_fin_balancesheet"
+      ],
+      "api_name": "balancesheet",
+      "business_key": [
+        "end_date",
+        "ts_code",
+        "report_type",
+        "update_flag"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fin",
+      "description": "资产负债表",
+      "freq": null,
+      "key": "fin.fin_balancesheet",
+      "legacy_id": "get_ph_data_from_ts.fin.Get_fin_balancesheet.get_fin_balancesheet",
+      "legacy_path": "get_ph_data_from_ts/fin/Get_fin_balancesheet.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_fin_balancesheet"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fin.Get_fin_balancesheet_vip.get_fin_balancesheet_vip"
+      ],
+      "api_name": "balancesheet_vip",
+      "business_key": [
+        "end_date",
+        "ts_code",
+        "report_type",
+        "update_flag"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fin",
+      "description": "资产负债表",
+      "freq": null,
+      "key": "fin.fin_balancesheet_vip",
+      "legacy_id": "get_ph_data_from_ts.fin.Get_fin_balancesheet_vip.get_fin_balancesheet_vip",
+      "legacy_path": "get_ph_data_from_ts/fin/Get_fin_balancesheet_vip.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fin_balancesheet"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fin.Get_fin_cashflow.get_fin_cashflow"
+      ],
+      "api_name": "cashflow",
+      "business_key": [
+        "ts_code",
+        "ann_date",
+        "report_type",
+        "update_flag",
+        "end_type",
+        "comp_type",
+        "net_profit",
+        "c_fr_sale_sg",
+        "free_cashflow",
+        "n_cashflow_act"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fin",
+      "description": "现金流量表",
+      "freq": null,
+      "key": "fin.fin_cashflow",
+      "legacy_id": "get_ph_data_from_ts.fin.Get_fin_cashflow.get_fin_cashflow",
+      "legacy_path": "get_ph_data_from_ts/fin/Get_fin_cashflow.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_fin_cashflow_all"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fin.Get_fin_cashflow_vip.get_fin_cashflow_vip"
+      ],
+      "api_name": "cashflow_vip",
+      "business_key": [
+        "ts_code",
+        "ann_date",
+        "report_type",
+        "update_flag",
+        "end_type",
+        "comp_type",
+        "net_profit",
+        "c_fr_sale_sg",
+        "free_cashflow",
+        "n_cashflow_act"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fin",
+      "description": "现金流量表",
+      "freq": null,
+      "key": "fin.fin_cashflow_vip",
+      "legacy_id": "get_ph_data_from_ts.fin.Get_fin_cashflow_vip.get_fin_cashflow_vip",
+      "legacy_path": "get_ph_data_from_ts/fin/Get_fin_cashflow_vip.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fin_cashflow_all"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fin.Get_fin_income.get_fin_income"
+      ],
+      "api_name": "income_vip",
+      "business_key": [
+        "ts_code",
+        "ann_date",
+        "report_type",
+        "update_flag",
+        "end_type",
+        "comp_type",
+        "basic_eps",
+        "total_revenue",
+        "total_cogs"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fin",
+      "description": "利润表",
+      "freq": null,
+      "key": "fin.fin_income",
+      "legacy_id": "get_ph_data_from_ts.fin.Get_fin_income.get_fin_income",
+      "legacy_path": "get_ph_data_from_ts/fin/Get_fin_income.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "codelist",
+      "required_inputs": [
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_fin_income"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fin.Get_fin_income_all_vip.get_fin_income_all_vip"
+      ],
+      "api_name": "income_vip",
+      "business_key": [
+        "ts_code",
+        "ann_date",
+        "report_type",
+        "update_flag",
+        "end_type",
+        "comp_type",
+        "basic_eps",
+        "total_revenue",
+        "total_cogs"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fin",
+      "description": "利润表",
+      "freq": null,
+      "key": "fin.fin_income_all_vip",
+      "legacy_id": "get_ph_data_from_ts.fin.Get_fin_income_all_vip.get_fin_income_all_vip",
+      "legacy_path": "get_ph_data_from_ts/fin/Get_fin_income_all_vip.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fin_income"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fin.Get_fin_income_daily.get_fin_income_daily"
+      ],
+      "api_name": "income_vip",
+      "business_key": [
+        "ts_code",
+        "ann_date",
+        "end_date",
+        "update_flag"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fin",
+      "description": "财务利润表指标数据",
+      "freq": null,
+      "key": "fin.fin_income_daily",
+      "legacy_id": "get_ph_data_from_ts.fin.Get_fin_income_daily.get_fin_income_daily",
+      "legacy_path": "get_ph_data_from_ts/fin/Get_fin_income_daily.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_fin_income"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fund.Get_fund_1min.get_fund_1min"
+      ],
+      "api_name": "pro_bar",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fund",
+      "description": "基金行情1分钟k",
+      "freq": "1min",
+      "key": "fund.fund_1min",
+      "legacy_id": "get_ph_data_from_ts.fund.Get_fund_1min.get_fund_1min",
+      "legacy_path": "get_ph_data_from_ts/fund/Get_fund_1min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_fund_1min"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fund.Get_fund_adj.get_fund_adj_factor"
+      ],
+      "api_name": "fund_adj",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fund",
+      "description": "基金复权因子",
+      "freq": null,
+      "key": "fund.fund_adj",
+      "legacy_id": "get_ph_data_from_ts.fund.Get_fund_adj.get_fund_adj_factor",
+      "legacy_path": "get_ph_data_from_ts/fund/Get_fund_adj.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fund_adj_factor"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fund.Get_fund_basic.get_fund_basic"
+      ],
+      "api_name": "fund_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fund",
+      "description": "公募基金列表",
+      "freq": null,
+      "key": "fund.fund_basic",
+      "legacy_id": "get_ph_data_from_ts.fund.Get_fund_basic.get_fund_basic",
+      "legacy_path": "get_ph_data_from_ts/fund/Get_fund_basic.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 15000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_fund_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fund.Get_fund_daily.get_fund_daily"
+      ],
+      "api_name": "fund_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fund",
+      "description": "场内基金日线行情",
+      "freq": null,
+      "key": "fund.fund_daily",
+      "legacy_id": "get_ph_data_from_ts.fund.Get_fund_daily.get_fund_daily",
+      "legacy_path": "get_ph_data_from_ts/fund/Get_fund_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 5000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fund_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fund.Get_fund_portfolio.get_fund_portfolio"
+      ],
+      "api_name": "fund_portfolio",
+      "business_key": [
+        "ts_code",
+        "ann_date",
+        "end_date",
+        "symbol"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fund",
+      "description": "公募基金持仓数据",
+      "freq": null,
+      "key": "fund.fund_portfolio",
+      "legacy_id": "get_ph_data_from_ts.fund.Get_fund_portfolio.get_fund_portfolio",
+      "legacy_path": "get_ph_data_from_ts/fund/Get_fund_portfolio.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_fund_portfolio"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fund.Get_fund_share.get_fund_share"
+      ],
+      "api_name": "fund_share",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fund",
+      "description": "基金规模数据",
+      "freq": null,
+      "key": "fund.fund_share",
+      "legacy_id": "get_ph_data_from_ts.fund.Get_fund_share.get_fund_share",
+      "legacy_path": "get_ph_data_from_ts/fund/Get_fund_share.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fund_share"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fut.Get_fut_1min.get_fut_1min"
+      ],
+      "api_name": "ft_mins",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fut",
+      "description": "期货行情1分钟k",
+      "freq": "1min",
+      "key": "fut.fut_1min",
+      "legacy_id": "get_ph_data_from_ts.fut.Get_fut_1min.get_fut_1min",
+      "legacy_path": "get_ph_data_from_ts/fut/Get_fut_1min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_fut_1min"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fut.Get_fut_5min.get_fut_5min"
+      ],
+      "api_name": "ft_mins",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fut",
+      "description": "期货行情5分钟k",
+      "freq": "5min",
+      "key": "fut.fut_5min",
+      "legacy_id": "get_ph_data_from_ts.fut.Get_fut_5min.get_fut_5min",
+      "legacy_path": "get_ph_data_from_ts/fut/Get_fut_5min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_fut_5min"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fut.Get_fut_basic.get_fut_basic"
+      ],
+      "api_name": "fut_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fut",
+      "description": "期货合约信息表",
+      "freq": null,
+      "key": "fut.fut_basic",
+      "legacy_id": "get_ph_data_from_ts.fut.Get_fut_basic.get_fut_basic",
+      "legacy_path": "get_ph_data_from_ts/fut/Get_fut_basic.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 10000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_fut_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fut.Get_fut_daily.get_fut_daily"
+      ],
+      "api_name": "fut_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fut",
+      "description": "期货日线行情",
+      "freq": null,
+      "key": "fut.fut_daily",
+      "legacy_id": "get_ph_data_from_ts.fut.Get_fut_daily.get_fut_daily",
+      "legacy_path": "get_ph_data_from_ts/fut/Get_fut_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fut_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fut.Get_fut_holding.get_fut_holding"
+      ],
+      "api_name": "fut_holding",
+      "business_key": [
+        "trade_date",
+        "broker",
+        "symbol",
+        "exchange"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fut",
+      "description": "期货每日成交持仓排名",
+      "freq": null,
+      "key": "fut.fut_holding",
+      "legacy_id": "get_ph_data_from_ts.fut.Get_fut_holding.get_fut_holding",
+      "legacy_path": "get_ph_data_from_ts/fut/Get_fut_holding.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fut_holding"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fut.Get_fut_mapping.get_fut_mapping"
+      ],
+      "api_name": "fut_mapping",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fut",
+      "description": "期货主力与连续合约",
+      "freq": null,
+      "key": "fut.fut_mapping",
+      "legacy_id": "get_ph_data_from_ts.fut.Get_fut_mapping.get_fut_mapping",
+      "legacy_path": "get_ph_data_from_ts/fut/Get_fut_mapping.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "codelist",
+      "required_inputs": [
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_fut_mapping"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fut.Get_fut_wsr.get_fut_wsr"
+      ],
+      "api_name": "fut_wsr",
+      "business_key": [
+        "trade_date",
+        "symbol",
+        "fut_name",
+        "warehouse"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fut",
+      "description": "期货仓单日报",
+      "freq": null,
+      "key": "fut.fut_wsr",
+      "legacy_id": "get_ph_data_from_ts.fut.Get_fut_wsr.get_fut_wsr",
+      "legacy_path": "get_ph_data_from_ts/fut/Get_fut_wsr.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 1000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fut_wsr"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fx.Get_fx_daily.get_fx_daily"
+      ],
+      "api_name": "fx_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fx",
+      "description": "外汇日线行情",
+      "freq": null,
+      "key": "fx.fx_daily",
+      "legacy_id": "get_ph_data_from_ts.fx.Get_fx_daily.get_fx_daily",
+      "legacy_path": "get_ph_data_from_ts/fx/Get_fx_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 1000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_fx_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.fx.Get_fx_obasic.get_fx_obasic"
+      ],
+      "api_name": "fx_obasic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "fx",
+      "description": "外汇基础信息（海外）",
+      "freq": null,
+      "key": "fx.fx_obasic",
+      "legacy_id": "get_ph_data_from_ts.fx.Get_fx_obasic.get_fx_obasic",
+      "legacy_path": "get_ph_data_from_ts/fx/Get_fx_obasic.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_fx_obasic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.hk.Get_hk_basic.get_hk_basic"
+      ],
+      "api_name": "hk_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "hk",
+      "description": "港股基本信息",
+      "freq": null,
+      "key": "hk.hk_basic",
+      "legacy_id": "get_ph_data_from_ts.hk.Get_hk_basic.get_hk_basic",
+      "legacy_path": "get_ph_data_from_ts/hk/Get_hk_basic.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_hk_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.hk.Get_hk_basic.get_hk_basic_d"
+      ],
+      "api_name": "hk_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "hk",
+      "description": "港股基本信息_d",
+      "freq": null,
+      "key": "hk.hk_basic_d",
+      "legacy_id": "get_ph_data_from_ts.hk.Get_hk_basic.get_hk_basic_d",
+      "legacy_path": "get_ph_data_from_ts/hk/Get_hk_basic.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_hk_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.hk.Get_hk_ccass_hold_detail.get_hk_ccass_hold_detail"
+      ],
+      "api_name": "ccass_hold_detail",
+      "business_key": [
+        "trade_date",
+        "ts_code",
+        "col_participant_id"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "hk",
+      "description": "中央结算系统持股明细",
+      "freq": null,
+      "key": "hk.hk_ccass_hold_detail",
+      "legacy_id": "get_ph_data_from_ts.hk.Get_hk_ccass_hold_detail.get_hk_ccass_hold_detail",
+      "legacy_path": "get_ph_data_from_ts/hk/Get_hk_ccass_hold_detail.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_hk_ccass_hold_detail"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.hk.Get_hk_daily.get_hk_daily"
+      ],
+      "api_name": "hk_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "hk",
+      "description": "港股行情",
+      "freq": null,
+      "key": "hk.hk_daily",
+      "legacy_id": "get_ph_data_from_ts.hk.Get_hk_daily.get_hk_daily",
+      "legacy_path": "get_ph_data_from_ts/hk/Get_hk_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 5000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_hk_daily"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.hk.Get_hk_daily_adj.get_hk_daily_adj"
+      ],
+      "api_name": "hk_daily_adj",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "hk",
+      "description": "港股复权行情",
+      "freq": null,
+      "key": "hk.hk_daily_adj",
+      "legacy_id": "get_ph_data_from_ts.hk.Get_hk_daily_adj.get_hk_daily_adj",
+      "legacy_path": "get_ph_data_from_ts/hk/Get_hk_daily_adj.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_hk_daily_adj"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.hk.Get_hk_tradeCal.get_hk_tradeCal"
+      ],
+      "api_name": "hk_tradecal",
+      "business_key": [
+        "cal_date"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "hk",
+      "description": "港股交易日历",
+      "freq": null,
+      "key": "hk.hk_trade_cal",
+      "legacy_id": "get_ph_data_from_ts.hk.Get_hk_tradeCal.get_hk_tradeCal",
+      "legacy_path": "get_ph_data_from_ts/hk/Get_hk_tradeCal.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_hk_trade_cal"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.idx.Get_idx_1min.get_idx_1min"
+      ],
+      "api_name": "pro_bar",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "idx",
+      "description": "指数行情1分钟k",
+      "freq": "1min",
+      "key": "idx.idx_1min",
+      "legacy_id": "get_ph_data_from_ts.idx.Get_idx_1min.get_idx_1min",
+      "legacy_path": "get_ph_data_from_ts/idx/Get_idx_1min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_idx_1min"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.idx.Get_idx_basic.get_idx_basic"
+      ],
+      "api_name": "index_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "executable",
+        "reason": null
+      },
+      "category": "idx",
+      "description": "指数基本信息",
+      "freq": null,
+      "key": "idx.idx_basic",
+      "legacy_id": "get_ph_data_from_ts.idx.Get_idx_basic.get_idx_basic",
+      "legacy_path": "get_ph_data_from_ts/idx/Get_idx_basic.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_idx_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.idx.Get_idx_daily.get_idx_daily"
+      ],
+      "api_name": "index_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "idx",
+      "description": "指数日线行情",
+      "freq": null,
+      "key": "idx.idx_daily",
+      "legacy_id": "get_ph_data_from_ts.idx.Get_idx_daily.get_idx_daily",
+      "legacy_path": "get_ph_data_from_ts/idx/Get_idx_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_idx_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.idx.Get_idx_daily_basic.get_idx_daily_basic"
+      ],
+      "api_name": "index_dailybasic",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "idx",
+      "description": "股票每日指标",
+      "freq": null,
+      "key": "idx.idx_daily_basic",
+      "legacy_id": "get_ph_data_from_ts.idx.Get_idx_daily_basic.get_idx_daily_basic",
+      "legacy_path": "get_ph_data_from_ts/idx/Get_idx_daily_basic.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 3000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_idx_daily_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.idx.Get_idx_sw_classify.get_idx_sw_classify"
+      ],
+      "api_name": "index_classify",
+      "business_key": [
+        "src",
+        "level",
+        "index_code"
+      ],
+      "capability": {
+        "kind": "executable",
+        "reason": null
+      },
+      "category": "idx",
+      "description": "申万行业分类",
+      "freq": null,
+      "key": "index_classify",
+      "legacy_id": "get_ph_data_from_ts.idx.Get_idx_sw_classify.get_idx_sw_classify",
+      "legacy_path": "get_ph_data_from_ts/idx/Get_idx_sw_classify.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_idx_sw_classify"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.idx.Get_idx_sw_daily.get_idx_sw_daily"
+      ],
+      "api_name": "sw_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "executable",
+        "reason": null
+      },
+      "category": "idx",
+      "description": "申万行业日线行情",
+      "freq": null,
+      "key": "sw_daily",
+      "legacy_id": "get_ph_data_from_ts.idx.Get_idx_sw_daily.get_idx_sw_daily",
+      "legacy_path": "get_ph_data_from_ts/idx/Get_idx_sw_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 4000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_idx_sw_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.idx.Get_idx_sw_member.get_idx_sw_member"
+      ],
+      "api_name": "index_member",
+      "business_key": [
+        "index_code",
+        "con_code",
+        "in_date"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "idx",
+      "description": "申万行业成分构成",
+      "freq": null,
+      "key": "idx.idx_sw_member",
+      "legacy_id": "get_ph_data_from_ts.idx.Get_idx_sw_member.get_idx_sw_member",
+      "legacy_path": "get_ph_data_from_ts/idx/Get_idx_sw_member.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "codelist",
+      "required_inputs": [
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_idx_sw_member"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.idx.Get_idx_sw_member_all.get_idx_sw_member_all"
+      ],
+      "api_name": "index_member_all",
+      "business_key": [
+        "ts_code",
+        "l1_code",
+        "l2_code",
+        "l3_code",
+        "in_date"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "idx",
+      "description": "申万行业成分构成_all",
+      "freq": null,
+      "key": "idx.idx_sw_member_all",
+      "legacy_id": "get_ph_data_from_ts.idx.Get_idx_sw_member_all.get_idx_sw_member_all",
+      "legacy_path": "get_ph_data_from_ts/idx/Get_idx_sw_member_all.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "codelist",
+      "required_inputs": [
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_idx_sw_member_all"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.macro.Get_macro_cn_cpi.get_macro_cn_cpi"
+      ],
+      "api_name": "cn_cpi",
+      "business_key": [
+        "month"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "macro",
+      "description": "宏观_居民消费价格指数",
+      "freq": null,
+      "key": "macro.macro_cn_cpi",
+      "legacy_id": "get_ph_data_from_ts.macro.Get_macro_cn_cpi.get_macro_cn_cpi",
+      "legacy_path": "get_ph_data_from_ts/macro/Get_macro_cn_cpi.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 5000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_macro_cn_cpi"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.macro.Get_macro_cn_gdp.get_macro_cn_gdp"
+      ],
+      "api_name": "cn_gdp",
+      "business_key": [
+        "quarter"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "macro",
+      "description": "宏观GDP数据",
+      "freq": null,
+      "key": "macro.macro_cn_gdp",
+      "legacy_id": "get_ph_data_from_ts.macro.Get_macro_cn_gdp.get_macro_cn_gdp",
+      "legacy_path": "get_ph_data_from_ts/macro/Get_macro_cn_gdp.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 10000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_macro_cn_gdp"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.opt.Get_opt_1min.get_opt_1min"
+      ],
+      "api_name": "pro_bar",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "opt",
+      "description": "期权行情1分钟k",
+      "freq": "1min",
+      "key": "opt.opt_1min",
+      "legacy_id": "get_ph_data_from_ts.opt.Get_opt_1min.get_opt_1min",
+      "legacy_path": "get_ph_data_from_ts/opt/Get_opt_1min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_opt_1min"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.opt.Get_opt_basic.get_opt_basic"
+      ],
+      "api_name": "opt_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "opt",
+      "description": "期权合约信息",
+      "freq": null,
+      "key": "opt.opt_basic",
+      "legacy_id": "get_ph_data_from_ts.opt.Get_opt_basic.get_opt_basic",
+      "legacy_path": "get_ph_data_from_ts/opt/Get_opt_basic.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_opt_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.opt.Get_opt_daily.get_opt_daily"
+      ],
+      "api_name": "opt_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "opt",
+      "description": "期权日线行情",
+      "freq": null,
+      "key": "opt.opt_daily",
+      "legacy_id": "get_ph_data_from_ts.opt.Get_opt_daily.get_opt_daily",
+      "legacy_path": "get_ph_data_from_ts/opt/Get_opt_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 15000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_opt_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ref.Get_ref_topinst.get_ref_topinst"
+      ],
+      "api_name": "top_inst",
+      "business_key": [
+        "trade_date",
+        "ts_code",
+        "exalter",
+        "side",
+        "net_buy",
+        "reason"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ref",
+      "description": "龙虎榜机构明细",
+      "freq": null,
+      "key": "ref.ref_topinst",
+      "legacy_id": "get_ph_data_from_ts.ref.Get_ref_topinst.get_ref_topinst",
+      "legacy_path": "get_ph_data_from_ts/ref/Get_ref_topinst.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 10000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_ref_topinst"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ref.Get_ref_toplist.get_ref_toplist"
+      ],
+      "api_name": "top_list",
+      "business_key": [
+        "trade_date",
+        "ts_code",
+        "reason"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ref",
+      "description": "龙虎榜每日明细",
+      "freq": null,
+      "key": "ref.ref_toplist",
+      "legacy_id": "get_ph_data_from_ts.ref.Get_ref_toplist.get_ref_toplist",
+      "legacy_path": "get_ph_data_from_ts/ref/Get_ref_toplist.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 10000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_ref_toplist"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_15min.get_stk_15min"
+      ],
+      "api_name": "stk_mins",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "股票行情15分钟k",
+      "freq": "15min",
+      "key": "stk.stk_15min",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_15min.get_stk_15min",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_15min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_stk_15min"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_1min.get_stk_1min"
+      ],
+      "api_name": "stk_mins",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "股票行情1分钟k",
+      "freq": "1min",
+      "key": "stk.stk_1min",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_1min.get_stk_1min",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_1min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_stk_1min"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_30min.get_stk_30min"
+      ],
+      "api_name": "stk_mins",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "股票行情30分钟k",
+      "freq": "30min",
+      "key": "stk.stk_30min",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_30min.get_stk_30min",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_30min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_stk_30min"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_5min.get_stk_5min"
+      ],
+      "api_name": "stk_mins",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "股票行情5分钟k",
+      "freq": "5min",
+      "key": "stk.stk_5min",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_5min.get_stk_5min",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_5min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_stk_5min"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_60min.get_stk_60min"
+      ],
+      "api_name": "stk_mins",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "股票行情60分钟k",
+      "freq": "60min",
+      "key": "stk.stk_60min",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_60min.get_stk_60min",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_60min.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_stk_60min"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_adj_factor.get_stk_adj_factor"
+      ],
+      "api_name": "adj_factor",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "股票复权因子",
+      "freq": null,
+      "key": "stk.stk_adj_factor",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_adj_factor.get_stk_adj_factor",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_adj_factor.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_adj_factor"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_bak_daily.get_stk_bak_daily"
+      ],
+      "api_name": "bak_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "备用行情",
+      "freq": null,
+      "key": "stk.stk_bak_daily",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_bak_daily.get_stk_bak_daily",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_bak_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 7000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_bak_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_basic.get_stk_basic"
+      ],
+      "api_name": "stock_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "executable",
+        "reason": null
+      },
+      "category": "stk",
+      "description": "股票基本信息",
+      "freq": null,
+      "key": "stock_basic",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_basic.get_stk_basic",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_basic.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_stk_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_basic_all.get_stk_basic_all"
+      ],
+      "api_name": "stock_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "executable",
+        "reason": null
+      },
+      "category": "stk",
+      "description": "股票基本信息(全量含退退退市）",
+      "freq": null,
+      "key": "stock_basic_all",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_basic_all.get_stk_basic_all",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_basic_all.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_stk_basic_all"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_cyq_chips.get_stk_cyq_chips"
+      ],
+      "api_name": "cyq_chips",
+      "business_key": [
+        "trade_date",
+        "ts_code",
+        "price"
+      ],
+      "capability": {
+        "kind": "executable",
+        "reason": null
+      },
+      "category": "stk",
+      "description": "每日筹码分布",
+      "freq": null,
+      "key": "cyq_chips",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_cyq_chips.get_stk_cyq_chips",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_cyq_chips.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_stk_cyq_chips"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_cyq_perf.get_stk_cyq_perf"
+      ],
+      "api_name": "cyq_perf",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "每日筹码及胜率",
+      "freq": null,
+      "key": "stk.stk_cyq_perf",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_cyq_perf.get_stk_cyq_perf",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_cyq_perf.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_cyq_perf"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_daily.get_stk_daily"
+      ],
+      "api_name": "daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "executable",
+        "reason": null
+      },
+      "category": "stk",
+      "description": "股票日线行情",
+      "freq": null,
+      "key": "daily",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_daily.get_stk_daily",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_daily_basic.get_stk_daily_basic"
+      ],
+      "api_name": "daily_basic",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "股票每日指标",
+      "freq": null,
+      "key": "stk.stk_daily_basic",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_daily_basic.get_stk_daily_basic",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_daily_basic.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_daily_basic"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_factor_pro.get_stk_factor_pro"
+      ],
+      "api_name": "stk_factor_pro",
+      "business_key": [
+        "ts_code",
+        "trade_date"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "股票技术面因子(专业版)",
+      "freq": null,
+      "key": "stk.stk_factor_pro",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_factor_pro.get_stk_factor_pro",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_factor_pro.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 10000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_factor_pro"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk.Get_stk_moneyflow.get_stk_moneyflow"
+      ],
+      "api_name": "moneyflow",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk",
+      "description": "股票个股资金流向",
+      "freq": null,
+      "key": "stk.stk_moneyflow",
+      "legacy_id": "get_ph_data_from_ts.stk.Get_stk_moneyflow.get_stk_moneyflow",
+      "legacy_path": "get_ph_data_from_ts/stk/Get_stk_moneyflow.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_moneyflow"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_kpl_concept.get_stk_kpl_concept"
+      ],
+      "api_name": "kpl_concept",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "开盘啦题材库",
+      "freq": null,
+      "key": "stk_limit.stk_kpl_concept",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_kpl_concept.get_stk_kpl_concept",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_kpl_concept.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 5000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_kpl_concept"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_kpl_concept_cons.get_stk_kpl_concept_cons"
+      ],
+      "api_name": "kpl_concept_cons",
+      "business_key": [
+        "trade_date",
+        "con_code",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "开盘啦题材成分",
+      "freq": null,
+      "key": "stk_limit.stk_kpl_concept_cons",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_kpl_concept_cons.get_stk_kpl_concept_cons",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_kpl_concept_cons.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 3000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_kpl_concept_cons"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_kpl_list.get_stk_kpl_list"
+      ],
+      "api_name": "kpl_list",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "开盘啦榜单数据",
+      "freq": null,
+      "key": "stk_limit.stk_kpl_list",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_kpl_list.get_stk_kpl_list",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_kpl_list.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_kpl_list"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_limit.get_stk_limit"
+      ],
+      "api_name": "stk_limit",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "每日涨跌停价格",
+      "freq": null,
+      "key": "stk_limit.stk_limit",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_limit.get_stk_limit",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_limit.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 5800,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_limit"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_limit_cpt_list.get_stk_limit_cpt_list"
+      ],
+      "api_name": "limit_cpt_list",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "最强板块统计",
+      "freq": null,
+      "key": "stk_limit.stk_limit_cpt_list",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_limit_cpt_list.get_stk_limit_cpt_list",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_limit_cpt_list.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_limit_cpt_list"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_limit_list.get_stk_limit_list"
+      ],
+      "api_name": "limit_list",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "disabled_unsupported",
+        "reason": "The provider retired limit_list; use stk_limit.stk_limit_list_d."
+      },
+      "category": "stk_limit",
+      "description": "股票每日涨跌停统计",
+      "freq": null,
+      "key": "stk_limit.stk_limit_list",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_limit_list.get_stk_limit_list",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_limit_list.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 1000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_limit_list"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_limit_list_d.get_stk_limit_list_d"
+      ],
+      "api_name": "limit_list_d",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "股票每日涨跌停列表（新）",
+      "freq": null,
+      "key": "stk_limit.stk_limit_list_d",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_limit_list_d.get_stk_limit_list_d",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_limit_list_d.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2500,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_limit_list_d"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_limit_step.get_stk_limit_step"
+      ],
+      "api_name": "limit_step",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "连板天梯",
+      "freq": null,
+      "key": "stk_limit.stk_limit_step",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_limit_step.get_stk_limit_step",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_limit_step.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_limit_step"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_tdx_daily.get_stk_tdx_daily"
+      ],
+      "api_name": "tdx_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "通达信板块行情",
+      "freq": null,
+      "key": "stk_limit.stk_tdx_daily",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_tdx_daily.get_stk_tdx_daily",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_tdx_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 3000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_tdx_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_tdx_index.get_stk_tdx_index"
+      ],
+      "api_name": "tdx_index",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "通达信板块信息",
+      "freq": null,
+      "key": "stk_limit.stk_tdx_index",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_tdx_index.get_stk_tdx_index",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_tdx_index.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 1000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_tdx_index"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.stk_limit.Get_stk_tdx_member.get_stk_tdx_member"
+      ],
+      "api_name": "tdx_member",
+      "business_key": [
+        "trade_date",
+        "ts_code",
+        "con_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "stk_limit",
+      "description": "通达信板块成分",
+      "freq": null,
+      "key": "stk_limit.stk_tdx_member",
+      "legacy_id": "get_ph_data_from_ts.stk_limit.Get_stk_tdx_member.get_stk_tdx_member",
+      "legacy_path": "get_ph_data_from_ts/stk_limit/Get_stk_tdx_member.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 3000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_tdx_member"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ths_dc.Get_ths_daily.get_ths_daily"
+      ],
+      "api_name": "ths_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ths_dc",
+      "description": "同花顺板块指数行情",
+      "freq": null,
+      "key": "ths_dc.ths_daily",
+      "legacy_id": "get_ph_data_from_ts.ths_dc.Get_ths_daily.get_ths_daily",
+      "legacy_path": "get_ph_data_from_ts/ths_dc/Get_ths_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 3000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_ths_daily"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ths_dc.Get_ths_daily_all.get_ths_daily_all"
+      ],
+      "api_name": "ths_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ths_dc",
+      "description": "同花顺板块指数行情",
+      "freq": null,
+      "key": "ths_dc.ths_daily_all",
+      "legacy_id": "get_ph_data_from_ts.ths_dc.Get_ths_daily_all.get_ths_daily_all",
+      "legacy_path": "get_ph_data_from_ts/ths_dc/Get_ths_daily_all.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 3000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_ths_daily_all"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ths_dc.Get_ths_hot.get_ths_hot"
+      ],
+      "api_name": "ths_hot",
+      "business_key": [
+        "trade_date",
+        "ts_code",
+        "market",
+        "is_new"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ths_dc",
+      "description": "同花顺热榜",
+      "freq": null,
+      "key": "ths_dc.ths_hot",
+      "legacy_id": "get_ph_data_from_ts.ths_dc.Get_ths_hot.get_ths_hot",
+      "legacy_path": "get_ph_data_from_ts/ths_dc/Get_ths_hot.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 2000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_ths_hot"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ths_dc.Get_ths_index.get_ths_index"
+      ],
+      "api_name": "ths_index",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ths_dc",
+      "description": "同花顺概念和行业指数",
+      "freq": null,
+      "key": "ths_dc.ths_index",
+      "legacy_id": "get_ph_data_from_ts.ths_dc.Get_ths_index.get_ths_index",
+      "legacy_path": "get_ph_data_from_ts/ths_dc/Get_ths_index.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 5000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_ths_index"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ths_dc.Get_ths_limit_list.get_stk_ths_limit_list"
+      ],
+      "api_name": "limit_list_ths",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ths_dc",
+      "description": "涨跌停榜单（同花顺）",
+      "freq": null,
+      "key": "ths_dc.ths_limit_list",
+      "legacy_id": "get_ph_data_from_ts.ths_dc.Get_ths_limit_list.get_stk_ths_limit_list",
+      "legacy_path": "get_ph_data_from_ts/ths_dc/Get_ths_limit_list.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 4000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_stk_ths_limit_list"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ths_dc.Get_ths_member.get_ths_member"
+      ],
+      "api_name": "ths_member",
+      "business_key": [
+        "ts_code",
+        "con_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ths_dc",
+      "description": "同花顺概念板块成分",
+      "freq": null,
+      "key": "ths_dc.ths_member",
+      "legacy_id": "get_ph_data_from_ts.ths_dc.Get_ths_member.get_ths_member",
+      "legacy_path": "get_ph_data_from_ts/ths_dc/Get_ths_member.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_ths_member"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ths_dc.Get_ths_member_all.get_ths_member_all"
+      ],
+      "api_name": "ths_member",
+      "business_key": [
+        "ts_code",
+        "con_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ths_dc",
+      "description": "同花顺概念板块成分",
+      "freq": null,
+      "key": "ths_dc.ths_member_all",
+      "legacy_id": "get_ph_data_from_ts.ths_dc.Get_ths_member_all.get_ths_member_all",
+      "legacy_path": "get_ph_data_from_ts/ths_dc/Get_ths_member_all.py",
+      "pagination": {
+        "kind": "offset_limit_probe",
+        "page_limit": 10000,
+        "source": "official limit/offset docs have no numeric maximum; explicit J21 probe"
+      },
+      "profile": "period_codelist",
+      "required_inputs": [
+        "str_date",
+        "end_date",
+        "codelist"
+      ],
+      "src": null,
+      "target_table": "hq_ths_member_all"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.ths_dc.Get_ths_moneyflow.get_ths_moneyflow"
+      ],
+      "api_name": "moneyflow_ths",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "ths_dc",
+      "description": "同花顺个股资金流向",
+      "freq": null,
+      "key": "ths_dc.ths_moneyflow",
+      "legacy_id": "get_ph_data_from_ts.ths_dc.Get_ths_moneyflow.get_ths_moneyflow",
+      "legacy_path": "get_ph_data_from_ts/ths_dc/Get_ths_moneyflow.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "period",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_ths_moneyflow"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.us.Get_us_basic.get_us_basic"
+      ],
+      "api_name": "us_basic",
+      "business_key": [
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "us",
+      "description": "美股基本信息",
+      "freq": null,
+      "key": "us.us_basic",
+      "legacy_id": "get_ph_data_from_ts.us.Get_us_basic.get_us_basic",
+      "legacy_path": "get_ph_data_from_ts/us/Get_us_basic.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_us_basic"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.us.Get_us_daily.get_us_daily"
+      ],
+      "api_name": "us_daily",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "us",
+      "description": "美股行情",
+      "freq": null,
+      "key": "us.us_daily",
+      "legacy_id": "get_ph_data_from_ts.us.Get_us_daily.get_us_daily",
+      "legacy_path": "get_ph_data_from_ts/us/Get_us_daily.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_us_daily"
+    },
+    {
+      "access": {
+        "kind": "separate_purchase",
+        "points_tier": null,
+        "reason": "This dataset requires separately purchased provider access."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.us.Get_us_daily_adj.get_us_daily_adj"
+      ],
+      "api_name": "us_daily_adj",
+      "business_key": [
+        "trade_date",
+        "ts_code"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "us",
+      "description": "美股复权行情",
+      "freq": null,
+      "key": "us.us_daily_adj",
+      "legacy_id": "get_ph_data_from_ts.us.Get_us_daily_adj.get_us_daily_adj",
+      "legacy_path": "get_ph_data_from_ts/us/Get_us_daily_adj.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 8000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "date",
+      "required_inputs": [
+        "str_date",
+        "end_date"
+      ],
+      "src": null,
+      "target_table": "hq_us_daily_adj"
+    },
+    {
+      "access": {
+        "kind": "standard_points",
+        "points_tier": 10000,
+        "reason": "Available according to the endpoint point requirement."
+      },
+      "aliases": [
+        "get_ph_data_from_ts.us.Get_us_tradecal.get_us_tradeCal"
+      ],
+      "api_name": "us_tradecal",
+      "business_key": [
+        "cal_date"
+      ],
+      "capability": {
+        "kind": "catalogued_not_implemented",
+        "reason": "Historical metadata is catalogued; field and business-key execution is not implemented."
+      },
+      "category": "us",
+      "description": "美股交易日历",
+      "freq": null,
+      "key": "us.us_tradecal",
+      "legacy_id": "get_ph_data_from_ts.us.Get_us_tradecal.get_us_tradeCal",
+      "legacy_path": "get_ph_data_from_ts/us/Get_us_tradecal.py",
+      "pagination": {
+        "kind": "offset_limit",
+        "page_limit": 6000,
+        "source": "root replica tests/test_documented_page_limits.py"
+      },
+      "profile": "limit",
+      "required_inputs": [],
+      "src": null,
+      "target_table": "hq_us_trade_cal"
+    },
+    {
+      "access": {
+        "kind": "external_realtime",
+        "points_tier": null,
+        "reason": "Realtime data is external or separately permissioned."
+      },
+      "aliases": [
+        "get_rt_data_from_ts.Get_rt_stk_quote_tick__east.get_rt_stk_quote_tick"
+      ],
+      "api_name": "realtime_quote",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code",
+        "src"
+      ],
+      "capability": {
+        "kind": "disabled_realtime",
+        "reason": "Realtime variants are visible but disabled in the first J21 release."
+      },
+      "category": "realtime",
+      "description": "实时_盘口TICK快照",
+      "freq": null,
+      "key": "realtime.rt_stk_quote_tick_east",
+      "legacy_id": "get_rt_data_from_ts.Get_rt_stk_quote_tick__east.get_rt_stk_quote_tick",
+      "legacy_path": "get_rt_data_from_ts/Get_rt_stk_quote_tick__east.py",
+      "pagination": {
+        "kind": "not_applicable",
+        "page_limit": null,
+        "source": "realtime endpoints are not row-paginated"
+      },
+      "profile": "realtime_codelist",
+      "required_inputs": [
+        "str_time",
+        "end_time",
+        "codelist"
+      ],
+      "src": "dc",
+      "target_table": "hq_rt_stk_quote_tick__east"
+    },
+    {
+      "access": {
+        "kind": "external_realtime",
+        "points_tier": null,
+        "reason": "Realtime data is external or separately permissioned."
+      },
+      "aliases": [
+        "get_rt_data_from_ts.Get_rt_stk_quote_tick__sina.get_rt_stk_quote_tick"
+      ],
+      "api_name": "realtime_quote",
+      "business_key": [
+        "trade_date",
+        "trade_time",
+        "ts_code",
+        "src"
+      ],
+      "capability": {
+        "kind": "disabled_realtime",
+        "reason": "Realtime variants are visible but disabled in the first J21 release."
+      },
+      "category": "realtime",
+      "description": "实时_盘口TICK快照",
+      "freq": null,
+      "key": "realtime.rt_stk_quote_tick_sina",
+      "legacy_id": "get_rt_data_from_ts.Get_rt_stk_quote_tick__sina.get_rt_stk_quote_tick",
+      "legacy_path": "get_rt_data_from_ts/Get_rt_stk_quote_tick__sina.py",
+      "pagination": {
+        "kind": "not_applicable",
+        "page_limit": null,
+        "source": "realtime endpoints are not row-paginated"
+      },
+      "profile": "realtime_codelist",
+      "required_inputs": [
+        "str_time",
+        "end_time",
+        "codelist"
+      ],
+      "src": "sina",
+      "target_table": "hq_rt_stk_quote_tick__sina"
+    },
+    {
+      "access": {
+        "kind": "external_realtime",
+        "points_tier": null,
+        "reason": "Realtime data is external or separately permissioned."
+      },
+      "aliases": [
+        "get_rt_data_from_ts.Get_rt_stk_tick__east.get_rt_stk_tick__east"
+      ],
+      "api_name": "realtime_tick",
+      "business_key": [
+        "trade_date",
+        "time",
+        "ts_code",
+        "src",
+        "price",
+        "change",
+        "volume",
+        "amount",
+        "type"
+      ],
+      "capability": {
+        "kind": "disabled_realtime",
+        "reason": "Realtime variants are visible but disabled in the first J21 release."
+      },
+      "category": "realtime",
+      "description": "实时_逐笔成交__东财",
+      "freq": null,
+      "key": "realtime.rt_stk_tick_east",
+      "legacy_id": "get_rt_data_from_ts.Get_rt_stk_tick__east.get_rt_stk_tick__east",
+      "legacy_path": "get_rt_data_from_ts/Get_rt_stk_tick__east.py",
+      "pagination": {
+        "kind": "not_applicable",
+        "page_limit": null,
+        "source": "realtime endpoints are not row-paginated"
+      },
+      "profile": "realtime_codelist",
+      "required_inputs": [
+        "str_time",
+        "end_time",
+        "codelist"
+      ],
+      "src": "dc",
+      "target_table": "hq_rt_stk_tick__east"
+    }
+  ],
+  "entry_count": 93,
+  "schema_version": 2,
+  "source": "Reviewed static copy derived from /private/tmp/j21-tushare-endpoints.json, the promoted root replica page-limit tests, and the 10,000-point permission audit completed on 2026-08-30.",
+  "table_count": 88
+}

@@ -1,0 +1,101 @@
+"""Direct, SDK-free Tushare contracts for the Chinese-market CLI."""
+
+from fdp_cn.tushare.catalog import (
+    CATALOG,
+    CATALOG_BY_KEY,
+    catalog_summary,
+    default_historical_endpoint_specs,
+    get_endpoint_spec,
+    iter_endpoint_specs,
+    require_executable_endpoint,
+)
+from fdp_cn.tushare.cleaning import clean_page
+from fdp_cn.tushare.client import TUSHARE_DATA_API_URL, TushareClient
+from fdp_cn.tushare.errors import (
+    TushareAuthenticationError,
+    TushareCapabilityError,
+    TushareCatalogError,
+    TushareDataError,
+    TushareError,
+    TushareNoDataError,
+    TushareParameterError,
+    TusharePermissionError,
+    TusharePostCommitStorageError,
+    TushareProtocolError,
+    TushareRateLimitError,
+    TushareRunLeaseCleanupError,
+    TushareStorageError,
+    TushareTransportError,
+)
+from fdp_cn.tushare.models import (
+    CleanedPage,
+    EndpointPlanRequest,
+    EndpointSpec,
+    EndpointUnit,
+    ExternalTableContract,
+    TushareApiEvent,
+    TusharePageWriteResult,
+    TushareRequest,
+    TushareResponse,
+)
+from fdp_cn.tushare.planning import (
+    next_page_offset,
+    plan_endpoint_units,
+    validate_endpoint_params,
+)
+from fdp_cn.tushare.storage import (
+    ensure_tushare_runtime_objects,
+    external_table_page_transaction,
+    tushare_run_lease,
+    verify_external_table,
+    write_business_rows,
+)
+from fdp_cn.tushare.job import TushareEndpointJob, TushareJobRequest
+from fdp_cn.tushare.runtime import TushareJobRuntime
+
+__all__ = [
+    "CATALOG",
+    "CATALOG_BY_KEY",
+    "TUSHARE_DATA_API_URL",
+    "CleanedPage",
+    "EndpointPlanRequest",
+    "EndpointSpec",
+    "EndpointUnit",
+    "ExternalTableContract",
+    "TushareApiEvent",
+    "TushareAuthenticationError",
+    "TushareCapabilityError",
+    "TushareCatalogError",
+    "TushareClient",
+    "TushareDataError",
+    "TushareError",
+    "TushareEndpointJob",
+    "TushareNoDataError",
+    "TushareParameterError",
+    "TusharePageWriteResult",
+    "TusharePermissionError",
+    "TusharePostCommitStorageError",
+    "TushareProtocolError",
+    "TushareRateLimitError",
+    "TushareRequest",
+    "TushareResponse",
+    "TushareJobRequest",
+    "TushareJobRuntime",
+    "TushareRunLeaseCleanupError",
+    "TushareStorageError",
+    "TushareTransportError",
+    "catalog_summary",
+    "clean_page",
+    "default_historical_endpoint_specs",
+    "ensure_tushare_runtime_objects",
+    "external_table_page_transaction",
+    "get_endpoint_spec",
+    "iter_endpoint_specs",
+    "next_page_offset",
+    "plan_endpoint_units",
+    "require_executable_endpoint",
+    "tushare_run_lease",
+    "validate_endpoint_params",
+    "verify_external_table",
+    "write_business_rows",
+]

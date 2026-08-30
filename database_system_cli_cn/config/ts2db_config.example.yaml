@@ -1,0 +1,17 @@
+db_config:
+  host: localhost
+  port: 3306
+  user: replace_me
+  pwd: replace_me
+  db: a_share
+
+server_config:
+  - server: ts
+    token: replace_me
+
+log_config:
+  log_path: $proj_path$/resources/log
+
+run_config:
+  retry_times: 3
+  retry_sleep_time: 60
