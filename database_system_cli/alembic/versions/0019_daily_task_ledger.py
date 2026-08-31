@@ -1,7 +1,7 @@
 """add durable task and work-unit ledger for resumable Daily Bulk jobs
 
-Revision ID: 0018_daily_task_ledger
-Revises: 0017_corporate_actions
+Revision ID: 0019_daily_task_ledger
+Revises: 0018_protect_external_a_share
 Create Date: 2026-08-10
 """
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0018_daily_task_ledger"
-down_revision: str | None = "0017_corporate_actions"
+revision: str = "0019_daily_task_ledger"
+down_revision: str | None = "0018_protect_external_a_share"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

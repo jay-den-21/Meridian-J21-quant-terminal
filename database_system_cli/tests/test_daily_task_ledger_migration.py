@@ -6,11 +6,11 @@ def test_daily_task_ledger_migration_adds_identity_lease_and_work_units() -> Non
         Path(__file__).parents[1]
         / "alembic"
         / "versions"
-        / "0018_daily_task_ledger.py"
+        / "0019_daily_task_ledger.py"
     ).read_text()
 
-    assert 'revision: str = "0018_daily_task_ledger"' in migration
-    assert 'down_revision: str | None = "0017_corporate_actions"' in migration
+    assert 'revision: str = "0019_daily_task_ledger"' in migration
+    assert 'down_revision: str | None = "0018_protect_external_a_share"' in migration
     for value in (
         "task_fingerprint",
         "active_resume_key",
