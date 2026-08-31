@@ -1,7 +1,7 @@
 """add intraday Parquet file manifest
 
-Revision ID: 0019_intraday_manifest
-Revises: 0018_daily_task_ledger
+Revision ID: 0020_intraday_manifest
+Revises: 0019_daily_task_ledger
 Create Date: 2026-08-10
 """
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0019_intraday_manifest"
-down_revision: str | None = "0018_daily_task_ledger"
+revision: str = "0020_intraday_manifest"
+down_revision: str | None = "0019_daily_task_ledger"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
