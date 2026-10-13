@@ -11,3 +11,8 @@ the API App. A unified launcher and data redistribution are not part of this tas
 
 Original product source uses MIT. Bundled Trellis tooling retains upstream AGPL-3.0;
 reference archives and installed dependencies retain their own licenses.
+
+The initial existing-repository rewrite could not remove GitHub's residual access
+to excluded historical content. The user therefore authorized a separate clean
+repository under the original public name, while the previous repository remains
+a private archive. Only audited, reachable refs were copied to the new repository.

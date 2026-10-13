@@ -40,6 +40,7 @@ poetry.toml
 /.trellis/tasks/07-24-tushare-live-parity-acceptance/
 /.trellis/tasks/07-29-ghidra-tushare-so-analysis/
 /.trellis/tasks/10-04-public-repo-readiness/
+/.trellis/tasks/archive/2026-10/10-04-public-repo-readiness/
 /.trellis/spec/backend/quant-research-harness.md
 /.trellis/spec/backend/research-terminal-analytics-contract.md
 /.trellis/spec/frontend/meridian-research-handoff-contract.md

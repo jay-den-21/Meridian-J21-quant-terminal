@@ -15,5 +15,20 @@ Verified on 2026-10-13 in an isolated checkout without private configuration:
 - Existing CN CRLF files retain their line endings; whitespace verification uses
   Git's `cr-at-eol` interpretation rather than normalizing unrelated lines.
 
-Remote rewrite, remote exposure checks, and visibility verification are pending.
-No publication claim is made until those gates are recorded as passed.
+Publication verified on 2026-10-13:
+
+- All 16 selected branches and 3 historical tags were sanitized. Final pre-release
+  inspection covered 69 reachable commits and 1,311 unique text blobs; no skipped
+  binary files, LFS pointers, excluded roots, or custom credential matches remained.
+- Gitleaks v8.30.1 reported no findings in the filtered history or public artifact.
+- GitHub retained access to old excluded files after the first rewrite. With the
+  user's explicit approval, the previous repository became a private archive and
+  a distinct clean repository was created under the original name.
+- The new repository is Public, defaults to main, reports MIT, and clones without
+  credentials. Old excluded-file requests return 404, including anonymous checks.
+- Local main matches the cleaned remote. Excluded local files, environments, and
+  directories were preserved; original Git refs/stashes/reflogs remain in private
+  recovery storage with pushing disabled.
+- No database, provider subscription, or market-data ingestion was changed.
+
+No package-registry upload, hosted app deployment, or new release tag was performed.

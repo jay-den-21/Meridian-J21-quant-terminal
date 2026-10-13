@@ -8,6 +8,8 @@ Public-source preparation (2026-10-13): MIT source/license metadata and public
 setup documentation are aligned; CLI docs verification no longer requires the
 local-only Research Terminal. Public release contains code, not vendor data or
 database backups. No ingestion or schema change is part of this release.
+Publication verified: the cleaned GitHub repository is public under MIT;
+anonymous cloning passed and local main is aligned with the cleaned history.
 
 The project has a runnable, testable, and committable Python + Poetry scaffold.
 

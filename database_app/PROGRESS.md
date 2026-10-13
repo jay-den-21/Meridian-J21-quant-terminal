@@ -8,6 +8,8 @@ Public-source preparation (2026-10-13): MIT source/license metadata, independent
 installation instructions, and public CodeGen-only site boundaries are aligned.
 Private sibling sites, token/config state, installer binaries, and the Wind PDF
 are not distributed. Tokenless code generation remains available without MySQL.
+Publication verified: the cleaned GitHub repository is public; 108 offline tests
+passed, including localhost HTTP execution/export with synthetic provider data.
 
 Completed:
 

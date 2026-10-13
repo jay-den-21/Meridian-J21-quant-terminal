@@ -20,3 +20,7 @@ machine paths, credentials, and copied private implementation.
 
 Contributions to original project code are provided under the repository's MIT
 license. Preserve upstream notices when adding third-party material.
+
+The public repository uses sanitized history. Contributors with pre-publication
+clones must clone again and port reviewed source changes only; do not merge or
+push old refs, private recovery tags, or stashes into this repository.
