@@ -2,15 +2,19 @@
   "id": "public-source-release",
   "name": "public-source-release",
   "title": "Public source release verification",
-  "status": "in_progress",
+  "status": "completed",
   "priority": "P1",
   "creator": "Jayden21",
   "assignee": "Jayden21",
   "createdAt": "2026-10-13",
-  "completedAt": null,
+  "completedAt": "2026-10-13",
   "base_branch": "main",
   "subtasks": [],
   "children": [],
-  "relatedFiles": ["README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "relatedFiles": [
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
   "notes": "Sanitized public task summary; raw recovery and scan evidence stay local."
 }
