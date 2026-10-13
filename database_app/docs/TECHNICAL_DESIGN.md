@@ -62,7 +62,11 @@ The frontend never receives the real API token. Generated snippets use placehold
 
 ## Dependency Choice
 
-The app currently uses the Python standard library server instead of FastAPI/Jinja2. The reason is practical: the current environment already runs this app without runtime dependencies, while the product risk is endpoint registry correctness, validation, code generation, preview parsing, and token safety. A FastAPI + Jinja2 migration remains a P1/P2 refactor after the app contract stabilizes.
+The HTTP server uses the Python standard library instead of FastAPI/Jinja2. The
+app also declares SQLAlchemy and PyMySQL for optional read-only instrument access;
+install the package before starting it. A missing database disables that browser
+explicitly, not the request/code-generation workspace. A server-framework migration
+is not required for the public source release.
 
 ## Directory Layout
 

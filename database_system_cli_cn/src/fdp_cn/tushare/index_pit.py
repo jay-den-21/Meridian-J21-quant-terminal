@@ -267,11 +267,12 @@ class IndexPitJob:
         reporter: ProgressReporter | None = None,
         preflight: JobPreflight | None = None,
     ) -> JobResult:
+        if not request.execute:
+            active_preflight = preflight or self.preflight(request, runtime=runtime)
+            return _dry_run(request, active_preflight)
         active_runtime = runtime or TushareJobRuntime.from_env()
         active_reporter = reporter or NullProgressReporter()
         active_preflight = preflight or self.preflight(request, runtime=active_runtime)
-        if not request.execute:
-            return _dry_run(request, active_preflight)
         ensure_control_schema(active_runtime.engine)
         if request.resume_run_id is not None:
             return self._resume(

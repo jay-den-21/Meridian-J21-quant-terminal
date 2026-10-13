@@ -17,7 +17,7 @@ Before changing this subproject, read:
 - Do not modify MySQL schema, Alembic migrations, or ingestion flows from this app.
 - The pool browser may read existing `database_system_cli/.env` database config and query `us_share.instrument` read-only.
 - Missing DB config, DB connection failure, or schema failure must show an explicit unavailable state. Do not silently fall back to EODHD API.
-- `database_app/site/` is the CodeGen product/download page and packaging target only. Personal homepage code belongs in root `personal_site/`; Meridian/J21 Terminal code belongs in root `j21_terminal/`.
+- `database_app/site/` is the CodeGen product/download page and packaging target only. Personal homepage and Terminal roots are local-only and must not be required by the public app or its tests.
 - Cross-product navigation may link to sibling roots, but must not copy their views, scripts, styles, or assets into `database_app`.
 
 ## Token And API Rules

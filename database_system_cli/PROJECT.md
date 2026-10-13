@@ -4,6 +4,11 @@
 
 ## 1. 项目目标
 
+公开版本边界（2026-10-13）：本子项目原创代码按根目录 MIT 许可证发布，保留 CLI、
+Menu、数据模型、迁移和离线测试。个人网站、Research Terminal 及私人研究仅留本地，
+不随公开仓库分发；文中 Terminal 相关段落描述可选的本地集成，不是公开产品依赖。
+本次未发布任何行情数据或数据库快照，也未更改数据库。
+
 `database_system_cli` 不是一个单纯下载行情数据的脚本集合，而是 `financial-data-platform` 仓库里的可追踪、可验证、可扩展的金融数据库系统子项目。
 
 第一阶段先建立数据基础设施，并完整打通美股股票、ETF、Fund 日频量价数据：
@@ -39,7 +44,7 @@
 
 - 不做实盘下单。
 - 不做多数据源 fallback。
-- database CLI 不拥有 app 前端；平级 `research_terminal/` 已提供 localhost-only 只读可视化。
+- database CLI 不拥有 app 前端；本地可选 `research_terminal/` 不随公开仓库分发。
 - 不保存全量 raw API response。
 - 不自动修正价格。
 - 不给缺失交易日插入空价格行。
@@ -1060,7 +1065,7 @@ SMA20/EMA20/RSI14 matrix 与 weighted hard budget（最多 200 units）抽验 EO
 只输出报告、不写库。2026-07-11 的 45-unit 实测结果见
 [`docs/technical_indicator_parity_report.md`](docs/technical_indicator_parity_report.md)。
 
-平级 `research_terminal/` 通过只读 FastAPI repository 消费这些查询和指标，提供 Overview、
+本地可选、未公开的 `research_terminal/` 通过只读 FastAPI repository 消费这些查询和指标，提供 Overview、
 Security Explorer、ETF/Fund、Data Health、CSV 和 PNG。网页没有 ingest/repair/migration
 route；`current_active` 是当前状态，`price_observed` 不是 PIT universe。
 

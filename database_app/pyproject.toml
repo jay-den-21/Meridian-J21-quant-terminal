@@ -1,6 +1,7 @@
 [project]
 name = "eodhd-codegen-app"
 version = "1.0.0"
+license = "MIT"
 description = "Lightweight EODHD API code generator and playground for small equity research queries."
 requires-python = ">=3.11"
 dependencies = ["pymysql>=1.1", "sqlalchemy>=2.0"]
@@ -24,3 +25,11 @@ eodhd_codegen_app = ["static/*.html", "static/*.css", "static/*.js"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# Keep the existing correctness baseline independent of newer Ruff defaults.
+select = ["E4", "E7", "E9", "F"]

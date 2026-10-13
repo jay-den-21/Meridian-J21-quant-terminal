@@ -4,6 +4,11 @@ This file tracks implementation progress for the EODHD API Code Generator App. I
 
 ## Current Status
 
+Public-source preparation (2026-10-13): MIT source/license metadata, independent
+installation instructions, and public CodeGen-only site boundaries are aligned.
+Private sibling sites, token/config state, installer binaries, and the Wind PDF
+are not distributed. Tokenless code generation remains available without MySQL.
+
 Completed:
 
 - Created standalone `database_app/` sibling project, separate from `database_system_cli/`.

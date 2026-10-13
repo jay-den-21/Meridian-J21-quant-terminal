@@ -2,8 +2,8 @@
 Created on 2021年7月18日
 
 @author: Jayden21 <jayden0721@163.com>
-本软件非开源软件，版权所有者为作者，购买者享有个人使用授权，
-但不得向第三方拷贝传播该框架相关内容，非许可禁止公开传播，一经发现将严肃追究法律责任！
+SPDX-License-Identifier: MIT
+Copyright (c) 2026 Jayden21. See the repository LICENSE.
 
 备用行情
 接口：bak_daily

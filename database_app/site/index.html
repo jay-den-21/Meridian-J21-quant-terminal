@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EODHD Code Generator for Mac</title>
+    <meta name="description" content="Local Mac download page for the EODHD API Code Generator app.">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav">
+        <a class="brand" href="#top">EODHD Code Generator</a>
+        <div class="nav-links">
+          <a href="#download">Download</a>
+          <a href="#install">Install</a>
+          <a href="#plan">Release Plan</a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Mac local research utility</p>
+          <h1>EODHD API Code Generator</h1>
+          <p class="lede">
+            A lightweight local app for generating EODHD URLs, Python, curl, and JavaScript snippets,
+            executing small research queries, and exporting CSV results without sending your API token to a hosted server.
+          </p>
+          <div class="hero-actions" id="download">
+            <a class="primary-button" href="downloads/EODHD-Code-Generator-1.0.0.dmg" download>Download DMG</a>
+            <a class="secondary-button" href="downloads/EODHD-Code-Generator-1.0.0.pkg" download>Download PKG</a>
+            <a class="secondary-button" href="downloads/SHA256SUMS.txt">Checksums</a>
+          </div>
+          <p class="release-note">
+            Developer build: unsigned and not notarized. Production public distribution should use Apple Developer ID signing and notarization.
+          </p>
+        </div>
+        <figure class="hero-media" aria-label="Application preview">
+          <img src="assets/app-preview.svg" alt="Preview of the EODHD code generator workspace">
+        </figure>
+      </section>
+
+      <section class="section-grid" id="install">
+        <article>
+          <h2>Install Locally</h2>
+          <ol>
+            <li>Download the DMG from this page after running the packaging script.</li>
+            <li>Open the DMG and drag the app into Applications, or install the PKG.</li>
+            <li>Launch the app and save your EODHD token through Login / Config.</li>
+          </ol>
+        </article>
+        <article>
+          <h2>What Runs On Your Mac</h2>
+          <p>
+            The app starts a local server bound to 127.0.0.1 with a random port and opens it in your browser.
+            It bundles the app source and Python package dependencies, but still requires Python 3.11+ on the Mac.
+          </p>
+        </article>
+      </section>
+
+      <section class="release-panel" id="plan">
+        <div>
+          <h2>CodeGen Release Plan</h2>
+          <p>
+            This static page is the first downloadable product page. The next production step is to upload signed,
+            notarized release assets to a stable host and point the download buttons at immutable release files.
+          </p>
+        </div>
+        <a class="secondary-button" href="PLAN.md">Open Detailed Plan</a>
+      </section>
+    </main>
+  </body>
+</html>

@@ -2,12 +2,16 @@
 
 ## 1. 产品定位
 
+公开版本边界（2026-10-13）：本项目由作者确认为原创，源码按仓库根目录 MIT
+许可证发布。Tushare 权限、配置、数据和再分发许可不包含在源码许可中。CN 使用
+独立 Python 3.11.3 环境；不能与 US CLI 的 SQLAlchemy 2 环境混用。
+
 `database_system_cli_cn` 是仓库内独立的中文 Tushare 数据产品。它负责把 A 股及
 相关市场数据写入 MySQL `a_share`，不依赖兄弟项目 `database_system_cli`。
 
 ## 2. 原版保留层
 
-下列目录继续保留原复刻版的类名、getter 调用方式、字段映射和运行入口：
+下列目录继续保留既有版本的类名、getter 调用方式、字段映射和运行入口：
 
 - `basis/`
 - `deal_data/`

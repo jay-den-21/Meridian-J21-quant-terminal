@@ -10,7 +10,10 @@ From the repo root:
 
 ```bash
 cd database_app
-PYTHONPATH=src python -m eodhd_codegen_app --host 127.0.0.1 --port 8000
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -m eodhd_codegen_app --host 127.0.0.1 --port 8000
 ```
 
 Open:

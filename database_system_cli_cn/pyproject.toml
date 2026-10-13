@@ -3,6 +3,7 @@ name = "database_system_cli_cn"
 version = "7.0"
 description = ""
 authors = ["Jayden21 <jayden0721@163.com>"]
+license = "MIT"
 readme = "README.md"
 packages = [{ include = "fdp_cn", from = "src" }]
 include = ["src/fdp_cn/tushare/catalog_seed.json"]

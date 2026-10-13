@@ -1,15 +1,38 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
+import sys
+from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 
 import pandas as pd
 
-from basis import init_env, tools
-from deal_data import deal_duplicatetData as duplicate_data
-from get_ph_data_from_ts.stk import Get_stk_cyq_chips as cyq_chips
+# The compatibility package loads configuration at import time. Use an explicit
+# synthetic module so unit tests never read the operator's private YAML or token.
+_logs = TemporaryDirectory(prefix="j21-cn-test-logs-")
+unittest.addModuleCleanup(_logs.cleanup)
+_constant = ModuleType("basis.constant")
+_constant.ts2db_config = SimpleNamespace(
+    log_path=_logs.name,
+    dbPath="mysql+pymysql://localhost/a_share",
+    ts2db_config={"server_config": [], "run_config": {}},
+    retry_times=3,
+    retry_sleep_time=0,
+)
+_log_module = ModuleType("basis.log_man")
+_log_module.logging = mock.Mock()
+_log_module.Start_loggings = mock.Mock()
+with mock.patch.dict(
+    sys.modules, {"basis.constant": _constant, "basis.log_man": _log_module}
+):
+    import basis
+
+    basis.constant = _constant
+    from basis import init_env, tools
+    from deal_data import deal_duplicatetData as duplicate_data
+    from get_ph_data_from_ts.stk import Get_stk_cyq_chips as cyq_chips
 
 
 class _FixtureEndpoint(tools.ts2db_father_template):

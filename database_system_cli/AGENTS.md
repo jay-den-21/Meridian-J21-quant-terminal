@@ -153,7 +153,8 @@ poetry run j21 repair ...
 `src/fdp/storage/AGENTS.md` 和 `docs/architecture.md`。`src/fdp/config.py` 等未列出的顶层
 模块直接继承本文件，不需要空的局部 `AGENTS.md`。
 
-仓库级可视化位于平级 `../research_terminal/`。CLI 只拥有 canonical 数据、研究读取和
+本地可选可视化位于平级 `../research_terminal/`，不随公开仓库分发，不能成为 CLI 安装、
+测试或文档验证的必需依赖。CLI 只拥有 canonical 数据、研究读取和
 确定性命令契约；Terminal 只能通过只读查询消费这些契约，不能把 HTTP/UI 状态或写库入口
 反向放入本子项目。
 

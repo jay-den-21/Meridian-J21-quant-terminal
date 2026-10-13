@@ -531,7 +531,8 @@ React/TypeScript/ECharts
 -> local indicator transform
 ```
 
-`../research_terminal/` 提供 Overview、Security Explorer、ETF/Fund、Data Health、safe CSV
+`../research_terminal/` 是本地可选集成，不随公开源码分发，也不是 CLI 安装、测试或文档
+检查的依赖。它提供 Overview、Security Explorer、ETF/Fund、Data Health、safe CSV
 和 chart PNG。进程级 SQL guard 拒绝非 SELECT/SHOW/EXPLAIN/WITH，并且部署账号仍应只有
 SELECT 权限。没有 ingest/repair/migration HTTP route；页面只复制 CLI。`current_active` 是
 当前 master 状态，`price_observed` 不是 point-in-time universe。

@@ -4,6 +4,10 @@
 
 `database_app` 与 `database_system_cli` 平级。它是一个轻量 EODHD API Code Generator App 和 API playground，不是数据库 ingestion 主线的一部分。
 
+公开版本边界（2026-10-13）：原创代码按根目录 MIT 发布；仅包含 API App 与 CodeGen
+产品页，不包含个人网站、J21 Terminal、私人 token、数据或 Wind PDF。离线代码生成
+无需 token；执行 API 需要用户自己的权限。README 提供独立环境安装方式。
+
 ## 1. 项目目标
 
 `database_app` 面向小规模 equity research / sell-side research 查询。用户在页面中选择 asset、endpoint、symbol / provider symbol、日期范围、period、format 和 endpoint-specific 参数后，App 自动生成：
@@ -33,7 +37,7 @@ v1.2 曾将个人首页、Meridian landing 和 terminal prototype 合并到 `dat
 
 Wind 学习依据：
 
-- 用户提供的 `Wind_API接口说明_2025_.pdf`，文档日期 2025-04-10。
+- 用户本地保留的 `Wind_API接口说明_2025_.pdf`，文档日期 2025-04-10；不随开源仓库分发。
 - 用户提供的 Wind client 文档链接：`https://www.kancloud.cn/stratorway/wind-client/1457552`。
 - PDF 中 Wind API 数据函数包括 WSD、WSS、WST、WSI、WSQ、WSET、EDB；代码生成器定位是通过导航逐步选择参数、生成取数代码，并同步展示取数结果。
 - PDF 中日期函数包括 `tdays`、`tdaysOffset`、`tdayscount`，日期宏支持 `-5D`、`-10TD` 这类相对日期/交易日表达。因此本 App 的 v0.4 加入了 `Date helper: T+n`，把 anchor date 和 offset 转换为实际 `from` / `to` / `trade_date` 字段。
@@ -287,18 +291,15 @@ open site/index.html
 
 `site/index.html` 只展示 EODHD Code Generator、安装说明、本地安全边界和由打包脚本生成的下载链接。该目录不包含个人主页、Meridian 或 terminal view，也不加载 GSAP。
 
-个人站和 J21 Terminal 位于仓库 sibling 根目录。需要同时检查跨产品跳转时，从仓库根目录启动静态服务器：
+公开源码只包含 CodeGen 产品页。预览该页面可从仓库根目录启动静态服务器：
 
 ```bash
 python3 -m http.server 8766 --directory .
 ```
 
-- `http://localhost:8766/personal_site/`：Jayden21 个人首页及项目外链。
-- `http://localhost:8766/j21_terminal/`：Meridian landing；其真实 anchor 经现有动效进入单独启动在 `http://127.0.0.1:8765/` 的只读 Research Terminal。
 - `http://localhost:8766/database_app/site/`：CodeGen 产品 / 下载页。
 
-仓库根静态预览不得占用 `8765`；该端口保留给
-`research_terminal/` 构建后的 React UI 与同源 GET-only API。
+个人站、J21 启动页和 Research Terminal 仅保留在作者本地，不是公开安装的先决条件。
 
 该 wrapper 会用随机本地端口绑定 `127.0.0.1` 并打开系统浏览器。生成的 `.app` 会复制 `database_app` 源码、文档和纯 Python 依赖到 bundle resources，移动 `.app` 后不再依赖当前 checkout 路径。它不是 Electron/Tauri/PyInstaller bundle，不会复制 Python runtime；目标是本机可安装、可下载、可 review。启动时会先检查 `PYTHON_BIN`，再检查常见 Homebrew 和 python.org Python 3.11+ 安装路径，最后才 fallback 到 `python3`。
 

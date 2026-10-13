@@ -12,7 +12,7 @@
 ```text
 database_system_cli_cn/
 ├── src/fdp_cn/                  # 新 CLI、中文 Menu、接口清单和 direct Job
-├── basis/                       # 保留的复刻框架
+├── basis/                       # 保留的原有框架
 ├── get_ph_data_from_ts/         # 保留的历史 getter
 ├── get_rt_data_from_ts/         # 保留的实时 getter
 ├── deal_data/                   # 保留的去重/缺失处理
@@ -38,8 +38,10 @@ CLI 和 Menu 使用同一个 `IngestService`，但不会假装 93 个旧接口�
 ## 安装和命令
 
 ```bash
-cd "/Users/boqingxin/tandon MSCS/My_Own/financial-data-platform/database_system_cli_cn"
-/Users/boqingxin/.local/bin/poetry install
+cd database_system_cli_cn
+poetry env use /path/to/python3.11.3
+poetry config virtualenvs.in-project true --local
+poetry install
 ```
 
 列出全部 93 个接口：
@@ -158,10 +160,16 @@ demo 数据包或用户自有许可下的私有数据包，不能把个人 Tusha
 
 ```bash
 PYTHONPATH=src .venv/bin/python -B -m unittest discover -s tests -v
-/Users/boqingxin/.local/bin/poetry check --lock
+poetry check --lock
 ```
 
 当前回归覆盖 93/92 目录与物理 getter、71 项积分清单、日线、申万日线、股票基础表、
 筹码 6000 分页、财报兼容子进程、失败后继续、CLI dry-run、中文 Menu、指数分页/断点、
 申万版本切换、月度权重路由和 staging 发布保护。真实 API/数据库执行仍应先从单接口、
 小日期窗口开始。
+
+## 开源边界
+
+本项目原创代码使用仓库根目录 MIT 许可证。开源的是代码，不包含 Tushare 权限、
+私人配置或已清洗数据库的再分发授权。请使用独立环境：当前兼容层固定 Python
+3.11.3 / SQLAlchemy 1.4，与 US CLI 的 SQLAlchemy 2 环境分开。

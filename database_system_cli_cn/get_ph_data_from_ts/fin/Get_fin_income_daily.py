@@ -2,7 +2,8 @@
 Created on 2021年10月18日
 
 @author: Jayden21 <jayden0721@163.com>
-但不得向第三方拷贝传播该框架相关内容，非许可禁止公开传播，一经发现将严肃追究法律责任。
+SPDX-License-Identifier: MIT
+Copyright (c) 2026 Jayden21. See the repository LICENSE.
 
 利润表批量数据
 接口：income_vip，可以通过数据工具调试和查看数据。

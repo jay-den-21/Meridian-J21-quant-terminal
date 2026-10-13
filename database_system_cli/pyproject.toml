@@ -3,6 +3,7 @@ name = "financial-data-platform"
 version = "0.1.0"
 description = "Traceable and verifiable financial data platform."
 authors = ["Boqing Xin"]
+license = "MIT"
 readme = "README.md"
 packages = [{ include = "fdp", from = "src" }]
 

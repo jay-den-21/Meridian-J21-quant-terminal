@@ -103,7 +103,6 @@ def _stale_html_pairs(*, repo_root: Path, cli_root: Path) -> set[str]:
             cli_root / "docs" / "technical_indicator_parity_report.md",
             cli_root / "docs" / "technical_indicator_parity_report.html",
         ),
-        (repo_root / "research_terminal" / "PROJECT.md", repo_root / "research_terminal" / "PROJECT.html"),
     ]
     stale: set[str] = set()
     with TemporaryDirectory(prefix="j21-docs-") as temporary_directory:

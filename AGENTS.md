@@ -22,15 +22,14 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 
 # Repository Governance
 
-This repository has five tracked sibling components with independent ownership:
+This public repository has three tracked sibling components with independent ownership:
 
 - `database_system_cli/`: database ingestion, validation, repair, and research read layer.
 - `database_system_cli_cn/`: independently runnable Chinese Tushare compatibility product; it preserves the legacy getter/runtime surface while targeting the externally owned `a_share` schema.
 - `database_app/`: local EODHD API code generator and API playground.
-- `j21_terminal/`: Meridian landing page and animated handoff to the real Research Terminal only.
-- `research_terminal/`: localhost-only read-only FastAPI/React research visualization.
 
-`playground/`, `quant/`, and `personal_site/` are user-owned local-only roots.
+`playground/`, `quant/`, `personal_site/`, `j21_terminal/`, and
+`research_terminal/` are user-owned local-only roots.
 They are intentionally ignored as whole directories and are not repository
 components. Do not add, force-add, move, or copy their contents into tracked
 paths. Their files, environments, private data, generated output, and local Git
@@ -57,8 +56,7 @@ rules; it never overrides repository boundaries or secret-handling rules.
 | `database_system_cli/**` | `database_system_cli/AGENTS.md` and its scoped routing table |
 | `database_system_cli_cn/**` | this file |
 | `database_app/**` | `database_app/AGENTS.md` |
-| `j21_terminal/**` | this file |
-| `research_terminal/**` | `research_terminal/AGENTS.md` |
+| `j21_terminal/**`, `research_terminal/**` | local-only; this file and any local scoped instructions; never add to Git |
 | `playground/**`, `quant/**`, `personal_site/**` | local-only; this file; never add to Git |
 | `.trellis/**`, `.agents/**`, `.codex/**` | this file and `.trellis/workflow.md` |
 
@@ -105,6 +103,16 @@ Evaluator policy:
 - P2 items go to roadmap.
 
 ## Git Hygiene
+
+Original public project code uses MIT. Preserve third-party notices. The source
+license grants no provider data access or redistribution rights. Public releases
+must not include private projects, purchased reference PDFs, data dumps, or raw
+security/recovery reports. Historical private task/spec records remain local;
+new shared task records must contain only public implementation context.
+
+After a history-sanitized release, old local clones, branches, stashes, and backups
+are recovery-only. Never merge or push their unfiltered history into the public
+repository. Use a fresh clone or sanitized refs for subsequent work.
 
 Commit shared workflow infrastructure such as `.trellis/workflow.md`, `.trellis/spec/`, `.trellis/tasks/`, `.trellis/scripts/`, `.agents/skills/`, and project-scoped `.codex/` helpers when they are part of the repo workflow.
 

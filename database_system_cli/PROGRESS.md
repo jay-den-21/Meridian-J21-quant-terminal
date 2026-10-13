@@ -4,6 +4,11 @@ This file tracks implementation progress for `database_system_cli`. `PROJECT.md`
 
 ## Current Status
 
+Public-source preparation (2026-10-13): MIT source/license metadata and public
+setup documentation are aligned; CLI docs verification no longer requires the
+local-only Research Terminal. Public release contains code, not vendor data or
+database backups. No ingestion or schema change is part of this release.
+
 The project has a runnable, testable, and committable Python + Poetry scaffold.
 
 Completed:
